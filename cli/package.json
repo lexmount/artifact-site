@@ -46,10 +46,10 @@
   "dependencies": {
     "commander": "^15.0.0",
     "fflate": "^0.8.3",
-    "zod": "^4.5.4"
+    "zod": "^4.6.2"
   },
   "devDependencies": {
-    "@types/node": "^26.5.0",
+    "@types/node": "^26.5.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   }
