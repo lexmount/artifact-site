@@ -1,0 +1,21 @@
+# Optional reverse proxy with automatic TLS. Layered on by `make up` when .env has
+# ARTIFACT_WITH_CADDY=on. Skip it if the host already runs a proxy (nginx / caddy / traefik) —
+# then point that proxy at 127.0.0.1:${ARTIFACT_PORT} instead; see SELFHOST.md for a snippet.
+services:
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2}
+    container_name: artifact-site-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # Empty is caught by `make doctor`; no `:?` so `make down` never trips over it.
+      ARTIFACT_DOMAIN: ${ARTIFACT_DOMAIN:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account live here; losing it only means re-issuing.
+      - ${CADDY_DATA_PATH:-./caddy}:/data
+    depends_on:
+      - app

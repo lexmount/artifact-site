@@ -1,0 +1,14 @@
+artifact-site
+Copyright 2025-2026 LexMount
+
+This product includes software developed at LexMount (https://github.com/lexmount).
+
+Third-party components bundled into the runtime image (copied into public/vendor/pdfjs at build
+time by scripts/sync-pdfjs.mjs; their license texts travel with them):
+
+- PDF.js (pdfjs-dist) — Copyright Mozilla Foundation — Apache License 2.0
+  https://github.com/mozilla/pdf.js — public/vendor/pdfjs/LICENSE
+- Foxit base-14 PDF fonts — Foxit Software Inc. — see public/vendor/pdfjs/standard_fonts/LICENSE_FOXIT
+- Liberation Fonts — Red Hat, Inc. — SIL Open Font License 1.1 —
+  see public/vendor/pdfjs/standard_fonts/LICENSE_LIBERATION
+- Adobe CMap resources — Adobe Systems Incorporated — BSD-3-Clause — see public/vendor/pdfjs/cmaps/LICENSE

@@ -1,0 +1,41 @@
+name: DCO
+
+# Developer Certificate of Origin (https://developercertificate.org): every commit in a pull
+# request carries a `Signed-off-by:` trailer (`git commit -s`), by which the author certifies they
+# have the right to submit it under the project's license. No account, no signature page — the
+# trailer is the whole mechanism. Merge commits are skipped; squash-merged history keeps the
+# trailers of the commits it folds.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    name: Signed-off-by on every commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check trailers
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for c in $(git rev-list --no-merges "$BASE".."$HEAD"); do
+            if ! git show -s --format=%B "$c" | grep -Eq '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "::error::commit $c ($(git show -s --format=%s "$c")) has no Signed-off-by trailer"
+              missing=1
+            fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo
+            echo "Sign your commits with 'git commit -s' (see CONTRIBUTING.md, \"Sign your work\")."
+            echo "To fix the commits already on this branch: git rebase --signoff $BASE"
+            exit 1
+          fi
+          echo "all commits signed off"

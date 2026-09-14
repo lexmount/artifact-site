@@ -1,0 +1,34 @@
+# Bundled Postgres 18 — layered on by `make up` whenever .env has no ARTIFACT_DATABASE_URL.
+# With an external database this file is simply not used; nothing here needs to be edited.
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:18-alpine}
+    container_name: artifact-site-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: artifact_hub
+      POSTGRES_DB: artifact_hub
+      # Empty is caught by `make doctor` (which `make up` runs first); no `:?` here so that
+      # `make down / ps / logs` still work on a half-configured stack.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    ports:
+      # Loopback only, for `make psql` / pg_dump from the host and for `make dev`.
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      # The postgres:18 image keeps its cluster under /var/lib/postgresql/<major>/docker, so the
+      # mount point is the parent (this is what makes a future in-place major upgrade possible).
+      - ${POSTGRES_DATA_PATH:-./pgdata}:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U artifact_hub -d artifact_hub"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+
+  app:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Overrides whatever (empty) value .env carries. sslmode=disable: same docker network.
+      ARTIFACT_DATABASE_URL: postgres://artifact_hub:${POSTGRES_PASSWORD}@postgres:5432/artifact_hub?sslmode=disable

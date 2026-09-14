@@ -1,0 +1,33 @@
+# Base stack: the app alone. `make up` layers compose/*.yml on top according to what .env leaves
+# empty — no ARTIFACT_DATABASE_URL means compose/postgres.yml (a bundled Postgres 18),
+# ARTIFACT_WITH_GOTENBERG=on adds compose/gotenberg.yml, ARTIFACT_WITH_CADDY=on adds
+# compose/caddy.yml. See SELFHOST.md; `make doctor` prints which files will be used.
+#
+# Everything below reads from .env (compose interpolates it) — nothing is hard-coded here so a
+# deployment is fully described by that one file.
+services:
+  app:
+    image: ${ARTIFACT_IMAGE:-artifact-site:local}
+    build:
+      context: .
+      args:
+        # Both default to the public upstreams; set them in .env on a host that has to build
+        # through mirrors. Platform builds never pass them and keep the defaults.
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    container_name: artifact-site
+    restart: unless-stopped
+    ports:
+      # Loopback only by default: the rate limiter trusts X-Forwarded-For / X-Real-IP from the
+      # reverse proxy, so the app port must not be reachable directly. Override ARTIFACT_BIND
+      # only if the proxy runs on another machine.
+      - "${ARTIFACT_BIND:-127.0.0.1}:${ARTIFACT_PORT:-4300}:4300"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # The container's data root is fixed; the HOST side of the mount is what you configure.
+      ARTIFACT_DATA_DIR: /data
+    volumes:
+      # Uploaded files (local storage) and nothing else. Back this directory up.
+      - ${ARTIFACT_DATA_PATH:-./data}:/data

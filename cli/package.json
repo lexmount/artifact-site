@@ -1,0 +1,56 @@
+{
+  "name": "@artifact-site/cli",
+  "version": "0.1.0",
+  "description": "Command-line client for artifact-site: publish, update, search, share and export sites.",
+  "license": "(Apache-2.0 OR MIT)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lexmount/artifact-site.git",
+    "directory": "cli"
+  },
+  "homepage": "https://github.com/lexmount/artifact-site/tree/main/cli#readme",
+  "bugs": {
+    "url": "https://github.com/lexmount/artifact-site/issues"
+  },
+  "keywords": [
+    "artifact-site",
+    "mcp",
+    "cli",
+    "static-hosting",
+    "ai-agents",
+    "claude-code"
+  ],
+  "type": "module",
+  "bin": {
+    "artifact-site": "./bin/artifact-site.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "LICENSE-APACHE",
+    "LICENSE-MIT"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "fflate": "^0.8.3",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}

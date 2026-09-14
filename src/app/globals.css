@@ -1,0 +1,1285 @@
+/* Design tokens — black and white with a light grass green; system sans; one hairline; whitespace.
+   Ported from the design team's style sheet. The old names (--paper, --ink-soft, --accent…) are
+   kept as aliases so every existing surface follows without a rewrite. */
+:root { /* The artifact's own canvas colour. Deliberately outside the theme system: an artifact only
+     knows how a browser opens it. */
+  --artifact-canvas: #fff;
+  color-scheme: light;
+  --bg: #fdfdfd; --ink: #171a17; --muted: #626862; --line: #e3e7e1; --green: #e4edc8; --hover: #f3f5ef; --focus: #557341;
+  --paper: var(--bg); --paper-raised: var(--bg); --paper-deep: var(--hover);
+  --ink-soft: var(--muted);
+  --accent: var(--ink); --accent-soft: var(--green); --accent-2: #557341;
+  --positive: #3f7a4e; --warning: #a0742a; --critical: #9f3434;
+  --shadow: 0 10px 30px rgb(23 26 23 / .08);
+  --font-display: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --radius: 8px; --radius-sm: 7px;
+  --reading: 46rem; --content: 1200px; --header: 88px;
+  --leading-hero-title: 1.22; --leading-section-title: 1.2; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0;
+  overflow-x: hidden;
+  color: var(--ink);
+  font: 15px/1.6 var(--font-ui);
+  background: var(--bg);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased; }
+body::before { display: none; }
+a { color: inherit; text-underline-offset: .2em; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+img, svg, canvas, iframe { display: block; max-width: 100%; }
+h1, h2, h3, p, blockquote, figure { margin-top: 0; }
+::selection { background: var(--accent-soft); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.hairline { border: 0; border-top: 1px solid var(--line); }
+.micro { font: 700 .62rem/1 var(--font-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+/* ============================================================================
+   APP CHROME — shared header (ported from gps .site-header)
+   ============================================================================ */
+.app-header { position: sticky; z-index: 30; top: 0; min-height: var(--header);
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 1.4rem;
+  padding: .55rem clamp(1rem, 3vw, 2.4rem);
+  border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 92%, transparent);
+  backdrop-filter: saturate(1.2) blur(8px); font-family: var(--font-ui); }
+.brand { display: flex; align-items: center; gap: .6rem; text-decoration: none; font-size: .8rem; min-width: 0; }
+.brand > span { display: grid; place-items: center; aspect-ratio: 1; font: 600 1rem/1 var(--font-display); flex: none; }
+.brand b { letter-spacing: .01em; }
+.brand small { color: var(--ink-soft); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.header-mid { justify-self: center; min-width: 0; display: flex; align-items: center; gap: 1rem; overflow: hidden; }
+.header-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Appearance + direction + device: reusable segmented controls (gps .segmented). */
+.controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .7rem; justify-self: end; }
+.segmented { display: flex; border: 1px solid var(--line); }
+.segmented button { border: 0; border-left: 1px solid var(--line); background: transparent; }
+.segmented button:first-child { border-left: 0; }
+/* Generic button language. */
+.btn { display: inline-flex; align-items: center; gap: .45rem; border: 1px solid var(--line); text-decoration: none; color: inherit; white-space: nowrap; transition: border-color .15s ease, background .15s ease; }
+.btn.solid { background: var(--accent); border-color: var(--accent); color: var(--paper-raised); }
+.btn.solid:hover { filter: brightness(1.06); border-color: var(--accent); }
+.btn.danger:hover { background: color-mix(in srgb, var(--critical) 12%, transparent); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+/* A write action the viewer cannot use yet. Dashed border + lock suffix so the state reads at a
+   glance; NOT :disabled, because clicking is how the viewer learns why and what to do about it. */
+.btn.locked { border-style: dashed; color: var(--ink-soft); background: transparent; }
+.btn.locked:hover { border-color: var(--ink-soft); color: var(--ink); }
+.btn.locked .locked-icon { display: inline-flex; opacity: .7; }
+.btn.locked .locked-hint { display: inline-flex; align-items: center; gap: .2rem; margin-left: .35rem; padding-left: .4rem; border-left: 1px solid var(--line); font-weight: 500; letter-spacing: 0; opacity: .85; }
+@media (max-width: 640px) { .btn.locked .locked-hint { display: none; } }
+/* ============================================================================
+   HOME — hero + dropzone + "My sites" grid
+   ============================================================================ */
+.home { width: min(100% - 2rem, var(--content)); margin: 0 auto; padding: clamp(2.4rem, 6vw, 5rem) 0 6rem; }
+/* Dropzone — the product's face. Big paper panel; accent on drag. */
+.dropzone { position: relative; display: grid; place-items: center; gap: 1.1rem; text-align: center;
+  min-height: 340px; padding: clamp(2rem, 5vw, 4rem);
+  border: 1.5px solid var(--line); background: var(--paper-raised); box-shadow: var(--shadow);
+  transition: border-color .18s ease, background .18s ease; }
+.dropzone::after { content: ""; position: absolute; inset: 10px; border: 1px dashed var(--line); pointer-events: none; transition: border-color .18s ease; }
+.dropzone.is-drag { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 55%, var(--paper-raised)); }
+.dropzone.is-drag::after { border-color: var(--accent); }
+.dropzone.busy { opacity: .7; pointer-events: none; }
+.dropzone-glyph { display: grid; place-items: center; width: 58px; height: 58px; border: 1px solid var(--accent); color: var(--accent); border-radius: 50%; }
+.dropzone h2 { font: 500 clamp(1.5rem, 3vw, 2.1rem)/1.2 var(--font-display); letter-spacing: -.02em; max-width: 22ch; }
+.dropzone p { margin: 0; color: var(--ink-soft); font: 500 .9rem/1.5 var(--font-ui); }
+.dropzone-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem; margin-top: .3rem; }
+.dropzone-hint { position: absolute; left: 0; right: 0; bottom: 1rem; color: var(--ink-soft); font: 600 .62rem/1 var(--font-ui); letter-spacing: .06em; text-transform: uppercase; }
+/* Paste panel (toggled). */
+.paste-panel { display: grid; gap: .8rem; padding: clamp(1.4rem, 3vw, 2rem); border: 1.5px solid var(--line); background: var(--paper-raised); box-shadow: var(--shadow); }
+.paste-panel .row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; justify-content: space-between; }
+.field { display: grid; gap: .35rem; }
+.field label { color: var(--ink-soft); font: 700 .6rem/1 var(--font-ui); letter-spacing: .08em; text-transform: uppercase; }
+.field input, .field textarea { padding: .6rem .7rem; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+.field textarea { min-height: 260px; resize: vertical; font: 500 .82rem/1.6 var(--font-mono); }
+.field input { font: 500 .9rem/1.4 var(--font-ui); }
+.upload-error { margin: 0; padding: .7rem .9rem; border-left: 3px solid var(--critical); background: color-mix(in srgb, var(--critical) 8%, transparent); color: var(--critical); font: 600 .78rem/1.5 var(--font-ui); }
+/* The AI entry — one copyable sentence styled as a terminal line. The dark strip is FIXED colour
+   on purpose: it reads as "the agent's territory" against the paper UI, and it must look the same
+   in every theme/direction — reversing --paper/--ink would render a white strip in dark mode. */
+/* Q&A tier switch — one quiet row under the policy/expiry selects. */
+.share-allow-ai { display: flex; align-items: center; gap: .45rem; flex-basis: 100%; }
+.share-allow-ai input { accent-color: var(--accent); }
+/* "Updated" toast — bottom-center so it reads as page news, clear of the assistant ball (bottom right)
+   and the viewer bar (top). Fixed colours mirror the terminal strip: news chrome, not paper. */
+.version-toast { position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: .8rem; padding: .6rem .9rem; background: #16171a; border: 1px solid #2c2d31; color: #eceade; font: 600 .8rem/1.4 var(--font-ui); box-shadow: var(--shadow); }
+/* Sites grid. */
+.sites-section { margin-top: clamp(3rem, 6vw, 5rem); }
+.sites-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 1.6rem; padding-bottom: .9rem; border-bottom: 1px solid var(--line); }
+.sites-head h2 { font: 500 clamp(1.5rem, 3vw, 2.1rem)/1.1 var(--font-display); letter-spacing: -.02em; }
+.sites-head span { color: var(--ink-soft); font: 600 .7rem/1 var(--font-ui); font-variant-numeric: tabular-nums; }
+.kind-chip { padding: .22rem .45rem; border: 1px solid var(--line); font: 700 .56rem/1 var(--font-ui); letter-spacing: .07em; text-transform: uppercase; color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+/* ============================================================================
+   VIEWER — /s/[slug]
+   The stage (.viewer / .viewer-stage* / .viewer-frame) gave way to the full-screen version in the
+   FS section below; the device breakpoints live there once — do not copy an 834/400 set back here.
+   Only two fragments still in use remain.
+   ============================================================================ */
+.viewer-meta { display: flex; align-items: center; gap: .5rem; color: var(--ink-soft); font: 600 .64rem/1 var(--font-ui); }
+.dot { width: 3px; height: 3px; border-radius: 50%; background: var(--ink-soft); }
+/* ============================================================================
+   EDITOR — /s/[slug]/edit
+   ============================================================================ */
+.editor { display: flex; flex-direction: column; height: 100svh; }
+.editor-bar { flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.editor-bar .grow { flex: 1; min-width: 0; }
+.editor-subbar { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; border-bottom: 1px solid var(--line); background: var(--paper-raised); }
+.editor-subbar .ver { font: 700 .6rem/1 var(--font-mono); letter-spacing: .04em; color: var(--ink-soft); }
+.editor-hint { color: var(--ink-soft); font: 500 .72rem/1.4 var(--font-ui); }
+.dirty-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.editor-body { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+.editor-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.editor-pane + .editor-pane { border-left: 1px solid var(--line); }
+.editor-pane-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding: .55rem 1rem; border-bottom: 1px solid var(--line); background: var(--paper-deep); }
+.editor-textarea { flex: 1; width: 100%; min-height: 0; padding: 1.1rem 1.2rem; border: 0; resize: none; background: #171b19; color: #e8ede8; font: 500 .82rem/1.7 var(--font-mono); tab-size: 2; }
+.editor-textarea:focus-visible { outline: none; }
+.editor-preview { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--paper); }
+.visual-editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.visual-editor-hint { display: inline-flex; align-items: center; gap: .35rem; font-size: .74rem; color: var(--ink-soft); }
+.visual-editor-error { color: var(--critical); font-size: .74rem; }
+.visual-editor-stage { flex: 1; min-height: 0; position: relative; background: var(--paper); }
+.visual-editor-frame { width: 100%; height: 100%; border: 0; background: var(--paper); }
+.editor-filelist { display: flex; flex-wrap: wrap; gap: .4rem; padding: .6rem 1rem; border-bottom: 1px solid var(--line); background: var(--paper-raised); }
+.editor-filelist button { padding: .38rem .6rem; border: 1px solid var(--line); background: transparent; }
+.editor-filelist button[aria-pressed="true"] { border-color: var(--accent); }
+.editor-note { display: grid; place-items: center; gap: .5rem; padding: 2rem; text-align: center; color: var(--ink-soft); font: 500 .82rem/1.6 var(--font-ui); }
+.locked-actions { display: flex; gap: .6rem; flex-wrap: wrap; justify-content: center; margin-top: .4rem; }
+/* ============================================================================
+   PROJECT MANAGEMENT — inline rename · fork · version-history drawer
+   ============================================================================ */
+/* Inline-editable titles (viewer header + site cards). */
+.header-title-edit { display: flex; align-items: center; min-width: 0; }
+.header-title.as-title { display: inline-flex; align-items: center; gap: .4rem; max-width: 42vw; padding: 0; border: 0; background: transparent; cursor: text; }
+.header-title.as-title svg { flex: none; color: var(--ink-soft); opacity: 0; transition: opacity .15s ease; }
+.header-title.as-title:hover svg, .header-title.as-title:focus-visible svg { opacity: 1; }
+.title-input { width: min(42vw, 26rem); min-width: 0; padding: .3rem .5rem; border: 1px solid var(--accent); background: var(--paper-raised); color: var(--ink); font: 500 1.05rem/1.2 var(--font-display); }
+.title-input.card { width: 100%; font: 500 1.12rem/1.25 var(--font-display); }
+.title-input:focus-visible { outline: none; }
+/* Optional title field in the dropzone. */
+.dropzone-title { width: min(100%, 26rem); padding: .55rem .75rem; border: 1px solid var(--line); background: var(--paper); color: var(--ink); font: 500 .9rem/1.4 var(--font-ui); text-align: center; }
+.dropzone-title::placeholder { color: var(--ink-soft); }
+/* Version-history drawer — slides in from the right over a scrim.
+   z-index 70 only holds when the scrim is mounted on <body>: the full-screen viewer renders the drawer
+   inside `.fs-bar`, and `.fs-viewer` (position:fixed) is a stacking context, so a 70 trapped inside can
+   never rise above anything outside — let alone survive the bar's collapsed opacity:0 +
+   pointer-events:none, which switches it off outright. Both drawers and the sign-in dialog therefore
+   createPortal onto body, and only then is 70 (drawer) < 80 (sign-in dialog) a real ordering. */
+.drawer-scrim { position: fixed; z-index: 70; inset: 0; display: flex; justify-content: flex-end; background: color-mix(in srgb, var(--ink) 34%, transparent); }
+.drawer { display: flex; flex-direction: column; height: 100%; animation: drawer-in .2s ease; }
+@keyframes drawer-in { from { transform: translateX(100%); } to { transform: none; } }
+/* LOGIN GATE — intent-triggered, never shown on arrival. Same scrim weight and timing as the
+   drawer so the two modal surfaces feel like one system. */
+.gate-scrim { position: fixed; z-index: 80; inset: 0; display: flex; align-items: center; justify-content: center; padding: 1rem; background: color-mix(in srgb, var(--ink) 34%, transparent); }
+.gate { position: relative; width: min(30rem, 100%); background: var(--paper-raised); border: 1px solid var(--line); box-shadow: var(--shadow); animation: gate-in .18s ease; }
+@keyframes gate-in { from { opacity: 0; transform: translateY(.5rem); } to { opacity: 1; transform: none; } }
+.gate-close { position: absolute; top: .7rem; right: .7rem; display: inline-flex; padding: .3rem; border: 0; background: transparent; color: var(--ink-soft); cursor: pointer; }
+.gate-close:hover { color: var(--ink); }
+.gate-head { display: flex; gap: .85rem; align-items: flex-start; }
+.gate-mark { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 2.1rem; height: 2.1rem; border-radius: 50%; }
+.gate h2 { margin: 0 0 .35rem; }
+.gate-head p { margin: 0; font-size: .82rem; line-height: 1.65; color: var(--ink-soft); }
+.gate-note { margin: 1rem 0 0; padding: .7rem .8rem; background: var(--paper-deep); font-size: .76rem; line-height: 1.6; color: var(--ink-soft); }
+.gate-note b { font-weight: 600; color: var(--ink); }
+.gate-actions { display: flex; gap: .5rem; margin-top: 1.25rem; }
+.gate-actions .btn { flex: 1; justify-content: center; }
+.gate-actions .btn.ghost { flex: 0 0 auto; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; }
+.drawer-body { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
+.drawer-note { display: flex; align-items: center; gap: .5rem; color: var(--ink-soft); font: 500 .8rem/1.5 var(--font-ui); }
+.drawer-error { margin: 0; padding: .6rem .8rem; border-left: 3px solid var(--critical); background: color-mix(in srgb, var(--critical) 8%, transparent); color: var(--critical); font: 600 .76rem/1.5 var(--font-ui); }
+.ver-row { display: flex; flex-direction: column; gap: .5rem; }
+.ver-row.is-current { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.ver-row-head { display: flex; align-items: center; }
+.ver-num { letter-spacing: .02em; }
+.ver-current-pill { margin-left: auto; }
+.ver-row-meta { display: flex; align-items: center; gap: .5rem; }
+.ver-row-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .1rem; }
+/* ============================================================================
+   TOAST (gps)
+   ============================================================================ */
+.toast { position: fixed; z-index: 60; right: 1rem; bottom: 1rem; display: flex; align-items: center; gap: .6rem; padding: .75rem 1.1rem; box-shadow: var(--shadow); transform: translateY(180%); transition: transform .2s ease; }
+.toast.show { transform: none; }
+.toast a { color: color-mix(in srgb, var(--accent) 75%, white); font-weight: 700; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 820px) {
+  .header-mid { display: none; }
+  /* The bar must stay one line, so shed width instead of wrapping: the brand's tagline and the
+       for-agents link are the two things a narrow screen can lose without losing a control. */
+  .brand small { display: none; }
+  .editor-body { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .editor-pane + .editor-pane { border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (max-width: 560px) {
+  .brand small { display: none; }
+  .dropzone-actions { flex-direction: column; align-items: stretch; }
+}
+/* --- identity surfaces ---------------------------------------------------- */
+.auth-chip { gap: 6px; }
+.me-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.me-list li { display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 10px; }
+.me-list li a { font-weight: 600; text-decoration: none; }
+.me-list li small { margin-left: auto; opacity: .65; }
+/* The back button lives at the top left of the content (next to what it leads away from), not crammed into the account area on the right of the header. */
+.page-back { margin-bottom: 1.2rem; }
+/* The account page opens straight with its tabs; the big hero spacing .sites-section was designed for is just a hole here. */
+.home.tight { padding-top: clamp(1.2rem, 2.5vw, 2rem); }
+.claim-form { display: grid; gap: .8rem; max-width: 34rem; }
+.claim-form .btn { justify-self: start; }
+.share-people { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.share-people li { display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border: 1px solid var(--hairline); border-radius: 8px; }
+.share-people li span { flex: 1; }
+/* --- post-login acknowledgement ------------------------------------------- */
+.welcome-burst { position: fixed; inset: 0; z-index: 90;
+  display: grid; place-items: center;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  backdrop-filter: blur(10px);
+  animation: wb-in 260ms ease-out both; }
+.welcome-burst.leaving { animation: wb-out 400ms ease-in both; }
+/* The sweep: one ring expanding past the viewport. Cheap (transform+opacity only) and it reads
+   as "everything just changed" without pushing layout around. */
+.welcome-burst-ring { position: absolute; width: 40vmax; height: 40vmax; border-radius: 50%;
+  border: 2px solid var(--accent, #b08968);
+  animation: wb-ring 1200ms cubic-bezier(.2,.7,.3,1) both; }
+.welcome-burst-body { position: relative; text-align: center; display: grid; gap: 6px; justify-items: center;
+  animation: wb-rise 520ms cubic-bezier(.2,.8,.2,1) 120ms both; }
+.welcome-burst-body strong { font-size: clamp(56px, 12vmin, 120px); line-height: 1; font-weight: 700; }
+.welcome-burst-body p { margin: 0; font-size: 18px; font-weight: 600; }
+.welcome-burst-body .welcome-burst-plain { font-size: clamp(28px, 6vmin, 44px); }
+.welcome-burst-body small { opacity: .65; }
+@keyframes wb-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes wb-out { to   { opacity: 0 } }
+@keyframes wb-ring { from { transform: scale(.15); opacity: .9 } to { transform: scale(3.4); opacity: 0 } }
+@keyframes wb-rise { from { opacity: 0; transform: translateY(14px) scale(.96) } to { opacity: 1; transform: none } }
+/* ============================================================================
+   FS — full-screen artifact view (/s/[slug])
+   The artifact IS the full-screen experience: the iframe fills the viewport and the chrome floats
+   above it on demand. New classes take the fs- prefix and leave every rule above untouched.
+   ============================================================================ */
+/* position:fixed rather than 100vh/100dvh for height: vh jumps while a mobile address bar expands
+   and collapses, whereas a fixed box follows the visual viewport, so the artifact never grows a
+   mysterious strip of blank space or a scrollbar. --fs-bar-h is measured by the component with a
+   ResizeObserver and written HERE (not on .fs-chrome): the stage and the bar are siblings, and CSS
+   variables inherit downwards only — set on the bar, the stage could not read it. */
+.fs-viewer { --fs-hot: 14px; --fs-slide: .2s; --fs-slide-out: .1s; position: fixed; inset: 0; overflow: hidden; background: var(--paper-deep); }
+/* Device switching still matters in full screen: off desktop, the stage is squeezed to the device
+   width and centred, with the surface colour showing on both sides. When the bar is open the stage
+   moves down by one bar height: the artifact is pushed, not covered. Moving with top (not transform)
+   is deliberate — top also shrinks the available height, so the artifact reflows into the shorter
+   viewport and everything stays visible; transform is cheaper (no reflow) but crops a strip at the
+   bottom, i.e. hides content somewhere else. */
+/* The two directions take different times: down uses --fs-slide (so people see where the bar came
+   from and how far the artifact yielded), back uses --fs-slide-out (noticeably faster — nobody is
+   looking at it any more, a slow retreat only gets in the way). The numbers were tuned by feel;
+   change these two variables. Mechanism: each duration sits in its own rule, because a CSS
+   transition takes the transition property of the state being entered: opening matches
+   [data-bar="open"], closing falls back to the base rule. One shared variable would mean one speed. */
+.fs-stage-wrap { position: absolute; inset: 0; display: flex; justify-content: center;
+  transition: top var(--fs-slide-out) linear; }
+.fs-viewer[data-bar="open"] .fs-stage-wrap { top: var(--fs-bar-h); transition: top var(--fs-slide) linear; }
+.fs-stage { position: relative; width: 100%; height: 100%; background: var(--paper); transition: max-width .2s ease; }
+.fs-viewer[data-device="tablet"] .fs-stage { max-width: 834px; }
+.fs-viewer[data-device="mobile"] .fs-stage { max-width: 400px; }
+.fs-viewer:not([data-device="desktop"]) .fs-stage { border-left: 1px solid var(--line); border-right: 1px solid var(--line); box-shadow: var(--shadow); }
+.fs-frame { display: block; width: 100%; height: 100%; border: 0; background: var(--artifact-canvas); } /* see .site-thumb iframe: the artifact canvas ignores the theme */
+/* The top overlay = hot zone + bar + handle. Collapsed, the layer is only --fs-hot tall; open, it grows
+   to the bar's height: a pointer travelling up from the iframe must hit this layer first for the parent
+   page to receive mouseenter at all (once the mouse is inside the iframe the parent gets no pointer
+   events). --fs-bar-h is measured by the component with a ResizeObserver. */
+.fs-chrome { position: fixed; z-index: 40; top: 0; left: 0; right: 0; height: var(--fs-hot); font-family: var(--font-ui); }
+.fs-chrome.is-open { height: calc(var(--fs-bar-h) + 20px); }
+/* The hot zone is only laid out while collapsed; open, the bar handles clicks itself, so a click on the bar's lower edge cannot collapse it by accident. */
+.fs-hotzone { position: absolute; inset: 0; z-index: 0; }
+.fs-chrome.is-open .fs-hotzone { display: none; }
+/* Open, this layer is taller than the bar (by the handle's 20px) while the artifact only yielded one
+   bar height — those 20px are an invisible strip eating clicks, right on top of the pushed-down
+   artifact. So while open the layer takes no pointer events; only the bar and the handle do. Hover
+   open/close still works: pointerover on the children bubbles up to this layer, which is what React's
+   onPointerEnter/Leave derive from. The collapsed state cannot do this — there the hot zone is the
+   only way to summon the bar. */
+.fs-chrome.is-open { pointer-events: none; }
+.fs-chrome.is-open .fs-bar, .fs-chrome.is-open .fs-handle { pointer-events: auto; }
+/* Slide with top, not transform — transform creates a containing block for position:fixed
+   descendants, and the version-history / sharing drawers would be locked inside the bar's box
+   instead of covering the screen. The same reason removes .app-header's own backdrop-filter (also a
+   containing block); the frosted glass moves to .fs-bar-glass, a purely decorative layer. */
+.fs-chrome .fs-bar { position: absolute; left: 0; right: 0; top: calc(-1 * var(--fs-bar-h)); z-index: 1; background: transparent; backdrop-filter: none; border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); opacity: 0; pointer-events: none; /* Same duration/curve as the stage: however far the bar slides down, the artifact yields the same,
+     so it reads as being pushed. Opacity is deliberately faster — the bar should be solid the moment
+     it shows; a translucent bar over the artifact is exactly the look being fixed. */
+  transition: top var(--fs-slide-out) linear, opacity .18s linear; }
+.fs-chrome.is-open .fs-bar { top: 0; opacity: 1; pointer-events: auto; transition: top var(--fs-slide) linear, opacity .18s linear; }
+/* Must stay legible over any artifact: paper colour opaque enough, plus frosted glass. */
+.fs-bar-glass { position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, var(--paper) 84%, transparent); backdrop-filter: saturate(1.25) blur(14px); }
+@supports not (backdrop-filter: blur(4px)) { .fs-bar-glass { background: var(--paper); } }
+.fs-handle { position: absolute; z-index: 2; top: 0; left: 50%; margin-left: -28px; display: grid; place-items: center; width: 56px; height: 20px; padding: 0; border: 1px solid color-mix(in srgb, var(--line) 80%, transparent); border-top: 0; backdrop-filter: blur(8px); color: var(--ink-soft); opacity: .55; transition: top var(--fs-slide-out) linear, opacity .18s linear; }
+.fs-handle:hover, .fs-handle:focus-visible { opacity: 1; color: var(--ink); }
+/* Bar-mode switch: in automatic mode the icon lights up in the accent colour so "auto" is obvious at a glance; manual is the default and stays grey. */
+.fs-mode[data-bar-mode="auto"] svg { color: var(--accent); }
+.fs-chrome.is-open .fs-handle { top: var(--fs-bar-h); opacity: 1; transition: top var(--fs-slide) linear, opacity .18s linear; }
+/* Touch has no hover, so the handle is the only entrance: make it big and solid. */
+@media (hover: none) { .fs-handle { width: 74px; height: 26px; opacity: .92; } }
+/* The bar is narrow in full screen: drop folder/version metadata first, never a button. */
+@media (max-width: 900px) { .fs-chrome .fs-bar .viewer-meta { display: none; } }
+/* Narrow screens keep the bar on one line and scroll the extra buttons sideways: wrapping would grow
+   to three lines, and a three-line bar floating over the artifact hides half the first screen.
+   No button is dropped; they just need a horizontal swipe. */
+@media (max-width: 820px) {
+  .fs-chrome .fs-bar { grid-template-columns: auto minmax(0, 1fr); gap: .7rem; }
+  .fs-chrome .fs-bar .controls { justify-self: stretch; flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+  .fs-chrome .fs-bar .controls::-webkit-scrollbar { width: 0; height: 0; }
+}
+.hm-tabs { display: flex; flex-wrap: wrap; gap: .1rem; }
+/* The active tab sits ON the hairline (-1px) rather than above it: the accent rule replaces the
+   section border under the selected view, which is what makes the panel below read as its body. */
+.hm-tab { display: inline-flex; align-items: center; gap: .45rem;
+  margin-bottom: -1px; padding: .7rem .85rem;
+  border: 0; border-bottom: 2px solid transparent; background: transparent;
+  color: var(--ink-soft); font: 700 .78rem/1 var(--font-ui); letter-spacing: .01em; cursor: pointer;
+  transition: color .15s ease, border-color .15s ease; }
+.hm-tab:hover { color: var(--ink); }
+.hm-tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.hm-tab svg { opacity: .75; }
+.hm-tab[aria-selected="true"] svg { opacity: 1; color: var(--accent); }
+.hm-tab i { padding: .16rem .34rem; background: var(--paper-deep); color: var(--ink-soft);
+  font: 700 .6rem/1 var(--font-ui); font-style: normal; font-variant-numeric: tabular-nums; }
+.hm-tab[aria-selected="true"] i { background: color-mix(in srgb, var(--accent-soft) 65%, transparent); color: var(--accent); }
+@media (max-width: 560px) { .hm-tab { padding: .6rem .5rem; font-size: .72rem; } }
+/* ============================================================================
+   VISUAL EDIT (ve-) — visual editing only: loading state, write-back notices, the secondary source entry
+   All classes take the ve- prefix and are appended at the end of the file to ease merging parallel branches.
+   ============================================================================ */
+/* "Edit source" is the fallback, not the main view: a quiet text button that does not compete with the primary action. */
+.ve-secondary { display: inline-flex; align-items: center; gap: .3rem; padding: .3rem .5rem;
+  border: 0; background: transparent; color: var(--ink-soft);
+  font: 600 .68rem/1 var(--font-ui); cursor: pointer; opacity: .75; }
+.ve-secondary:hover, .ve-secondary:focus-visible { opacity: 1; color: var(--ink); text-decoration: underline; }
+/* Loading overlay: from fetch through iframe render to bootstrap ready something is always moving — no blank screen. */
+.ve-loading { position: absolute; inset: 0; z-index: 2;
+  display: grid; place-content: center; justify-items: center; gap: .55rem;
+  padding: 1.5rem; text-align: center;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  color: var(--ink-soft); font: 500 .82rem/1.6 var(--font-ui); }
+.ve-loading p { margin: 0; max-width: 32rem; }
+.ve-loading-slow { font-size: .74rem; }
+.ve-loading-error { color: var(--critical); font-size: .78rem; }
+.ve-loading-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .3rem; }
+.ve-link { border: 0; background: transparent; padding: 0 .15rem; color: var(--accent);
+  font: inherit; text-decoration: underline; cursor: pointer; }
+/* Unsaved / partial write-back notice, right next to the save button — nobody should believe everything was saved. */
+.ve-pill { display: inline-flex; align-items: center; gap: .35rem; border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--line)); color: var(--warning); letter-spacing: .09em; text-transform: uppercase; }
+.ve-warn { display: inline-flex; align-items: center; gap: .3rem; min-width: 0; color: var(--warning); font: 500 .72rem/1.4 var(--font-ui); }
+/* In-place "Edit text / Play" switch: reuses the .segmented look, only shrunk to the toolbar row. */
+.ve-mode { margin-left: auto; flex: none; }
+.ve-mode button { display: inline-flex; align-items: center; gap: .3rem; }
+.ve-mode button[disabled] { opacity: .5; cursor: not-allowed; }
+/* ============================================================================
+   VERSION PICKER (vp-) — choose the base before editing: edit the current version / start from a past one / make a copy
+   All classes take the vp- prefix and are appended at the end of the file to ease merging parallel branches.
+   ============================================================================ */
+.vp { display: flex; flex-direction: column; min-height: 100svh; }
+.vp-body { flex: 1; width: 100%; max-width: 46rem; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 1.4rem;
+  padding: clamp(1.4rem, 4vw, 2.6rem) clamp(1rem, 3vw, 2rem) 3rem; }
+.vp-head { display: flex; flex-direction: column; gap: .5rem; }
+.vp-title { display: flex; align-items: center; gap: .5rem; margin: 0; }
+.vp-lede { margin: 0; color: var(--ink-soft); font: 500 .82rem/1.65 var(--font-ui); }
+/* Why "the version you pointed at last time no longer counts". A notice, not an error, but too prominent to skip. */
+.vp-notice { margin: 0; padding: .65rem .8rem;
+  border-left: 3px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+  color: var(--ink); font: 500 .78rem/1.55 var(--font-ui); }
+/* Primary action: edit the current version. One solid block, button on the right, visibly outweighing the two groups below. */
+.vp-primary { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; padding: 1rem 1.1rem; }
+.vp-primary-text { display: flex; flex-direction: column; gap: .3rem; flex: 1; min-width: 12rem; }
+.vp-primary-text b { font: 600 .92rem/1.3 var(--font-ui); }
+.vp-primary-text span { color: var(--ink-soft); font: 500 .72rem/1.4 var(--font-ui); }
+.vp-section { display: flex; flex-direction: column; gap: .6rem; }
+.vp-section-title { margin: 0; padding-bottom: .45rem; border-bottom: 1px solid var(--line);
+  font: 700 .62rem/1 var(--font-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+/* "Saving moves forward; old versions are never rewritten" must read clearly — this is where users misunderstand most. */
+.vp-hint { margin: 0; color: var(--ink-soft); font: 500 .76rem/1.6 var(--font-ui); }
+.vp-hint b { font-weight: 700; color: var(--ink); }
+.vp-list { display: flex; flex-direction: column; gap: .6rem; }
+.vp-row-warn { margin: 0; color: var(--warning); font: 500 .72rem/1.5 var(--font-ui); }
+@media (max-width: 560px) {
+  .vp-primary { align-items: stretch; }
+  .vp-primary .btn { justify-content: center; }
+}
+.for-agents { width: min(100% - 2rem, var(--reading)); margin: 0 auto; padding: clamp(2rem, 5vw, 3.6rem) 0 6rem; }
+.for-agents > .eyebrow { display: block; margin-bottom: 1.1rem; }
+.copy-field { display: flex; gap: .5rem; align-items: stretch; flex-wrap: wrap; }
+.copy-field-value { flex: 1 1 16rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; padding: .6rem .7rem; border: 1px solid var(--line); background: var(--paper-raised); color: var(--ink); font: 600 .86rem/1.4 var(--font-mono); }
+.copy-field .btn { flex: none; }
+/* Rendered markdown manual. Editorial prose in the paper/ink system. */
+.prose { max-width: var(--reading); }
+.prose > :first-child { margin-top: 0; }
+.prose h1 { margin: 0 0 1.2rem; font: 500 clamp(1.8rem, 4vw, 2.6rem)/1.12 var(--font-display); letter-spacing: -.03em; }
+.prose h2 { margin: 2.6rem 0 1rem; padding-bottom: .5rem; border-bottom: 1px solid var(--line); font: 500 clamp(1.4rem, 3vw, 1.85rem)/1.2 var(--font-display); letter-spacing: -.02em; }
+.prose h3 { margin: 1.8rem 0 .7rem; font: 600 1.12rem/1.3 var(--font-ui); letter-spacing: -.01em; }
+.prose p { margin: 0 0 1rem; }
+.prose strong { font-weight: 700; color: var(--ink); }
+.prose a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.prose ul, .prose ol { margin: 0 0 1rem; padding-left: 1.3rem; }
+.prose li { margin: .35rem 0; }
+.prose li::marker { color: var(--ink-soft); }
+.prose hr { margin: 2rem 0; border: 0; border-top: 1px solid var(--line); }
+/* Inline code + fenced blocks. Square, monospace, subtle — matches the app's borders-not-radius look. */
+.prose code { font: 600 .84em/1.5 var(--font-mono); padding: .1em .35em; background: color-mix(in srgb, var(--ink) 7%, transparent); word-break: break-word; }
+.prose pre { margin: 0 0 1.2rem; padding: .95rem 1.1rem; overflow-x: auto; border: 1px solid var(--line); background: var(--paper-raised); }
+.prose pre code { display: block; padding: 0; background: none; font-weight: 500; font-size: .82rem; line-height: 1.6; word-break: normal; white-space: pre; }
+/* Blockquote as a callout (the guide uses it for operator notes). */
+.prose blockquote { margin: 0 0 1.2rem; padding: .7rem 1rem; border-left: 3px solid var(--accent-2); background: color-mix(in srgb, var(--accent-2) 8%, transparent); color: var(--ink-soft); }
+.prose blockquote p { margin: 0; font-size: .92em; }
+.prose blockquote strong { color: var(--ink); }
+/* Tables — the guide leans on them heavily. Scroll horizontally on narrow screens rather than
+   forcing the page body to scroll. */
+.prose table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0 0 1.3rem; font: 500 .9rem/1.5 var(--font-ui); }
+.prose thead { background: var(--paper-deep); }
+.prose th, .prose td { padding: .5rem .7rem; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.prose th { font-weight: 700; white-space: nowrap; }
+.prose td code, .prose th code { font-size: .82em; }
+/* ============================================================================
+   NOT FOUND — the site /s/<slug> points at is gone
+   ============================================================================ */
+/* Exists mainly so the page can carry its own <title>/description: reaching this via notFound()
+   used to render Next's default, which inherited the root layout's metadata — a dead share link's
+   preview card then looked exactly like the home page's. See src/app/not-found.tsx. */
+.notfound { display: grid; place-items: center; align-content: center; gap: 1rem; min-height: 70vh; padding: 2rem; text-align: center; }
+.notfound h1 { font: 500 clamp(1.8rem, 4vw, 2.6rem)/1.15 var(--font-display); letter-spacing: -.03em; }
+.notfound p { margin: 0; max-width: 32rem; color: var(--ink-soft); font: 500 .95rem/1.7 var(--font-ui); }
+/* ============================================================================
+   SHARE LINKS (share-) — the lower half of the sharing drawer: besides the site's visibility, a site can
+   carry several independent share links, each with its own policy, expiry, list of people and view log.
+   All classes take the share- prefix (continuing the drawer's existing .share-add / .share-people) and are
+   appended at the end of the file to ease merging. Square corners + 1px borders; no new visual language.
+   ============================================================================ */
+/* One section of the drawer. Sections are separated by .hairline; each lays itself out. */
+.share-sec { display: flex; flex-direction: column; gap: .7rem; }
+.share-sec-title { margin: 0; padding-bottom: .45rem; border-bottom: 1px solid var(--line);
+  font: 700 .62rem/1 var(--font-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+/* Three grades of explanatory text: neutral hint / warning that must be read / failure. */
+.share-hint { margin: 0; color: var(--ink-soft); font: 500 .74rem/1.6 var(--font-ui); }
+.share-hint b { font-weight: 700; color: var(--ink); }
+.share-hint code { font: 600 .82em/1 var(--font-mono); padding: .08em .3em; background: color-mix(in srgb, var(--ink) 8%, transparent); }
+/* "Nobody is notified" and "the e-mail must match exactly" — not errors, but skip them once and you wait for someone who never comes. */
+.share-warn { margin: 0; padding: .5rem .65rem;
+  border-left: 3px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+  color: var(--ink); font: 500 .74rem/1.55 var(--font-ui); }
+.share-error { margin: 0; padding: .5rem .65rem;
+  border-left: 3px solid var(--critical);
+  background: color-mix(in srgb, var(--critical) 8%, transparent);
+  color: var(--critical); font: 600 .74rem/1.5 var(--font-ui); }
+/* A restricted share on a site whose front door is still open — without a notice, those policies are decoration. */
+.share-nudge { display: flex; align-items: flex-start; gap: .55rem;
+  padding: .7rem .8rem;
+  border: 1px solid color-mix(in srgb, var(--warning) 50%, var(--line));
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  color: var(--ink); }
+.share-nudge > svg { flex: none; margin-top: .1rem; color: var(--warning); }
+.share-nudge > div { display: flex; flex-direction: column; align-items: flex-start; gap: .5rem; }
+.share-nudge p { margin: 0; font: 500 .76rem/1.55 var(--font-ui); }
+/* One-time reveal. The plaintext link exists only in this one response, so this block must outrank everything else on the page. */
+.share-minted { display: flex; flex-direction: column; gap: .55rem; padding: .85rem .9rem; }
+.share-minted-once { margin: 0; color: var(--ink); font: 700 .78rem/1.5 var(--font-ui); }
+.share-minted .copy-field-value { font-size: .78rem; }
+.share-minted-code { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.share-minted-code code { padding: .35rem .6rem; border: 1px solid var(--line); background: var(--paper-raised); font: 700 1rem/1 var(--font-mono); letter-spacing: .18em; }
+.share-minted > .btn { align-self: flex-start; }
+/* Existing share links. */
+.share-links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .6rem; }
+.share-link { display: flex; flex-direction: column; gap: .5rem;
+  padding: .75rem .85rem; border: 1px solid var(--line); background: var(--paper-raised); }
+/* Revoked/expired links stay in the list (the revocation itself is information) but must not look usable. */
+.share-link.is-revoked, .share-link.is-expired { opacity: .62; }
+.share-link-head { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; }
+.share-link-head b { font: 600 .84rem/1.3 var(--font-ui); }
+.share-link-state { padding: .2rem .45rem; border: 1px solid var(--line);
+  font: 700 .54rem/1 var(--font-ui); letter-spacing: .08em; color: var(--ink-soft); }
+.share-link-state.is-live { border-color: color-mix(in srgb, var(--positive) 55%, var(--line)); }
+.share-link-state.is-revoked { border-color: color-mix(in srgb, var(--critical) 45%, var(--line)); color: var(--critical); }
+.share-link-meta { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; color: var(--ink-soft); }
+.share-link-controls { display: flex; gap: .5rem; flex-wrap: wrap; }
+.share-link-controls label { display: flex; flex-direction: column; gap: .25rem; flex: 1 1 9rem; min-width: 0; }
+.share-link-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+.share-link-actions:empty { display: none; }
+/* The create form. */
+.share-new { display: flex; flex-direction: column; gap: .7rem;
+  padding: .85rem .9rem; border: 1px solid var(--line); background: var(--paper-raised); }
+.share-new-actions { display: flex; gap: .4rem; }
+/* People picker: search people who have signed in here, or type an e-mail that is not registered yet. */
+.share-pick { display: flex; flex-direction: column; gap: .45rem; }
+.share-pick-label { color: var(--ink-soft); font: 700 .6rem/1 var(--font-ui); letter-spacing: .08em; text-transform: uppercase; }
+.share-pick-input { display: flex; align-items: center; gap: .4rem; border: 1px solid var(--line); background: var(--paper); }
+.share-pick-input > svg { flex: none; color: var(--ink-soft); }
+.share-pick-input input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink); font: 500 .82rem/1.4 var(--font-ui); }
+.share-pick-input input:focus { outline: none; }
+.share-pick-input .btn { flex: none; margin: .25rem 0; }
+.share-pick-results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--line); background: var(--paper); max-height: 12rem; overflow-y: auto; }
+.share-pick-results li + li { border-top: 1px solid var(--line); }
+.share-pick-results button { display: flex; flex-direction: column; gap: .15rem; width: 100%; padding: .45rem .6rem;
+  border: 0; background: transparent; text-align: left; color: inherit; cursor: pointer; }
+.share-pick-results button:hover { background: var(--paper-deep); }
+.share-pick-results b { font: 600 .8rem/1.3 var(--font-ui); }
+.share-pick-results span { color: var(--ink-soft); font: 500 .68rem/1.3 var(--font-ui); }
+.share-pick-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+.share-pick-row { display: flex; align-items: center; gap: .45rem; padding: .35rem .5rem; border: 1px solid var(--line); background: var(--paper); }
+.share-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 .8rem/1.4 var(--font-ui); }
+/* "Not registered" is not an error state, but it must be obvious at a glance — it is the one place where "added successfully" may still mean nobody ever gets in. */
+.share-pick-pending { flex: none; padding: .18rem .4rem; border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--line));
+  color: var(--warning); font: 700 .54rem/1 var(--font-ui); letter-spacing: .06em; }
+/* View log: collapsed; fetched only when expanded. */
+.share-views { display: flex; flex-direction: column; gap: .5rem; margin-top: .3rem; }
+.share-views-toggle { display: flex; align-items: center; gap: .35rem; padding: .45rem 0; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--ink-soft); letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
+.share-views-toggle:hover { color: var(--ink); }
+.share-views-body { display: flex; flex-direction: column; gap: .5rem; }
+/* Summary line — the plain sentence above the details. Numbers emphasised, the counting caveat pushed aside. */
+.share-views-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .45rem; margin: 0; padding: .55rem .7rem; border: 1px solid var(--line); background: var(--paper); color: var(--ink); font: 500 .76rem/1.5 var(--font-ui); }
+.share-views-summary b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.share-views-summary-note { margin-left: auto; color: var(--ink-soft); font-size: .68rem; }
+.share-view-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.share-view-list li { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap;
+  padding: .4rem 0; border-bottom: 1px solid var(--line); }
+.share-view-who { flex: 1 1 8rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-view-when { color: var(--ink-soft); font: 600 .64rem/1.4 var(--font-ui); }
+.share-view-via { flex-basis: 100%; color: var(--ink-soft); font: 500 .68rem/1.4 var(--font-ui); }
+/* `.field` only ever skinned input/textarea; select fell back to the browser default — jarring in the paper-and-ink
+   look, and this is the screen with the most selects. Filled in here, at the end of the file, so earlier rules cannot override it. */
+.field select, .share-link-controls select { padding: .55rem .6rem; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  font: 500 .82rem/1.4 var(--font-ui); border-radius: 0; appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 1rem center, right .72rem center;
+  background-size: .28rem .28rem, .28rem .28rem;
+  background-repeat: no-repeat;
+  padding-right: 1.8rem; }
+.field select:disabled, .share-link-controls select:disabled { opacity: .5; }
+/* ── Identity menu ─────────────────────────────────────────────────────────
+   The name is the button; sign-out lives in the menu it opens. One control per identity, so later
+   entries such as user settings need no extra button on the bar. */
+.auth-chip { position: relative; display: inline-flex; align-items: center; }
+.auth-menu { position: absolute; z-index: 90; top: calc(100% + .35rem); right: 0;
+  min-width: 12rem; padding: .35rem;
+  background: var(--paper-raised); border: 1px solid var(--line); box-shadow: var(--shadow);
+  animation: gate-in .14s ease; }
+.auth-menu-id { margin: 0; padding: .4rem .55rem .5rem; color: var(--ink-soft); font: 500 .72rem/1.4 var(--font-ui); overflow-wrap: anywhere; }
+.auth-menu .hairline { margin: .3rem 0; }
+.auth-menu-item { display: flex; align-items: center; gap: .5rem; width: 100%;
+  padding: .45rem .55rem; border: 0; background: transparent;
+  color: var(--ink); font: 500 .82rem/1.3 var(--font-ui); text-align: left; cursor: pointer; }
+.auth-menu-item:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.auth-menu-item:disabled { opacity: .55; cursor: progress; }
+/* Separator between identity and site actions: one is "who you are", the other "what this site allows". */
+.controls-sep { align-self: center; width: 1px; margin: 0 .15rem; background: var(--line); }
+/* ── Sharing panel: compact rows ───────────────────────────────────────────
+   One switch per row: icon · title and description · select on the right. Saves most of the height of
+   stacked form blocks, and "the setting" and "what it is now" sit on one line of sight. */
+.share-row { display: flex; align-items: flex-start; gap: .6rem; }
+.share-row-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 1.9rem; height: 1.9rem; margin-top: .1rem; color: var(--ink-soft); }
+.share-row-text { flex: 1; min-width: 0; }
+.share-row-text label { display: block; color: var(--ink); font: 600 .82rem/1.35 var(--font-ui); letter-spacing: 0; text-transform: none; }
+.share-row-text p { margin: .15rem 0 0; color: var(--ink-soft); font: 500 .72rem/1.5 var(--font-ui); }
+/* The select wraps onto its own full line instead of squeezing next to the title. The old max-width:9rem
+   (144px) could not fit the longest option (371px) and cut it to "Private — only me and collaborators" —
+   the missing half, "others need a share link", is exactly what decides whether to pick it. This is a
+   permission setting: not seeing all of it is far worse than looking plain.
+   Deliberately not indented to the text column (a margin-left:2.5rem version was tried): a flex item's
+   min-width:auto stops the select from being narrower than its longest option, so any indent pushes it
+   through the drawer's right edge. The full line gives 388px, a dozen pixels more than the longest option. */
+.share-row { flex-wrap: wrap; }
+.share-row select { flex: 1 0 100%; align-self: stretch; max-width: none; }
+/* Footer: the one and only copy entry, right next to the scope it copies. */
+.share-foot { display: flex; align-items: center; justify-content: space-between; gap: .6rem; border-top: 1px solid var(--line); }
+.share-foot-scope { color: var(--ink-soft); font: 500 .74rem/1.4 var(--font-ui); }
+/* The drawer footer is a flex child; the body has to give way and scroll on its own. */
+.share-body { min-height: 0; }
+/* ============================================================================
+   PUBLISH FROM PAGE (pfp-) — the bookmarklet's intro and confirmation pages
+   ============================================================================ */
+.pfp { max-width: 46rem; margin: 0 auto; padding: clamp(2rem, 5vw, 3.5rem) 1.25rem 4rem; }
+.pfp h1 { margin: 0 0 .6rem; }
+.pfp-lede { margin: 0 0 1.8rem; color: var(--ink-soft); font: 500 .92rem/1.7 var(--font-ui); }
+.pfp-source { margin: 0 0 1.2rem; color: var(--ink-soft); font: 500 .8rem/1.5 var(--font-ui); overflow-wrap: anywhere; }
+.pfp-field { display: grid; gap: .35rem; margin: 0 0 1.2rem; }
+.pfp-field span { color: var(--ink-soft); font: 600 .7rem/1 var(--font-ui); letter-spacing: .04em; text-transform: uppercase; }
+.pfp-warn { display: flex; gap: .6rem; margin: 0 0 1.2rem; padding: .9rem 1rem; border: 1px solid var(--accent); font: 500 .82rem/1.6 var(--font-ui); }
+.pfp-warn b { display: block; margin-bottom: .3rem; }
+.pfp-warn p { margin: 0 0 .4rem; color: var(--ink-soft); }
+.pfp-warn ul { margin: 0; padding-left: 1.1rem; color: var(--ink-soft); }
+.pfp-more { margin: .3rem 0 0 !important; }
+.pfp-preview { height: 22rem; margin: 0 0 1.2rem; border: 1px solid var(--line); overflow: hidden; background: var(--artifact-canvas); }
+.pfp-preview iframe { display: block; width: 100%; height: 100%; max-width: none; border: 0; background: var(--artifact-canvas); }
+.pfp-error { margin: 0 0 .8rem; color: var(--danger, #b4432f); font: 600 .82rem/1.5 var(--font-ui); }
+.pfp-actions { display: flex; gap: .6rem; }
+/* The home page's third entrance: a button meant to be dragged away. It follows the AI prompt strip and must
+   be quieter than the first two entrances — usage lives in the hover hint; whoever does not need it should not read three more lines. */
+.bookmarklet-strip { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: .5rem; margin: .9rem 0 0; color: var(--ink-soft); font: 500 .78rem/1.6 var(--font-ui); }
+.bookmarklet-wrap { position: relative; display: inline-flex; }
+.bookmarklet-drag { display: inline-flex; align-items: center; gap: .35rem; padding: .3rem .6rem; border: 1px solid var(--line); background: var(--paper); color: var(--ink); font: 600 .78rem/1 var(--font-ui); text-decoration: none; cursor: grab; }
+.bookmarklet-drag:active { cursor: grabbing; }
+.bookmarklet-drag:hover { border-color: var(--accent); color: var(--accent); }
+/* The hint card takes no space and no pointer by default; it appears on hover/focus only. */
+.bookmarklet-tip { position: absolute; bottom: calc(100% + .5rem); left: 50%; transform: translateX(-50%) translateY(.25rem);
+  z-index: 30; width: min(22rem, 78vw); padding: .7rem .8rem; border: 1px solid var(--line);
+  background: var(--paper); box-shadow: var(--shadow); color: var(--ink-soft);
+  font: 500 .74rem/1.65 var(--font-ui); text-align: left;
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .16s ease, transform .16s ease, visibility .16s; }
+.bookmarklet-wrap:hover .bookmarklet-tip, .bookmarklet-drag:focus-visible + .bookmarklet-tip { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
+.bookmarklet-tip b { display: block; margin-bottom: .25rem; color: var(--ink); font-weight: 600; }
+.bookmarklet-tip em { display: block; margin-top: .4rem; font-style: normal; color: var(--ink-soft); opacity: .85; }
+.bookmarklet-tip code { font-size: .95em; }
+/* Visibility chips and share hints (vis- / share-hint) — both appear only when a reminder is due.
+   Public is the default and takes no space; private and unlisted each get a chip, because sending them out ends differently. */
+.vis-chip { display: inline-flex; align-items: center; gap: .25rem; padding: .18rem .38rem; border: 1px solid var(--line); font: 700 .56rem/1 var(--font-ui); letter-spacing: .04em; white-space: nowrap; color: var(--ink-soft); }
+.vis-private { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.vis-unlisted { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+@media (max-width: 1100px) { .fs-bar .share-hint { display: none; } } /* when space runs out, the buttons themselves come first */
+/* Chunked-upload progress. Shown only when a large project takes the chunked path — small ones finish instantly and a bar would be noise. */
+.upload-progress { width: min(30rem, 100%); margin: .2rem 0 0; display: grid; gap: .4rem; }
+.upload-progress-bar { height: 4px; background: color-mix(in srgb, var(--ink) 10%, transparent); overflow: hidden; }
+.upload-progress-bar span { display: block; height: 100%; background: var(--accent); transition: width .25s ease; }
+.upload-progress p { margin: 0; color: var(--ink-soft); font: 500 .74rem/1.5 var(--font-ui); }
+/* ---- Viewer action bar: the brand is a way back, the title is the subject. Keep them apart. ---- */
+.fs-chrome .fs-bar .brand { flex: none; }
+.fs-chrome .fs-bar .brand b { color: var(--ink-soft); font-weight: 600; }
+/* The middle cell takes the grid track's width (stretch) and lets its content start at the left.
+   The shared header centres this cell (`justify-self: center`), and both `center` and `start` size
+   the cell to its content; a nowrap title's min-content width is the whole title, so the cell
+   would overflow the track and run under the controls on anything narrower than a wide desktop. */
+.fs-chrome .fs-bar .header-mid { justify-self: stretch; justify-content: flex-start; }
+.fs-chrome .fs-bar .header-title.as-title { max-width: 100%; }
+.fs-chrome .fs-bar .viewer-meta { flex: none; }
+.fs-chrome .fs-bar .controls { flex-wrap: nowrap; }
+/* ---- "More" menu: secondary actions folded off the bar ---- */
+/* `display: flex` below would beat the UA's `[hidden] { display: none }`; the menu is hidden, not unmounted, when closed. */
+.more-menu[hidden] { display: none; }
+.more-menu { position: fixed; z-index: 80; min-width: 15rem; padding: .3rem;
+  border: 1px solid var(--line); background: var(--paper-raised); box-shadow: 0 10px 30px rgba(0,0,0,.14);
+  display: flex; flex-direction: column; }
+.menu-item { display: flex; align-items: center; gap: .55rem; width: 100%; padding: .55rem .7rem;
+  border: 0; background: transparent; color: inherit; text-align: left; text-decoration: none;
+  font: 600 .74rem/1.2 var(--font-ui); cursor: pointer; white-space: nowrap; }
+.menu-item:hover, .menu-item:focus-visible { background: color-mix(in srgb, var(--ink) 7%, transparent); outline: none; }
+.menu-item:disabled { opacity: .5; cursor: default; }
+.menu-item .locked-hint { margin-left: auto; opacity: .8; }
+.menu-sep { display: block; height: 1px; background: var(--line); }
+/* ---- Administration console ---- */
+.admin-shell { display: grid; gap: 1.4rem; }
+.admin-view { display: grid; align-content: start; }
+.admin-tiles { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+.admin-tile { display: grid; text-decoration: none; color: inherit; }
+.admin-tile:hover { border-color: var(--ink-soft); }
+.admin-tile small { letter-spacing: .09em; text-transform: uppercase; }
+.admin-tile strong { font-variant-numeric: tabular-nums; }
+.admin-warnings { border-left: 3px solid var(--warn, #a4671c); }
+.admin-warnings p { margin: .2rem 0; }
+.admin-toolbar { display: flex; flex-wrap: wrap; align-items: center; }
+.admin-search { flex: 1 1 16rem; padding: .5rem .7rem; border: 1px solid var(--line); background: var(--paper-raised); color: inherit; font: 500 .82rem/1.2 var(--font-ui); }
+.admin-select { display: inline-flex; align-items: center; letter-spacing: .04em; text-transform: uppercase; }
+.admin-select select { border: 1px solid var(--line); background: var(--paper-raised); }
+.admin-check { display: inline-flex; align-items: center; }
+.admin-count { margin-left: auto; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.admin-states .hm-tab { padding-top: .35rem; padding-bottom: .35rem; }
+.admin-tablewrap { overflow-x: auto; }
+.admin-table { width: 100%; border-collapse: collapse; }
+.admin-table th { text-align: left; border-bottom: 1px solid var(--line); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+.admin-table td { border-bottom: 1px solid var(--line); }
+.admin-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.admin-table .actions { text-align: right; white-space: nowrap; }
+.admin-table .actions .btn + .btn { margin-left: .35rem; }
+.admin-table .empty { color: var(--ink-soft); text-align: center; padding: 1.4rem; }
+.admin-table code { font: .78em var(--font-mono, monospace); }
+.admin-table tr.is-disabled td { color: var(--ink-soft); }
+.admin-site-title { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.admin-site-title a { color: inherit; text-decoration: none; }
+.admin-site-title a:hover { text-decoration: underline; }
+.admin-slug { display: block; color: var(--ink-soft); }
+.admin-pill { display: inline-block; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.admin-pill.ok { border-color: color-mix(in srgb, var(--ok, #2f6b4c) 40%, var(--line)); }
+.admin-pill.off { border-color: color-mix(in srgb, var(--critical) 40%, var(--line)); text-transform: none; }
+.admin-pill.warn { margin-left: .35rem; }
+.admin-pager { display: flex; align-items: center; justify-content: flex-end; gap: .7rem; font: 500 .76rem/1 var(--font-ui); font-variant-numeric: tabular-nums; }
+.admin-actions-row { display: flex; flex-wrap: wrap; }
+.admin-runtime { margin: 0; font: .76rem/1.6 var(--font-mono, monospace); white-space: pre-wrap; overflow-x: auto; }
+.admin-dialog { width: min(30rem, calc(100vw - 2rem)); padding: 0; border: 1px solid var(--line); background: var(--paper); color: var(--ink); box-shadow: var(--shadow); }
+.admin-dialog::backdrop { background: color-mix(in srgb, var(--ink) 34%, transparent); }
+.admin-dialog form { display: grid; }
+.admin-dialog h2 { margin: 0; }
+.admin-dialog p { margin: 0; color: var(--ink-soft); font: 500 .84rem/1.55 var(--font-ui); }
+.admin-dialog label { display: grid; gap: .3rem; font: 700 .62rem/1 var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.admin-dialog textarea { padding: .5rem .6rem; border: 1px solid var(--line); background: var(--paper-raised); color: var(--ink); font: 500 .84rem/1.5 var(--font-ui); resize: vertical; }
+.admin-dialog-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+/* Owner-facing notice on a taken-down site; sits above the stage, under the action bar. */
+/* The stage wrap is a centred flex ROW (device widths); with a notice present it becomes a column so the notice spans the top and the stage takes the rest. */
+.fs-stage-wrap:has(.fs-notice) { flex-direction: column; align-items: center; }
+.fs-stage-wrap:has(.fs-notice) .fs-stage { flex: 1 1 0; height: auto; min-height: 0; }
+/* Top padding clears the bar's handle, which hangs down over the notice's first line. */
+.fs-notice { position: relative; z-index: 2; width: 100%; flex: none; padding: 1.5rem 1rem .6rem; border-bottom: 1px solid color-mix(in srgb, var(--critical) 40%, var(--line)); background: color-mix(in srgb, var(--critical) 10%, var(--paper)); color: var(--ink); font: 500 .8rem/1.5 var(--font-ui); }
+.fs-notice b { color: var(--critical); }
+.vis-chip.vis-taken-down { border-color: color-mix(in srgb, var(--critical) 40%, var(--line)); }
+.fs-notice.info { border-bottom-color: var(--line); background: color-mix(in srgb, var(--accent) 8%, var(--paper)); }
+.fs-notice.info b { color: var(--ink); }
+.fs-notice a { color: var(--accent); font-weight: 700; }
+.admin-table .at-cap { color: var(--critical); font-weight: 600; }
+/* ---- Administrator activity drawer (owner's view of the admin log) ---- */
+.admin-activity { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+.admin-activity-row { display: grid; gap: .2rem; padding: .7rem .9rem; border: 1px solid var(--line); background: var(--paper-raised); font: 500 .8rem/1.45 var(--font-ui); }
+.admin-activity-row b { font-weight: 600; }
+.admin-activity-row span { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.admin-activity-row em { font-style: normal; color: var(--ink-soft); }
+.admin-activity-row.is-site-take_down, .admin-activity-row.is-site-delete { border-left: 3px solid var(--critical); }
+/* ---- Settings page ---- */
+.admin-settings { display: grid; }
+.admin-setting { display: grid; gap: .3rem; }
+.admin-setting-head { display: flex; align-items: center; }
+.admin-setting-help { margin: 0; color: var(--ink-soft); font: 500 .78rem/1.5 var(--font-ui); max-width: 60ch; }
+.admin-setting-row { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.admin-setting-row select, .admin-setting-row input { padding: .45rem .6rem; border: 1px solid var(--line); background: var(--paper); color: var(--ink); font: 500 .84rem/1.2 var(--font-ui); }
+.admin-setting-note { color: var(--ink-soft); font: 500 .74rem/1 var(--font-ui); font-variant-numeric: tabular-nums; }
+/* ============================================================================
+   DESIGN v3 — the design team's system, ported: header, hero, command, cards, my-sites list,
+   guide, and the overrides that bring the older surfaces (viewer bar, drawers, admin) in line.
+   Later rules win over the component rules above at equal specificity, on purpose.
+   ============================================================================ */
+/* Buttons: hairline outline by default, black primary, bare "quiet". */
+.primary, .quiet, button.folder, .row-more { cursor: pointer; font: inherit; color: inherit; }
+.primary { display: inline-flex; align-items: center; gap: .5rem; padding: 9px 16px; border: 1px solid var(--ink); border-radius: 7px; background: var(--ink); color: var(--bg); font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap; }
+.primary:hover { background: color-mix(in srgb, var(--ink) 88%, var(--bg)); text-decoration: none; }
+.primary:disabled { opacity: .55; cursor: not-allowed; }
+.quiet { display: inline-flex; align-items: center; gap: .4rem; border: 0; background: none; padding: 8px; color: var(--muted); font-size: 14px; text-decoration: none; }
+.quiet:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 5px; background: none; }
+.btn { border-radius: 7px; padding: 9px 14px; font: 500 14px/1 var(--font-ui); letter-spacing: 0; background: transparent; border-color: var(--line); }
+.btn:hover { background: var(--hover); border-color: var(--line); }
+.btn.sm { padding: 6px 10px; font-size: 13px; }
+.btn.solid, .btn.primary { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.btn.solid:hover, .btn.primary:hover { background: color-mix(in srgb, var(--ink) 88%, var(--bg)); filter: none; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { color: var(--ink); background: var(--hover); }
+.btn.danger { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 40%, var(--line)); }
+.segmented { border-radius: 7px; overflow: hidden; background: transparent; }
+.segmented button { display: inline-flex; align-items: center; gap: .35rem; padding: 7px 10px; font: 500 13px/1 var(--font-ui); letter-spacing: 0; }
+.segmented button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.controls.compact { gap: .4rem; }
+.eyebrow { color: var(--muted); font: 500 13px/1.2 var(--font-ui); letter-spacing: 0; text-transform: none; }
+.kind-chip, .vis-chip { border: 0; border-radius: 6px; padding: 4px 9px; font: 500 12px/1 var(--font-ui); letter-spacing: 0; text-transform: none; background: var(--hover); color: var(--muted); }
+.vis-private { background: var(--green); color: var(--ink); }
+.toast { border-radius: 8px; font: 500 13px/1 var(--font-ui); background: var(--ink); color: var(--bg); }
+input.field, textarea.field, .field input, .field textarea, .field select, .title-input, .dropzone-title { border-radius: 6px; border-color: var(--line); background: var(--bg); }
+.drawer, .auth-menu { border-radius: 12px; }
+/* Header. */
+.site-header { width: min(1240px, calc(100% - 64px)); margin: auto; min-height: var(--header); display: flex; align-items: center; gap: 28px; border-bottom: 1px solid var(--line); font-family: var(--font-ui); }
+.site-header .brand { margin-right: auto; display: flex; align-items: center; height: 58px; width: 205px; font-size: inherit; gap: 0; }
+.site-header .brand img { width: 205px; height: 68px; object-fit: contain; object-position: left center; }
+.site-header nav { display: flex; align-items: center; gap: 34px; height: var(--header); }
+.site-header nav a { font-size: 14px; display: flex; align-items: center; height: 100%; position: relative; white-space: nowrap; text-decoration: none; }
+.site-header nav a:hover { text-decoration: underline; text-underline-offset: 5px; }
+.site-header nav a.active::after { position: absolute; content: ""; height: 2px; background: var(--ink); bottom: 0; left: 0; right: 0; }
+.header-section { color: var(--muted); font-size: 14px; padding-left: 20px; border-left: 1px solid var(--line); margin-right: auto; }
+.site-header .nav-signin { padding: 9px 18px; font-size: 14px; }
+/* Language: one capsule, the current half green — the one deliberately round control in the header. */
+.lang-switch { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 999px; }
+.lang-switch button { min-width: 44px; padding: 5px 12px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: 500 13px/1 var(--font-ui); transition: background .15s, color .15s; }
+.lang-switch button:hover { color: var(--ink); }
+.lang-switch button[aria-pressed="true"] { background: var(--green); color: var(--ink); font-weight: 600; }
+.avatar { width: 34px; height: 34px; border: 0; border-radius: 50%; background: var(--green); color: var(--ink); padding: 0; display: grid; place-items: center; font: 600 14px/1 var(--font-ui); cursor: pointer; }
+.site-header .auth-chip { position: relative; }
+.site-header .auth-menu { right: 0; left: auto; top: calc(100% + 8px); min-width: 220px; border: 1px solid var(--line); background: var(--bg); border-radius: 10px; box-shadow: var(--shadow); }
+/* Page body and footer. */
+.page-main { width: min(var(--content), calc(100% - 72px)); margin: auto; font-family: var(--font-ui); min-height: 60vh; }
+.page-main .home, .page-main .home.tight { width: 100%; margin: 0; padding: 0; }
+.page-footer a { color: var(--muted); text-decoration: none; }
+.page-footer a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 5px; }
+.page-footer { width: min(var(--content), calc(100% - 72px)); margin: 45px auto 25px; border-top: 1px solid var(--line); padding-top: 18px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 20px; font-family: var(--font-ui); }
+.page-note { display: flex; align-items: center; gap: .5rem; margin: 40px 0; color: var(--muted); font-size: 14px; }
+.page-note.error { color: var(--critical); }
+/* Hero. */
+.hero { display: grid; grid-template-columns: 1.2fr 1fr; column-gap: 28px; align-items: center; padding: 38px 0 30px; min-height: 460px; }
+.hero-copy { position: relative; z-index: 1; }
+.eyeline { font-size: 14px; color: var(--muted); margin: 0 0 15px; }
+.hero h1 { font: 650 46px/1.25 var(--font-ui); letter-spacing: -.02em; margin: 0 0 20px; }
+/* The one word in the title that is green. The light green (#e4edc8) is a surface colour and unreadable as
+   text on white, so the word takes the palette's deep grass green (--focus, #557341): same family, 6.5:1. */
+.hero h1 .hl { background: none; color: var(--focus); white-space: nowrap; }
+.hero .deck { font-size: 17px; color: var(--muted); margin: 0 0 28px; max-width: 490px; line-height: 1.6; }
+/* The drop zone: a dashed field, "drag it here" on the left, the upload button at the right edge. */
+.hero-drop { display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 560px; padding: 16px 16px 16px 20px; border: 1.5px dashed var(--line); border-radius: 12px; transition: background .15s, border-color .15s; }
+.hero-drop:hover { border-color: var(--muted); }
+.hero-drop.is-drag { background: var(--green); border-color: var(--ink); }
+.hero-drop-text { display: flex; align-items: center; gap: 14px; color: var(--muted); min-width: 0; }
+.hero-drop-text > div { display: grid; gap: 3px; }
+.hero-drop-text b { font-size: 15px; font-weight: 600; color: var(--ink); }
+.hero-drop-text span { font-size: 12.5px; }
+.hero-drop .primary { font-size: 16px; padding: 11px 22px; white-space: nowrap; }
+.formats { font-size: 13px; color: var(--muted); margin-top: 12px; }
+.upload-split { position: relative; display: inline-flex; flex: none; }
+.upload-split .primary:first-child { border-radius: 7px 0 0 7px; }
+.upload-split .upload-more { border-radius: 0 7px 7px 0; padding: 11px 11px; border-left: 1px solid color-mix(in srgb, var(--bg) 30%, var(--ink)); }
+.hero-upload .paste-panel { margin-top: 4px; max-width: 520px; }
+.hero-upload .upload-error { margin: 10px 0 0; color: var(--critical); font-size: 13px; }
+.hero-upload .upload-progress { margin-top: 14px; max-width: 420px; }
+.hero-art { position: relative; align-self: stretch; display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.hero-art video { display: block; width: 100%; height: 390px; object-fit: contain; transform: scale(1.2); transform-origin: center; mask-image: radial-gradient(ellipse closest-side, #000 78%, transparent 100%); }
+/* Whole-window drop target (compact uploader). */
+.page-drop { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(2px); }
+.page-drop-inner { display: grid; justify-items: center; gap: 8px; padding: 42px 56px; border: 1.5px dashed var(--ink); border-radius: 16px; background: var(--bg); font-size: 14px; color: var(--muted); }
+.page-drop-inner b { font-size: 18px; color: var(--ink); }
+.page-drop.is-drag .page-drop-inner { background: var(--green); }
+/* The agent line. */
+.agent-prompt { padding: 0 0 37px; border-bottom: 1px solid var(--line); }
+.agent-prompt > p { font-size: 13px; margin: 0 0 10px; color: var(--muted); }
+.command { background: var(--ink); color: #f4f7ee; max-width: 700px; display: flex; align-items: center; gap: 20px; padding: 13px 18px; border-radius: 8px; }
+.command code { font: 12px/1.6 var(--font-mono); flex: 1; overflow-wrap: anywhere; color: inherit; background: none; padding: 0; }
+.command button { font-size: 12px; color: #fff; border: 1px solid #777e73; background: transparent; border-radius: 7px; padding: 5px 13px; flex: none; }
+.command button:hover { background: #353d32; }
+.command-large { max-width: none; padding: 27px 30px; }
+.command-large code { font-size: 17px; white-space: pre-wrap; }
+.command-large button { padding: 12px 22px; font-size: 15px; }
+.agent-prompt .bookmarklet-strip { justify-content: flex-start; margin: 14px 0 0; font-size: 12px; }
+/* Sites as pictures. */
+.section-head { display: flex; align-items: center; justify-content: space-between; margin: 30px 0 20px; }
+.section-head h2 { font-size: 24px; font-weight: 600; margin: 0; }
+.section-head a { font-size: 13px; color: var(--muted); text-decoration: none; }
+.section-head a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 5px; }
+.recent-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
+.result-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 25px; }
+.artifact-card-link { display: block; text-decoration: none; color: inherit; }
+.artifact-card-link:hover .recent-title { text-decoration: underline; text-underline-offset: 5px; }
+.preview { position: relative; height: 165px; overflow: hidden; border-radius: 8px; background: var(--hover); border: 1px solid var(--line); }
+.result-grid .preview { height: 140px; }
+.preview iframe { position: absolute; top: 0; left: 0; width: 200%; height: 200%; max-width: none; border: 0; transform: scale(.5); transform-origin: top left; pointer-events: none; background: var(--artifact-canvas); }
+.recent-title { font-size: 16px; margin: 12px 0 2px; color: var(--ink); }
+.recent-meta { font-size: 12px; color: var(--muted); margin: 0; }
+.home-sites { margin-bottom: 20px; }
+.empty { padding: 68px 20px; text-align: center; }
+.empty h3 { font-size: 18px; margin: 0 0 8px; font-weight: 600; }
+.empty p { font-size: 13px; color: var(--muted); margin: 0; }
+.empty p a { color: var(--ink); }
+/* Work pages: my sites, explore. */
+.work-title { display: flex; justify-content: space-between; align-items: center; margin: 42px 0 30px; }
+.work-title h1 { font: 650 30px/1.2 var(--font-ui); letter-spacing: -.02em; margin: 0; }
+.work-lede { margin: -16px 0 24px; color: var(--muted); font-size: 14px; }
+.work-tabs { display: flex; align-items: center; border-bottom: 1px solid var(--line); gap: 28px; margin-bottom: 25px; height: 44px; }
+.work-tabs > button { border: 0; border-radius: 0; padding: 9px 0; height: 44px; font-size: 14px; background: none; color: var(--muted); }
+.work-tabs > button:hover { color: var(--ink); background: none; }
+.work-tabs > button[aria-selected="true"] { color: var(--ink); border-bottom: 2px solid var(--ink); }
+.work-tabs-tools { margin-left: auto; position: relative; }
+.work-tabs-tools .quiet { font-size: 12px; }
+.work-tools { display: flex; gap: 12px; margin-bottom: 25px; align-items: center; }
+.searchbox { display: flex; gap: 10px; align-items: center; border: 1px solid var(--line); padding: 8px 12px; border-radius: 7px; max-width: 380px; flex: 1; color: var(--muted); }
+.searchbox svg { flex: none; }
+.searchbox input { width: 100%; background: none; border: 0; outline: none; font-size: 13px; min-width: 0; color: var(--ink); }
+.searchbox:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+.work-tools select { margin-left: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; font-size: 13px; padding: 10px; color: var(--ink); }
+.tools-count { margin-left: auto; font-size: 13px; color: var(--muted); }
+.view-switch { display: flex; gap: 0; }
+.view-switch button { padding: 8px 11px; border: 1px solid var(--line); border-radius: 0; font-size: 14px; background: transparent; display: grid; place-items: center; }
+.view-switch button:first-child { border-radius: 6px 0 0 6px; }
+.view-switch button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
+.view-switch button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.work-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 40px; }
+.folder-rail { position: sticky; top: 25px; align-self: start; min-height: 450px; border-right: 1px solid var(--line); padding-right: 20px; }
+.rail-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--muted); padding: 0 10px; margin-bottom: 13px; }
+.rail-head button { border: 0; background: none; font-size: 20px; padding: 0 5px; color: var(--muted); }
+.folder { width: 100%; border: 0; border-radius: 6px; display: flex; align-items: center; text-align: left; gap: 10px; padding: 10px 11px; margin-bottom: 4px; font-size: 14px; min-width: 0; background: none; color: var(--ink); }
+.folder:hover { background: var(--hover); }
+.folder b { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--muted); }
+.folder span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.folder[aria-current="true"] { background: var(--green); }
+.folder svg { flex: none; }
+.folder-separator { height: 1px; background: var(--line); margin: 18px 9px; }
+.folder-add { margin: 18px 0 0; padding: 8px 10px; border: 0; background: none; font-size: 13px; color: var(--muted); }
+.folder-add:hover { color: var(--ink); }
+.folder-input { width: 100%; margin: 2px 0 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-size: 14px; }
+.folder-actions { display: flex; gap: 4px; margin-top: 10px; }
+.folder-actions .quiet { font-size: 12px; padding: 4px 8px; }
+.folder-hint { font-size: 11px; color: var(--muted); padding: 0 10px; margin-top: 30px; }
+.folder-heading { display: flex; gap: 10px; align-items: baseline; margin: 0 0 13px; }
+.folder-heading h2 { font-size: 17px; font-weight: 600; margin: 0; }
+.folder-heading span { font-size: 12px; color: var(--muted); }
+.folder-note { font-size: 12px; color: var(--warning); margin: 0 0 12px; }
+.list-header, .site-row { display: grid; grid-template-columns: minmax(220px, 1fr) 120px 60px 110px 28px; gap: 14px; align-items: center; }
+.list-header { font-size: 12px; color: var(--muted); padding: 10px 0; border-bottom: 1px solid var(--line); }
+.site-row { border-bottom: 1px solid var(--line); padding: 17px 0; font-size: 13px; }
+.site-name { display: flex; gap: 14px; align-items: center; min-width: 0; }
+.site-name > div { min-width: 0; }
+.site-name strong { display: block; font-size: 14px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-name strong a { text-decoration: none; }
+.site-name strong a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.site-name small { font-size: 11px; color: var(--muted); }
+.mini { position: relative; display: block; width: 58px; height: 39px; border-radius: 4px; background: var(--hover); border: 1px solid var(--line); overflow: hidden; flex: none; }
+.mini iframe { position: absolute; top: 0; left: 0; width: 400%; height: 400%; max-width: none; border: 0; transform: scale(.25); transform-origin: top left; pointer-events: none; background: var(--artifact-canvas); }
+.row-visibility { display: inline-flex; align-items: center; gap: 8px; }
+.row-date { color: var(--muted); }
+.row-menu-wrap { position: relative; }
+.row-more { border: 0; background: none; font-size: 17px; padding: 3px 5px; line-height: 1; color: var(--muted); border-radius: 6px; }
+.row-more:hover { background: var(--hover); color: var(--ink); }
+.row-menu-move { display: grid; gap: 4px; padding: 8px 10px; border-top: 1px solid var(--line); margin-top: 4px; font-size: 12px; color: var(--muted); }
+.row-menu-move select { border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: var(--bg); font-size: 13px; color: var(--ink); }
+.list-end { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; margin-top: 20px; }
+.pager { display: flex; align-items: center; gap: 10px; }
+.pager button { padding: 1px 9px; border: 1px solid var(--line); border-radius: 6px; background: transparent; }
+.pager .pager-current { padding: 1px 9px; border-radius: 6px; background: var(--green); }
+.pager .quiet { border: 0; font-size: 18px; padding: 0 6px; }
+.mobile-folders { display: none; }
+/* The agent guide. */
+.guide { max-width: 920px; margin: 0 auto; padding: 72px 0 0; }
+.guide h1 { text-align: center; font: 650 52px/1.2 var(--font-ui); letter-spacing: -.025em; margin: 0 0 22px; }
+.guide .intro { text-align: center; font-size: 21px; margin: 0 0 42px; color: var(--muted); }
+.guide .hint { font-size: 14px; margin: 15px 0 48px; color: var(--muted); }
+.steps { list-style: none; padding: 0; margin: 0 0 55px; }
+.steps li { display: grid; grid-template-columns: 36px 140px 1fr; gap: 24px; align-items: center; margin: 28px 0; }
+.steps strong { font-size: 20px; font-weight: 600; }
+.steps p { font-size: 17px; margin: 0; color: var(--muted); }
+.guide-links { border-top: 1px solid var(--line); display: flex; gap: 32px; padding: 28px 0; font-size: 14px; }
+.guide-links a { text-decoration: none; }
+.guide-links a:hover { text-decoration: underline; text-underline-offset: 5px; }
+.guide-links a:last-child { margin-left: auto; }
+.guide details { border-top: 1px solid var(--line); padding: 20px 0; }
+.guide summary { cursor: pointer; font-size: 15px; }
+.guide summary code { margin-left: .6rem; font: 12px/1 var(--font-mono); background: var(--hover); padding: 3px 6px; border-radius: 4px; }
+.guide details > p { font-size: 14px; color: var(--muted); }
+.guide .prose { margin-top: 16px; }
+/* Older surfaces brought in line: the viewer bar, drawers, editor, admin. */
+.app-header, .fs-bar { background: var(--bg); border-bottom: 1px solid var(--line); backdrop-filter: none; }
+.fs-bar-glass { display: none; }
+.brand > span { border: 0; }
+.brand b { font-weight: 500; }
+.fs-bar .btn { background: transparent; border-color: var(--line); }
+.fs-bar .btn.primary { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.fs-bar .segmented { border: 1px solid var(--line); }
+.fs-bar .viewer-meta { color: var(--muted); font: 500 12px/1 var(--font-ui); }
+.drawer { border-left: 1px solid var(--line); background: var(--bg); box-shadow: var(--shadow); }
+.share-sec-title, .micro, .eyebrow { letter-spacing: 0; text-transform: none; font-weight: 500; }
+.admin-nav { border-bottom: 1px solid var(--line); }
+.admin-nav .hm-tab { font: 500 14px/1 var(--font-ui); border-bottom: 2px solid transparent; color: var(--muted); }
+.admin-nav .hm-tab[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
+.page-admin .admin-shell { display: block; }
+.admin-table { border-radius: 0; }
+.admin-table th { font-weight: 500; font-size: 12px; }
+.page-admin h1 { font: 650 30px/1.2 var(--font-ui); letter-spacing: -.02em; }
+/* ---- Second pass: every remaining surface on the same buttons, menus, chips and type ----
+   The viewer bar, the "···" menus, the drawers, the editor bars, the administration console, the
+   device-authorization page and the account tools. Nothing here introduces a new colour or radius:
+   hairline outlines, black primaries, green for "selected", 13/14px type, 8-10px corners. */
+/* Small type: no uppercase tracking anywhere any more. */
+.micro, .eyebrow, .share-sec-title, .share-pick-label, .vp-section-title, .field label, .admin-dialog label, .admin-tile small, .pfp-field span, .share-views-toggle, .hm-tab, .ver-num, .share-link-state, .admin-pill, .ve-pill, .share-pick-pending, .editor-subbar .ver { letter-spacing: 0; text-transform: none; }
+.micro, .share-pick-label, .field label, .admin-dialog label, .pfp-field span { font: 500 13px/1.3 var(--font-ui); color: var(--muted); }
+.share-sec-title, .vp-section-title { border-bottom: 0; padding-bottom: 0; font: 600 14px/1.3 var(--font-ui); color: var(--ink); }
+.share-hint, .vp-hint, .drawer-note, .share-warn, .share-error, .drawer-error, .vp-notice { font-size: 13px; line-height: 1.6; }
+.share-warn, .share-error, .drawer-error, .vp-notice, .share-nudge { border-radius: 8px; }
+.share-hint code { border-radius: 4px; }
+/* Menus: one shape for "···", the account menu, the upload menu and the row menu. */
+.more-menu, .auth-menu { min-width: 220px; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); box-shadow: var(--shadow); }
+.menu-item, .auth-menu-item { gap: 10px; padding: 9px 10px; border-radius: 6px; font: 500 14px/1.3 var(--font-ui); color: var(--ink); }
+.menu-item:hover, .menu-item:focus-visible, .auth-menu-item:hover:not(:disabled) { background: var(--hover); }
+.menu-item.danger { color: var(--critical); }
+.menu-item.locked { color: var(--muted); }
+.menu-item[data-active="true"] { background: var(--green); }
+.more-menu .row-menu-move { margin-top: 4px; }
+.menu-item .locked-hint { font-size: 12px; }
+.menu-sep { margin: 6px 4px; }
+.more-button.icon-only { width: 36px; height: 36px; padding: 0; justify-content: center; border: 1px solid var(--line); color: var(--ink); }
+.more-button.icon-only:hover { background: var(--hover); }
+.auth-menu-id { font-size: 13px; }
+/* The viewer bar: back, title, version — edit, share, "···", the account. */
+.fs-viewer { --fs-bar-h: 56px; }
+.fs-chrome .fs-bar { min-height: 56px; padding: 8px 20px; gap: 16px; }
+.fs-chrome .fs-bar .brand { border-right: 0; padding-right: 0; gap: 6px; }
+.brand > span { width: 32px; height: 32px; border-radius: 7px; background: transparent; color: var(--ink); }
+.brand:hover > span { background: var(--hover); }
+.fs-chrome .fs-bar .brand b, .editor-bar .brand b { color: var(--muted); font: 500 13px/1 var(--font-ui); }
+.header-title { font: 600 16px/1.2 var(--font-ui); }
+.fs-bar .viewer-meta { gap: 8px; font-size: 13px; }
+.fs-bar .viewer-meta .kind-chip { display: none; }
+.fs-bar .viewer-meta .dot { display: none; }
+.fs-bar .controls { gap: 10px; }
+.fs-bar .btn { padding: 8px 14px; font-size: 14px; }
+.fs-bar .btn.sm { padding: 8px 12px; }
+.fs-bar .device-switch { border: 1px solid var(--line); }
+.fs-bar .device-switch button { padding: 8px 11px; }
+.fs-bar .device-switch button[aria-pressed="true"] { background: var(--green); color: var(--ink); }
+.fs-bar .share-hint { display: inline-flex; align-items: center; gap: 4px; max-width: 280px; color: var(--muted); font: 500 12px/1.3 var(--font-ui); }
+.fs-handle { border-radius: 0 0 8px 8px; background: var(--bg); }
+.controls-sep { height: 20px; }
+.vis-chip { border-radius: 6px; }
+.vis-chip.vis-taken-down { background: color-mix(in srgb, var(--critical) 12%, var(--bg)); color: var(--critical); border: 0; }
+.fs-notice { border-radius: 0; font-size: 14px; }
+/* The editor's one bar (design 04): where you are | Edit / Preview | unsaved · the other editor · ··· · save. */
+.editor-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; min-height: 56px; padding: 8px 20px; gap: 16px; background: var(--bg); }
+.editor-bar-left { grid-column: 1; display: flex; align-items: center; gap: 12px; min-width: 0; }
+.editor-bar-left .header-title { min-width: 0; }
+.editor-meta { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font: 400 13px/1 var(--font-ui); white-space: nowrap; }
+.editor-bar > .ve-mode { grid-column: 2; margin: 0; }
+.editor-bar-right { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.editor-bar .ve-secondary { padding: 8px 10px; border-radius: 6px; color: var(--muted); font: 500 13px/1 var(--font-ui); opacity: 1; }
+.editor-bar .ve-secondary:hover, .editor-bar .ve-secondary:focus-visible { background: var(--hover); color: var(--ink); text-decoration: none; }
+.editor-bar .ve-pill { padding: 0; border: 0; background: none; color: var(--muted); font: 500 13px/1 var(--font-ui); }
+.editor-bar .ve-pill .dirty-dot { background: var(--warning); }
+.editor-bar .btn.primary { padding: 8px 14px; font-size: 14px; }
+.editor-subbar, .editor-pane-head, .editor-filelist { background: var(--bg); }
+.editor-subbar { padding: 8px 20px; }
+.editor-hint, .visual-editor-hint, .visual-editor-error { font-size: 13px; }
+/* The visual editor's own line sits under the canvas: what to do, how much of the page it applies to, what just happened. */
+.visual-editor-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 18px; padding: 9px 20px; border-top: 1px solid var(--line); background: var(--bg); color: var(--muted); }
+.visual-editor-foot .visual-editor-hint { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.ve-mode { border: 1px solid var(--line); }
+.ve-mode button { padding: 7px 14px; }
+.ve-mode button[aria-pressed="true"] { background: var(--green); color: var(--ink); }
+@media (max-width: 820px) {
+  .editor-bar { display: flex; flex-wrap: wrap; gap: 10px 14px; }
+  .editor-bar-left { flex: 1 1 100%; }
+  .editor-bar-right { margin-left: auto; }
+}
+.ve-pill { padding: 4px 9px; border-radius: 6px; font: 500 12px/1 var(--font-ui); }
+.editor-filelist button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.editor-filelist button { border-radius: 6px; font: 500 12px/1 var(--font-mono); }
+.locked-actions .btn.solid { border-radius: 7px; }
+/* Version picker and version history. */
+.vp-title { font: 600 24px/1.25 var(--font-ui); }
+.vp-lede { font-size: 14px; }
+.vp-primary { border: 1px solid var(--line); border-radius: 10px; box-shadow: none; background: var(--hover); }
+.vp-primary-text b { font-size: 15px; }
+.vp-primary-text span { font-size: 13px; }
+.ver-row { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--bg); }
+.ver-row-head { gap: 8px; }
+.ver-num { font: 600 14px/1 var(--font-ui); }
+.ver-row-meta { font: 400 13px/1.4 var(--font-ui); color: var(--muted); }
+.ver-current-pill { border: 0; border-radius: 6px; padding: 4px 9px; background: var(--green); color: var(--ink); font: 500 12px/1 var(--font-ui); letter-spacing: 0; text-transform: none; }
+/* Drawers: sharing, version history, administrator activity. */
+.drawer { width: min(440px, 100%); border-radius: 0; }
+.drawer-head { padding: 22px 26px 10px; border-bottom: 0; background: var(--bg); }
+.drawer-head b { font: 600 22px/1.2 var(--font-ui); }
+.drawer-tabs { display: flex; gap: 26px; padding: 0 26px; border-bottom: 1px solid var(--line); }
+.drawer-tabs button { margin-bottom: -1px; padding: 8px 0 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: 500 14px/1 var(--font-ui); cursor: pointer; }
+.drawer-tabs button:hover { color: var(--ink); }
+.drawer-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.drawer-body { gap: 18px; padding: 20px 26px 28px; }
+.share-foot { padding: 14px 26px; background: var(--bg); }
+.share-foot-scope { font-size: 13px; }
+.share-row-icon { border-radius: 8px; background: var(--hover); }
+.share-row-text label { font-size: 14px; }
+.share-row-text p { font-size: 13px; }
+.share-add { display: flex; gap: 8px; }
+.share-add input { flex: 1; min-width: 0; }
+.field input, .field textarea, .field select, .share-row select, .share-link-controls select, .share-add input, .share-pick-input, .admin-setting-row select, .admin-setting-row input, .admin-dialog textarea, .admin-dialog input, .pfp-field input, .title-input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: 400 14px/1.4 var(--font-ui); }
+.field select, .share-row select, .share-link-controls select, .admin-setting-row select, .admin-select select { padding-right: 32px; appearance: none; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: right 15px center, right 10px center; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+.share-pick-input { padding: 0 12px; }
+.share-pick-input input { padding: 10px 0; font-size: 14px; }
+.share-link, .share-new, .share-minted, .share-pick-row, .share-pick-results, .share-views-summary { border-radius: 10px; }
+.share-minted { border: 1px solid var(--ink); box-shadow: none; background: var(--green); }
+.share-minted-code code { border-radius: 6px; }
+.share-link-head b { font-size: 14px; }
+.share-link-meta { font: 400 13px/1.4 var(--font-ui); }
+.share-link-state, .share-pick-pending { border: 0; border-radius: 6px; padding: 4px 9px; background: var(--hover); font: 500 12px/1 var(--font-ui); }
+.share-link-state.is-live { background: var(--green); color: var(--ink); }
+.share-link-state.is-revoked { background: color-mix(in srgb, var(--critical) 12%, var(--bg)); }
+.share-views-toggle { font: 500 13px/1 var(--font-ui); }
+.share-view-who { font: 500 14px/1.4 var(--font-ui); }
+.share-view-when, .share-view-via { font-size: 12px; }
+.copy-field { border-radius: 8px; }
+/* Sign-in gate and the administrator's confirmation dialog. */
+.gate { padding: 26px; border-radius: 12px; }
+.gate h2 { font: 600 18px/1.3 var(--font-ui); }
+.gate-head p, .gate-note { font-size: 14px; }
+.gate-note { border-radius: 8px; }
+.gate-mark { background: var(--green); color: var(--ink); }
+.admin-dialog { border-radius: 12px; }
+.admin-dialog form { gap: 14px; padding: 24px 26px 22px; }
+.admin-dialog h2 { font: 600 18px/1.3 var(--font-ui); }
+.admin-dialog p { font-size: 14px; }
+/* The administration console. */
+.admin-title { margin: 34px 0 4px; }
+.admin-nav { gap: 28px; margin-bottom: 28px; }
+.admin-nav .hm-tab { padding: 12px 0 14px; }
+.admin-view { gap: 22px; }
+.admin-h2 { margin: 10px 0 0; font: 600 20px/1.3 var(--font-ui); }
+.admin-tiles { display: flex; flex-wrap: wrap; gap: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.admin-tile { flex: 1 1 160px; gap: 4px; padding: 20px 24px 20px 0; border: 0; border-radius: 0; background: none; }
+.admin-tile + .admin-tile { padding-left: 24px; border-left: 1px solid var(--line); }
+.admin-tile small { font: 500 13px/1.3 var(--font-ui); color: var(--muted); }
+.admin-tile strong { font: 600 28px/1.1 var(--font-ui); letter-spacing: -.02em; }
+.admin-tile span { font: 400 13px/1.4 var(--font-ui); color: var(--muted); }
+.admin-tile:hover strong { text-decoration: underline; text-underline-offset: 6px; }
+.admin-warnings { padding: 12px 16px; border: 0; border-radius: 8px; background: var(--green); color: var(--ink); font: 400 14px/1.6 var(--font-ui); }
+.admin-toolbar { gap: 14px; }
+.admin-search.searchbox { flex: 1 1 260px; max-width: 460px; padding: 10px 14px; border-radius: 8px; }
+.admin-search.searchbox input { font-size: 14px; }
+.admin-select { gap: 8px; font: 500 13px/1 var(--font-ui); color: var(--muted); }
+.admin-select select { padding: 9px 32px 9px 12px; border-radius: 8px; color: var(--ink); font: 500 14px/1.2 var(--font-ui); }
+.admin-check { gap: 8px; font: 500 14px/1 var(--font-ui); }
+.admin-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--ink); }
+.admin-count { font: 500 13px/1 var(--font-ui); }
+.admin-states { gap: 4px; }
+.admin-states .hm-tab { margin: 0; padding: 7px 12px; border: 0; border-radius: 7px; font: 500 13px/1 var(--font-ui); }
+.admin-states .hm-tab[aria-selected="true"] { background: var(--green); color: var(--ink); }
+.admin-tablewrap { border: 0; background: none; }
+.admin-table { font: 400 14px/1.45 var(--font-ui); }
+.admin-table th { padding: 10px 8px 12px; font: 500 13px/1 var(--font-ui); color: var(--muted); }
+.admin-table td { padding: 16px 8px; font-size: 14px; vertical-align: middle; }
+.admin-table tr:last-child td { border-bottom: 1px solid var(--line); }
+.admin-site-title { font-weight: 600; }
+.admin-site-title a svg { opacity: .5; }
+.admin-slug { margin-top: 2px; font-size: 12px; }
+.admin-table code { font-size: 13px; }
+.admin-pill { padding: 4px 9px; border: 0; border-radius: 6px; background: var(--hover); color: var(--muted); font: 500 12px/1 var(--font-ui); }
+.admin-pill.ok { background: var(--green); color: var(--ink); }
+.admin-pill.off { background: color-mix(in srgb, var(--critical) 12%, var(--bg)); color: var(--critical); }
+.admin-pill.warn { background: color-mix(in srgb, var(--warning) 14%, var(--bg)); color: var(--warning); }
+.admin-table .actions .more-button.icon-only { border: 0; }
+.admin-pager { padding: 14px 0; border-top: 0; font-size: 13px; }
+.admin-runtime { padding: 16px 18px; border: 0; border-radius: 10px; background: var(--hover); font-size: 13px; line-height: 1.7; }
+.admin-actions-row { gap: 8px; }
+.admin-activity-row { border-radius: 10px; font-size: 14px; }
+.admin-activity-row span { font-size: 12px; }
+/* Settings: form rows with a hairline between them, not cards. */
+.admin-settings { max-width: none; gap: 0; }
+.admin-settings > .drawer-note { margin: 0 0 6px; max-width: 70ch; font-size: 14px; }
+.admin-setting { grid-template-columns: minmax(0, 1fr) minmax(280px, 420px); grid-template-areas: "head row" "help row"; column-gap: 40px; row-gap: 4px; align-items: start; padding: 20px 0; border: 0; border-bottom: 1px solid var(--line); background: none; }
+.admin-setting-head { grid-area: head; justify-content: flex-start; gap: 10px; }
+.admin-setting-head label { font: 600 15px/1.3 var(--font-ui); }
+.admin-setting-help { grid-area: help; font-size: 13px; }
+.admin-setting-row { grid-area: row; margin-top: 0; }
+.admin-setting-row select, .admin-setting-row input { flex: 1 1 200px; min-width: 0; }
+.admin-setting-note { font-size: 13px; }
+.admin-settings .admin-actions-row { padding-top: 20px; }
+@media (max-width: 800px) { .admin-setting { grid-template-columns: 1fr; grid-template-areas: "head" "help" "row"; } }
+/* Device authorization and the other one-column pages. */
+.narrow-page { max-width: 520px; margin: 0 auto; padding: 28px 0 60px; }
+.narrow-page .page-back { margin-bottom: 22px; }
+.narrow-hero .eyebrow { margin: 0; }
+.narrow-hero h1 { margin: 8px 0 14px; font: 650 28px/1.25 var(--font-ui); letter-spacing: -.015em; }
+.narrow-hero .deck { margin: 0 0 22px; color: var(--muted); font-size: 15px; line-height: 1.7; }
+.narrow-hero .deck b { color: var(--ink); font-weight: 600; }
+.narrow-hero .claim-form { display: grid; gap: 14px; }
+.narrow-hero .claim-form .primary { justify-self: start; }
+.pfp h1 { font: 650 28px/1.25 var(--font-ui); letter-spacing: -.015em; }
+.pfp-lede, .pfp-source { font-size: 15px; }
+.pfp-preview { border-radius: 10px; }
+.pfp-warn { border-color: var(--line); border-radius: 10px; background: var(--green); font-size: 14px; }
+.pfp-actions .btn.solid { border-radius: 7px; }
+/* Account tools on /me (publish tokens, claiming). */
+.account-tool { max-width: 640px; }
+.account-tool .sites-section { padding: 0; }
+.account-tool .sites-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.account-tool .sites-head h2 { margin: 0; font: 600 20px/1.3 var(--font-ui); letter-spacing: 0; }
+.account-tool .drawer-note { font-size: 14px; }
+.account-tool .me-list { border-radius: 10px; }
+.account-tool .claim-form { display: grid; gap: 14px; }
+.account-tool .claim-form .btn { justify-self: start; }
+/* Between 1000 and 1180px the copy column is too narrow for the 46px title to stay on two lines. */
+@media (max-width: 1180px) { .hero h1 { font-size: 40px; } }
+@media (max-width: 1000px) {
+  .hero h1 { font-size: 40px; }
+  .work-layout { grid-template-columns: 175px minmax(0, 1fr); gap: 26px; }
+  .result-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .list-header, .site-row { grid-template-columns: minmax(155px, 1fr) 90px 42px 80px 25px; gap: 9px; }
+  .site-header { width: calc(100% - 40px); flex-wrap: wrap; gap: 12px; }
+  .site-header nav { order: 3; width: 100%; height: 42px; min-width: 0; flex-wrap: nowrap; overflow-x: auto; justify-content: safe center; gap: 23px; }
+  .site-header nav a { height: 42px; flex-shrink: 0; }
+  .site-header nav .nav-admin-desktop { display: none; }
+  .page-main, .page-footer { width: calc(100% - 48px); }
+}
+@media (max-width: 700px) {
+  .site-header { min-height: 72px; column-gap: 8px; row-gap: 0; }
+  .site-header .brand { flex: 1 1 0; min-width: 0; height: 62px; }
+  .site-header .brand img { width: 100%; max-width: 163px; height: 58px; }
+  .site-header .lang-switch, .site-header .auth-chip, .site-header .nav-signin { flex-shrink: 0; }
+  .site-header .lang-switch button { min-width: 36px; padding-inline: 8px; }
+  .site-header .nav-signin { padding: 8px; font-size: 13px; white-space: nowrap; }
+  .site-header .header-section { order: 2; width: 100%; margin: 0; padding: 0; border: 0; }
+  .site-header nav { column-gap: 20px; }
+  .avatar { width: 30px; height: 30px; }
+  .page-main, .page-footer { width: calc(100% - 36px); }
+  .hero { grid-template-columns: 1fr; padding: 35px 0 15px; gap: 0; min-height: 0; }
+  .hero h1 { font-size: 34px; }
+  .hero .deck { font-size: 15px; }
+  .hero-art { width: 230px; justify-self: center; }
+  .hero-art video { height: auto; aspect-ratio: 1; }
+  .hero-drop { flex-wrap: wrap; }
+  .hero-drop .primary { font-size: 15px; }
+  .agent-prompt { padding: 15px 0 25px; }
+  .command { padding: 12px; }
+  .command code { font-size: 10px; }
+  .recent-grid { grid-template-columns: 1fr; gap: 23px; }
+  .recent-grid .preview { height: 180px; }
+  .work-title { margin: 27px 0 24px; }
+  .work-title h1 { font-size: 26px; }
+  .work-layout { grid-template-columns: 1fr; gap: 0; }
+  .folder-rail { display: none; position: static; border: 1px solid var(--line); padding: 15px; min-height: 0; border-radius: 8px; margin-bottom: 20px; }
+  .folders-open .folder-rail { display: block; }
+  .folder-hint { display: none; }
+  .mobile-folders { display: block; margin-bottom: 18px; text-align: left; width: 100%; font-size: 13px; border: 1px solid var(--line); border-radius: 7px; padding: 9px 12px; background: none; }
+  .work-tools { flex-wrap: wrap; margin-bottom: 20px; }
+  .searchbox { max-width: none; flex: 1 1 calc(100% - 96px); }
+  .work-tools select { margin-left: 0; order: 3; font-size: 12px; padding: 6px 9px; }
+  .list-header, .site-row { grid-template-columns: minmax(150px, 1fr) 70px 25px; gap: 8px; }
+  .list-header > *:nth-child(3), .list-header > *:nth-child(4), .site-row > *:nth-child(3), .site-row > *:nth-child(4) { display: none; }
+  .result-grid { grid-template-columns: 1fr; }
+  .guide { padding-top: 42px; }
+  .guide h1 { font-size: 33px; }
+  .guide .intro { font-size: 17px; }
+  .command-large { padding: 20px; gap: 12px; }
+  .command-large code { font-size: 12px; }
+  .steps li { grid-template-columns: 28px 1fr; gap: 12px; }
+  .steps p { grid-column: 2; font-size: 15px; }
+  .guide-links { flex-wrap: wrap; gap: 18px; }
+  .guide-links a:last-child { margin-left: 0; }
+}
+/* Reduced motion, in one place: decoration stops (drawer, gate, toast, welcome), the progress spinner keeps turning —
+   a frozen spinner reads as "stuck". Anything that must also survive here is listed below the two rules. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+  .spin { animation: spin 1.6s linear infinite !important; }
+  .welcome-burst-ring { display: none; }
+  .fs-viewer { --fs-slide: 0s; --fs-slide-out: 0s; }
+}
+
+/* Agent connections: the existing quiet guide, with three peer entry points. */
+.agent-connect-link { display: inline-block; margin: 12px 20px 0 0; font-size: 14px; text-underline-offset: 4px; }
+.connection-guide { margin-bottom: 36px; }
+.connection-tabs { display: flex; justify-content: center; gap: 6px; margin-bottom: 34px; }
+.connection-tabs button, .connection-auth button { border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); padding: 10px 18px; font: 500 14px/1.4 var(--font-ui); cursor: pointer; }
+.connection-tabs [aria-selected="true"], .connection-auth [aria-pressed="true"] { background: var(--green); border-color: var(--green); color: var(--ink); }
+.connection-tabs small { margin-left: 10px; font-size: 11px; }
+.connection-guide [role="tabpanel"] { scroll-margin-top: 24px; }
+.connection-guide [hidden] { display: none; }
+.connection-guide .command { margin: 14px 0; }
+.connection-guide .command code { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.connection-guide .command button { flex-shrink: 0; }
+.connection-server { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 10px 14px; background: var(--hover); border-radius: 7px; color: var(--muted); font-size: 14px; }
+.connection-server code { overflow-wrap: anywhere; }
+.connection-step { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 24px; margin: 28px 0; }
+.connection-step h2 { display: flex; align-items: baseline; gap: 14px; font: 600 18px/1.5 var(--font-ui); margin: 0; }
+.connection-step h2 > span { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; border-radius: 50%; background: var(--ink); color: var(--bg); font: 500 13px/1 var(--font-ui); }
+.connection-step p, .connection-note, .connection-capabilities p { font-size: 14px; color: var(--muted); margin: 0 0 12px; line-height: 1.65; }
+.connection-auth { display: flex; gap: 6px; margin-bottom: 12px; }
+.connection-guide details { padding: 14px 0; }
+.connection-guide details > p { margin: 12px 0; }
+.connection-guide .connection-install { border-top: 0; }
+.connection-capabilities { padding-top: 22px; border-top: 1px solid var(--line); }
+.connection-capabilities h2 { font: 600 20px/1.4 var(--font-ui); margin: 0 0 10px; }
+.connection-tools { margin: 16px 0; font-size: 13px; }
+.connection-tools > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.connection-tools dt { overflow-wrap: anywhere; }
+.connection-tools dd { margin: 0; color: var(--muted); }
+.connection-guide button:focus-visible, .connection-guide select:focus-visible, .connection-guide summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+@media (max-width: 700px) {
+  .connection-tabs { gap: 4px; }
+  .connection-tabs button { flex: 1; padding: 9px 5px; font-size: 13px; }
+  .connection-tabs small { display: block; margin: 2px 0 0; }
+  .connection-step { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .connection-tools > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .connection-guide .command { align-items: flex-start; }
+}
+
+.connection-token-form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 12px 0; }
+.connection-token-form label { flex: 1 1 180px; }
+.connection-token-form input, .connection-step input { display: block; width: 100%; min-width: 0; min-height: 42px; padding: 8px 10px; margin-top: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+
+.connection-token-value { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; }
+.connection-token-value input { flex: 1; min-width: 0; margin-top: 0; font-family: var(--font-mono); }
+.connection-token-value .btn { flex: 0 0 auto; min-height: 42px; white-space: nowrap; }
+
+.connection-copy-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

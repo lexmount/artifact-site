@@ -1,0 +1,7 @@
+# Used only by compose/caddy.yml (ARTIFACT_WITH_CADDY=on). The domain comes from .env.
+# Caddy obtains and renews the certificate itself; ports 80 and 443 must be reachable.
+{$ARTIFACT_DOMAIN} {
+	encode zstd gzip
+	# The app sets its own security headers (CSP, Referrer-Policy, nosniff); nothing to add here.
+	reverse_proxy app:4300
+}

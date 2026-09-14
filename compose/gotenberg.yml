@@ -1,0 +1,16 @@
+# Optional office→pdf converter for document previews (docx / pptx / xls…). Layered on by
+# `make up` when .env has ARTIFACT_WITH_GOTENBERG=on and no external GOTENBERG_URL. Without it
+# office uploads still publish, as download cards; pdf preview never needs it.
+services:
+  gotenberg:
+    image: ${GOTENBERG_IMAGE:-gotenberg/gotenberg:8}
+    container_name: artifact-site-gotenberg
+    restart: unless-stopped
+    # Stateless. Only the app may reach it: no ports are published.
+
+  app:
+    depends_on:
+      gotenberg:
+        condition: service_started
+    environment:
+      GOTENBERG_URL: http://gotenberg:3000

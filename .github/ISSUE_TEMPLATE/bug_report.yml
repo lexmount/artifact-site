@@ -1,0 +1,48 @@
+name: Bug report
+description: Something does not work the way the docs say
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Security issues go to the address in SECURITY.md, not here.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Image tag, git commit, or `npm ls` line for `@artifact-site/cli`
+      placeholder: ghcr.io/lexmount/artifact-site:0.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Publishing / uploads
+        - Viewer / sandboxed preview
+        - Editing / versions
+        - Sharing / permissions / sign-in
+        - Documents (pdf / office)
+        - Deployment (make up, Docker, Postgres, S3)
+        - CLI / MCP server
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What you did, what you expected, what happened. For uploads, the artifact's shape (single html / directory / zip / document) and size matter.
+      placeholder: |
+        1. artifact-site publish dist/
+        2. open the share link
+        3. blank page; console shows …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and configuration
+      description: Relevant `make logs` lines, the `[runtime]` boot report, and the non-secret parts of `.env`. Redact tokens and passwords.
+      render: shell

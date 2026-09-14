@@ -1,0 +1,18 @@
+// Public tool labels, checked against server registrations by tests.
+export const mcpTools = [
+  ["artifact_site_connection", "Connection information"],
+  ["artifact_site_publish", "Publish a site"],
+  ["artifact_site_update", "Update a site"],
+  ["artifact_site_edit", "Edit a file"],
+  ["artifact_site_find", "Find artifacts"],
+  ["artifact_site_get_site", "Get a site"],
+  ["artifact_site_read", "Read a site"],
+  ["artifact_site_fork", "Fork a site"],
+  ["artifact_site_share", "Create a share link"],
+  ["artifact_site_rollback", "Roll back a site"],
+  ["artifact_site_delete", "Delete a site"],
+  ["artifact_site_export", "Export a site"],
+  ["artifact_site_upload_start", "Start an upload"],
+  ["artifact_site_upload_write", "Write upload content"],
+  ["artifact_site_upload_cancel", "Cancel an upload"],
+] as const;

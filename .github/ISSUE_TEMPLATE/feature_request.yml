@@ -1,0 +1,25 @@
+name: Feature request
+description: Something the platform should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation, not the solution. Who is publishing what, for whom, and where it gets stuck today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: If you have a shape in mind (a command, a setting, an API field), sketch it.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: Web UI
+        - label: HTTP API / agent skill
+        - label: CLI / MCP server
+        - label: Deployment / operations

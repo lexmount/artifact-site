@@ -1,0 +1,195 @@
+# Changelog
+
+All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/);
+versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-site:X.Y.Z`.
+
+## Unreleased
+
+### Added
+
+- Administrators can assign unowned sites to an existing verified account from the console,
+  including email administrators on deployments without PUBLISH_API_TOKEN.
+- Remote MCP at `/mcp` with authenticated Streamable HTTP, full artifact operations, bounded
+  binary upload/download chunks, and independent CLI/MCP onboarding. Personal tokens can be
+  created in the browser and revoked in My sites.
+- An explicit Home link in the main navigation, highlighted on the home page.
+  Narrow headers keep account controls together and navigation on a scrollable second row;
+  administrators can use the account menu instead of a duplicate navigation entry.
+- Agent guide with prompt, CLI and MCP tabs, deployment-aware authentication instructions,
+  copyable commands and Cursor configuration, complete tool reference and troubleshooting.
+  Home and README entries link directly to the connection guide. Installation uses npm's global
+  prefix; token input supports Bash and zsh. Authentication guidance distinguishes public reads,
+  the default anonymous setup, and operator-token verification.
+- **Search and read for agents.** `GET /api/search?q=` finds sites by what they say (every word
+  must occur; title matches first; Chinese works without any database extension) among the sites
+  the caller may list, and `GET /api/sites/:slug/text` returns a site's current version as plain
+  text — HTML stripped, pdf/docx/pptx text extracted — or one file of it. CLI `search` / `read`,
+  MCP `artifact_site_find` / `artifact_site_read`, and a section in the agent guide. Text is
+  extracted right after each publish (never in the request path) into a new `site_texts` table.
+  Existing sites are indexed by the maintenance tick (now driven by searches as well as
+  publishes, 20 seconds per hour) — search is partial until that catches up; the console's
+  System page has an "Index search text of existing sites" button to do it now. Reading is
+  never partial: an un-indexed site is extracted on the spot. Memory is bounded before anything
+  is read — text files are read as a 2 MB prefix, documents over 40 MB are indexed by title only,
+  office archives inflate only their text parts (16 MB each, 32 MB total), and at most two
+  extractions run at once per process.
+- **Console settings.** The "who may do what" policy — who can create, what anonymous creators
+  may do, default visibility, anonymous-site expiry and the four quota caps — is editable at
+  `/admin/settings` without a rebuild (console > environment > default; "Use environment" hands
+  control back; every save is logged). Stored in a new `settings` table keyed by scope, the seat
+  reserved for tenants.
+- **Anonymous creators can be kept to reading** (`ARTIFACT_ANONYMOUS_SITES=read-only`, or the
+  console): the creating browser can open its site; editing, sharing, renaming and deleting ask for
+  a sign-in, after which the site belongs to that account.
+- **Agent guide version.** `/for-agents.md` carries `skill_version` in its frontmatter and every
+  API response the header `X-Artifact-Site-Skill-Version` (a hash of the guide's text, so it changes
+  with every edit and needs no bumping). The guide tells agents to refetch it when the two differ,
+  so an installed copy cannot silently go stale after an upgrade.
+- **"My sites" has a folder rail and a search box.** Folders sit in a left column with their
+  counts (All / Unfiled / each folder), the grid filters by title or address, and narrow screens
+  fall back to the chip row. Folders themselves are unchanged.
+- **Quotas and anonymous-site expiry.** `ARTIFACT_QUOTA_SITES_PER_USER` / `_BYTES_PER_USER` cap an
+  account's live sites and stored bytes (every version counts), `_PER_ANON` the same for an
+  anonymous browser; a write over a cap answers `403 quota_exceeded` with the numbers. Everything
+  is unlimited by default. `ARTIFACT_ANON_SITE_TTL_DAYS` removes sites published without an
+  account that many days after their last change unless adopted by an account — a normal delete, restorable by
+  an administrator within the retention window; the creator sees the date on the site and the
+  create response carries `expiresAt`. The users view shows usage against the caps.
+- **Administration console** at `/admin` (Overview, Users, Sites, System; an entry in the account
+  menu for administrators, 404 for everyone else) and its API. `ARTIFACT_ADMIN_EMAILS` names
+  administrators by sign-in e-mail; `PUBLISH_API_TOKEN` as a Bearer keeps working for scripts.
+  `/api/admin/*` lists users (site count, stored bytes) and sites (owner, size, state), disables accounts
+  (sign-in refused, sessions and publish tokens revoked), takes sites down (served to the owner
+  only; visitors get a removal notice and 410 from the API), deletes and restores sites, and runs
+  maintenance. Owners see a banner with the reason on a taken-down site and a chip in "My sites".
+  Every act is written to a new `admin_log` table, including an administrator opening a private
+  or taken-down site (`site.view`) — administrators can read any site the console lists, but
+  cannot write to it. Owners see their site's slice of that log under "Administrator activity"
+  in the site's More menu (`GET /api/sites/:slug/admin-activity`): dates, actions and reasons,
+  never the administrator's identity. `/api/auth/me` reports `isAdmin`.
+- **Deleted sites can be restored.** Deleting a site no longer removes its files at once: they are
+  kept for `ARTIFACT_DELETED_RETENTION_DAYS` (default 30) and purged afterwards, automatically
+  about once an hour on a replica that sees traffic, or from the administration API.
+- **Account-level folders** (#35): "My sites" folders are stored on the account once signed in and follow the user across devices (`/api/me/folders`); the browser-local shelf is imported once after sign-in (folders matched by name, sites filed where the account had no opinion yet) and then retired. Signed-out browsers and deployments without an IdP keep the local behaviour unchanged.
+- `ARCHITECTURE.md`, `CODE_OF_CONDUCT.md`, issue and pull-request templates, README screenshots,
+  and `scripts/export-public.sh` (produces the public-repository tree without internal docs).
+- `@artifact-site/cli` (`cli/`): a command-line client (`publish`, `update`, `export`, `share`, `list`, `rollback`, …) with the same artifact operations available through remote MCP, with device sign-in, chunked upload for large trees and PDFs, and `expected_version` locking.
+- Apache-2.0 license, `SECURITY.md` (threat model and disclosure process), `CONTRIBUTING.md`.
+- GitHub Actions CI (typecheck, lint, unit tests, Postgres integration tests, Docker build) and a
+  tag-triggered release workflow that publishes a multi-arch image to GHCR.
+- Single-host deployment kit: `make up` with a bundled Postgres 18, optional Gotenberg and Caddy,
+  pre-flight `make doctor`, `make backup` / `make restore`, image packaging for offline hosts.
+- Startup self-check that prints the effective backends and refuses configurations that could
+  not work (missing database URL, incomplete S3 settings, `login` policy without an IdP).
+- English as the source language for UI copy, with Simplified Chinese as a selectable locale
+  (cookie `ah_locale`, else `Accept-Language`).
+
+### Changed
+
+- Make MCP upload errors actionable, reuse owner/session resolution per chunk, and count project files independently of transfer chunks. Keep final byte counts consistent; clarify discarded Office/ZIP drafts, verify UI tool labels against discovery, and improve CLI search-limit and share-inspection handling.
+
+- The MCP connection page displays the access token as editable plaintext and provides a separate
+  copy-token button, with success/failure feedback and disabled copying when empty.
+
+- Remote MCP now exposes 15 task-oriented tools instead of 24, with usage examples, parameter
+  guidance and server instructions. List/search, identity/limits, details/history/shares and
+  export/download are consolidated; uploads use start/write/cancel and commit via publish/update.
+  Refresh client tool discovery after upgrading; see docs/MCP.md for migration. Staged publish
+  now follows inline publish's public-share default; pass `share: false` to keep it unshared.
+- CLI recommends `find` for listing/search and `update --title` for renaming. Old commands remain
+  compatible but are hidden from top-level help. Add `edit`, `fork` and `info --shares` to expose
+  the existing client capabilities; remove obsolete local MCP setup instructions.
+
+- Removed open claiming by URL; the old claim API returns 410. Use personal-token publication,
+  original-browser sign-in, or Administration → Sites → Assign owner for unowned sites.
+- Removed the local `artifact-site mcp` stdio command. Configure a remote URL and Bearer token
+  instead; the standalone CLI retains its artifact operations.
+- **`ARTIFACT_CLOUDDESK_URL` is now `ARTIFACT_ASSISTANT_URL`.** The optional embedded assistant lost its
+  product name in code, docs and the environment; the old variable is still read, so nothing breaks
+  on upgrade. Weekly Dependabot updates (npm, CLI, actions, Docker) are enabled.
+- **Viewer action bar.** The brand ("Sites") is visually separated from the site title, and the
+  title keeps its width on narrow windows instead of running under the controls. Edit, upload a new
+  version, version history, save as new site, share editable link and the reveal-mode switch are
+  folded into a "More" menu; device preview, sharing and "open in new window" stay on the bar.
+- **Postgres is the only metadata store.** SQLite remains for the test suite and is refused at
+  runtime. Deployments that relied on the SQLite default must provide `ARTIFACT_DATABASE_URL`;
+  existing SQLite data is not migrated.
+- **Default visibility no longer depends on the hostname.** `ARTIFACT_DEFAULT_VISIBILITY`
+  decides; unset it is `public` only when `ARTIFACT_PUBLIC_URL` is empty (local development) and
+  `private` otherwise. Intranet deployments that want open links set `public` explicitly.
+- File storage is inferred from `ARTIFACT_S3_BUCKET` when `ARTIFACT_STORAGE_DRIVER` is unset.
+- Default upload ceiling raised to 300 MB per version (streamed upload path); `.env.example`
+  suggests 100 MB for internet-facing hosts.
+- Package renamed to `artifact-site`; company-specific deployment documentation removed from the public tree.
+- Dependencies: Next.js 16.3.4 (pulls in sharp 0.35 / libvips fixes), postcss 8.5.28 override,
+  transitive updates — `npm audit` reports no known vulnerabilities.
+- API error mapping: an unexpected server-side failure now answers `500 {"error":"internal error"}`
+  (logged server-side) instead of echoing the exception message with status 400. Validation
+  errors (bad upload, path, title, edit shape, malformed JSON) keep their 400 and message.
+
+### Fixed
+
+- Preserve staged uploads after version conflicts, so an explicitly approved retry can reuse bytes.
+  MCP dispatch skips only duplicate caller limits, retaining independent secret-scoped limits.
+- Operator uploads no longer turn derived credentials into anonymous ownership cookies, quotas
+  or expiry. Upload creation rejects callers denied by the create policy before storing files.
+- Office-document updates enforce atomic expected-version checks; chunked conflicts return the
+  same structured recovery details as inline updates. MCP counts each operation once and gives
+  file chunks a separate transfer budget. Unexpected storage errors are logged server-side.
+- CLI uploads retain the server-issued upload identity across requests, fixing chunked uploads
+  with an operator token. Invalid MCP credentials are rate limited before database lookup.
+- Chunked updates recheck permissions and enforce optional expected-version conflicts, shared
+  by CLI and MCP. Upload chunk metadata uses compare-and-set to reject concurrent overwrites.
+- Inline JSON and multipart uploads enforce the byte limit while reading the body, even without
+  Content-Length or with an understated value; new sites, version uploads and source edits share
+  the guard. Oversized streams are cancelled before parsing.
+- Server-side PDF text extraction keeps PDF.js and its worker together in the runtime image.
+  Existing text indexes for all sites (including HTML and folders) are refreshed once, lazily on reads or through the bounded maintenance backfill
+  using an additive extractor-version column, repairing previously empty PDF text and search results.
+- The container includes the project's Apache/MIT license texts and NOTICE. CI boots the final
+  image with disposable Postgres and runs browser and PDF read/search acceptance checks.
+- Browser tests use current thumbnail/search controls and an explicit English locale. The CLI
+  documents and declares Node 24+ to match its dependencies, with a packed-install check in CI.
+- **Publish tokens are stored per server** (`~/.config/artifact-site/tokens/<host>`), by the CLI
+  and by the agent guide alike; the legacy single `token` file is adopted on first use. Two
+  deployments no longer overwrite each other's token — the cause of "sign in again every session".
+  The guide now checks `ARTIFACT_SITE_TOKEN` first (sandboxes with a fresh HOME), verifies the token
+  with `GET /api/auth/me` before uploading, and a refused token answers `401` with a reason:
+  `token_unknown` (issued by another deployment — authorise here, keep the other) or
+  `token_revoked`. `artifact-site whoami` says the same in words.
+- The chunked upload path (`/api/uploads`, per-file `PUT`, commit) now applies the same CSRF rule
+  as `POST …/versions` when it targets an existing site: cookie-authenticated requests must carry
+  a matching `Origin`; edit tokens, publish tokens and the admin bearer are exempt. Sessions for a
+  new site follow the deployment create policy, checked before upload and again at commit.
+- `SECURITY.md` and `ARCHITECTURE.md` claimed hosted pages cannot reach the network by default;
+  they can, and `CSP_CONNECT_SRC` is the opt-in restriction. The agent guide's extension allow
+  list now includes the audio/video types the server has served all along.
+- `.env.example` shipped `ARTIFACT_MAX_BYTES=100MB` as an active value while every document
+  states the 300MB default; the limits are now commented examples of the real defaults.
+
+### Licensing
+
+- **Dual-licensed: Apache-2.0 OR MIT, at your option.** `LICENSE` became `LICENSE-APACHE` and
+  `LICENSE-MIT` was added (root and `cli/`); package metadata says `(Apache-2.0 OR MIT)`.
+  Contributions are accepted under both (CONTRIBUTING.md).
+
+### Renamed
+
+- **artifact-hub is now artifact-site.** The name collided with CNCF's Artifact Hub. Everything
+  public-facing follows: the npm package `@artifact-site/cli` with the `artifact-site` command,
+  MCP tools `artifact_site_*`, the agent guide `publish-to-artifact-site`, the CLI's config
+  directory `~/.config/artifact-site`, the `ARTIFACT_SITE_*` environment overrides, the image
+  `ghcr.io/lexmount/artifact-site`, container names, and the `X-Artifact-Site-Skill-Version`
+  header. Nothing is lost on upgrade: the CLI still reads `~/.config/artifact-hub` and the
+  `ARTIFACT_HUB_*` variables, API responses carry the old header name as well for one release,
+  and the bundled database keeps its `artifact_hub` role and name (a rename there would orphan
+  existing data). The first public release is 0.1.0.
+
+### Removed
+
+- Company-specific defaults (intranet hostname sniffing, vendor-specific S3 examples, internal
+  addresses in the agent skill).
+- The unfinished server-side build feature and its `ARTIFACT_BUILD*` settings (`ARTIFACT_BUILD`,
+  `ARTIFACT_BUILD_NPM_REGISTRY`, `ARTIFACT_BUILD_TIMEOUT_MS`, `ARTIFACT_BUILD_MAX_SOURCE_BYTES`,
+  `ARTIFACT_BUILD_MAX_SOURCE_FILES`, `ARTIFACT_BUILD_CONCURRENCY`, `ARTIFACT_BUILD_WORK_DIR`).
+  Nothing consumed the detector or the switch; the variables are now ignored.

@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]  # main: the public repository; master: the private one it is exported from
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: typecheck + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+  integration:
+    name: postgres integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: t
+          POSTGRES_PASSWORD: t
+          POSTGRES_DB: t
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U t -d t"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run test/db-postgres.integration.test.ts
+        env:
+          ARTIFACT_DATABASE_URL: postgres://t:t@127.0.0.1:5432/t?sslmode=disable
+      # The administration suite is SQL-heavy (aggregates, window functions, typed parameters):
+      # run it against the real store as well, not only the SQLite test backend.
+      - run: npx vitest run test/admin.test.ts test/quota.test.ts test/settings.test.ts test/site-text.test.ts
+        env:
+          ARTIFACT_DB_DRIVER: postgres
+          ARTIFACT_DATABASE_URL: postgres://t:t@127.0.0.1:5432/t?sslmode=disable
+
+  cli:
+    name: cli
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build && node bin/artifact-site.js --help
+      - name: Install the packed CLI on the supported Node version
+        run: |
+          set -euo pipefail
+          package=$(npm pack --silent)
+          npm install --global --engine-strict "./$package"
+          artifact-site --help
+
+  image:
+    name: docker build
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: browser-actions/setup-chrome@v2
+        id: chrome
+        with:
+          install-dependencies: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: artifact-site:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Test the runtime image and browser flows
+        run: bash scripts/test-image.sh artifact-site:ci
+        env:
+          E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: image-server-log
+          path: test-results/image-server.log
