@@ -50,7 +50,7 @@ That line is the [Developer Certificate of Origin](https://developercertificate.
 that you wrote the change, or have the right to submit it, under this project's licenses —
 Apache-2.0 or MIT, at the user's option (see LICENSE-APACHE and LICENSE-MIT). Contributions
 are accepted under both. There is nothing to register and nothing to sign elsewhere; CI checks the trailer on
-every commit of a pull request. Forgot it on a branch? `git rebase --signoff main` adds it to
+every commit of a pull request. Forgot it on a branch? `git rebase --signoff origin/HEAD` (the default branch) adds it to
 every commit at once.
 
 ## Pull requests
