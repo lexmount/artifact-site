@@ -12,7 +12,7 @@
 
 ## Checklist
 
-- [ ] Every commit is signed off (`git commit -s`; `git rebase --signoff main` to fix a branch)
+- [ ] Every commit is signed off (`git commit -s`; `git rebase --signoff origin/HEAD` to fix a branch)
 - [ ] Tests cover the change (`npm test`; `make test-pg` if the Postgres store changed; `cd cli && npm test` if the CLI changed)
 - [ ] New settings are documented in `.env.example` and checked by `scripts/deploy/doctor.sh` where a mistake would be silent
 - [ ] `CHANGELOG.md` has an entry under *Unreleased* if an operator or user would notice

@@ -5,6 +5,12 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0 — 2026-09-14
+
+The first public release.
+
 ### Added
 
 - Administrators can assign unowned sites to an existing verified account from the console,
@@ -85,6 +91,17 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
   (cookie `ah_locale`, else `Accept-Language`).
 
 ### Changed
+
+- **The interface follows the design team's system.** Black on near-white with one light-green
+  accent, the system sans font, and a horizontal header (Home · Explore · My sites · Agent guide,
+  EN | 中文, a prominent Sign in). The home page leads with the drop zone and the one line to hand
+  an agent; My sites has a folder rail, list and grid views, and tabs for created / editable /
+  recently viewed (the full history, with remove and clear); the viewer bar carries device
+  preview, Edit and Sharing with the rest behind "···"; the editor is one bar with Edit / Preview
+  and Save new version; the console, activation and sign-in pages use the same tokens. Signed out,
+  My sites still lists the sites this browser created. `globals.css` was consolidated — dead rules,
+  stacked overrides and six reduced-motion blocks folded — and two hygiene tests keep it that way
+  (every styled class is used, every zh-CN key is referenced). (#105)
 
 - Make MCP upload errors actionable, reuse owner/session resolution per chunk, and count project files independently of transfer chunks. Keep final byte counts consistent; clarify discarded Office/ZIP drafts, verify UI tool labels against discovery, and improve CLI search-limit and share-inspection handling.
 
@@ -186,6 +203,9 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
   existing data). The first public release is 0.1.0.
 
 ### Removed
+
+- Dark mode and the palette switch (Paper / Mineral / Ledger): one light theme, as designed.
+- The "Paste HTML" entry on the home page; publish a file, a folder or a zip, or hand the agent line to an agent.
 
 - Company-specific defaults (intranet hostname sniffing, vendor-specific S3 examples, internal
   addresses in the agent skill).
