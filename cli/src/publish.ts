@@ -7,6 +7,7 @@ import { ArtifactSiteClient, type CreatedSite, type SharePolicy, type ShareResul
 import { inspect, oneShotLimit, skippedLastWalk, zipFiles, type LocalShape } from "./archive.js";
 
 export interface PublishOptions {
+  official?: boolean;
   title?: string;
   /** Create a share link right away. Default: `public` — a freshly created site is private on
    *  most deployments, so without a share the address is useless to anyone but the owner. */
@@ -34,7 +35,7 @@ export async function publishPath(client: ArtifactSiteClient, target: string, op
 }
 
 export async function publishHtml(client: ArtifactSiteClient, html: string, opts: PublishOptions = {}): Promise<PublishOutcome> {
-  const created = await client.createPaste(html, opts.title);
+  const created = await client.createPaste(html, opts.title, opts.official);
   return finish(client, created, "paste", opts);
 }
 
@@ -50,12 +51,12 @@ async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, op
         return { result: await chunkedCreate(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], opts), route: "chunked" };
       }
       say(`uploading ${path.basename(shape.file)} (${mb(shape.size)})`);
-      return { result: await client.createFile(path.basename(shape.file), new Uint8Array(await readFile(shape.file)), opts.title), route: "file" };
+      return { result: await client.createFile(path.basename(shape.file), new Uint8Array(await readFile(shape.file)), opts.title, opts.official), route: "file" };
     }
     case "zip": {
       if (shape.size > oneShotLimit()) throw new Error(`${path.basename(shape.file)} is over ${mb(oneShotLimit())}; extract it and publish the directory (chunked upload)`);
       say(`uploading ${path.basename(shape.file)} (${mb(shape.size)})`);
-      return { result: await client.createZip(new Uint8Array(await readFile(shape.file)), opts.title), route: "zip" };
+      return { result: await client.createZip(new Uint8Array(await readFile(shape.file)), opts.title, opts.official), route: "zip" };
     }
     case "dir": {
       if (skippedLastWalk.length) say(`skipped ${skippedLastWalk.length} path(s) the platform would refuse: ${skippedLastWalk.slice(0, 5).join(", ")}${skippedLastWalk.length > 5 ? ", …" : ""}`);
@@ -64,7 +65,7 @@ async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, op
         return { result: await chunkedCreate(client, shape.files, opts), route: "chunked" };
       }
       say(`zipping ${shape.files.length} files (${mb(shape.size)})`);
-      return { result: await client.createZip(await zipFiles(shape.files), opts.title), route: "zip" };
+      return { result: await client.createZip(await zipFiles(shape.files), opts.title, opts.official), route: "zip" };
     }
   }
 }
@@ -78,7 +79,7 @@ async function chunkedCreate(client: ArtifactSiteClient, files: { relpath: strin
     done += 1;
     say(`  ${done}/${files.length} ${f.relpath} (${mb(f.size)})`);
   }
-  return client.commitUpload(versionId, opts.title, opts.expectedVersion);
+  return client.commitUpload(versionId, opts.title, opts.expectedVersion, opts.official);
 }
 
 async function finish(client: ArtifactSiteClient, site: CreatedSite | VersionResult, route: PublishOutcome["route"], opts: PublishOptions): Promise<PublishOutcome> {
@@ -96,6 +97,7 @@ async function finish(client: ArtifactSiteClient, site: CreatedSite | VersionRes
 }
 
 export interface UpdateOptions {
+  official?: boolean;
   /** Version id the change is based on (from `export`); a 409 means somebody else committed first. */
   expectedVersion?: string;
   onProgress?: (line: string) => void;
@@ -115,30 +117,30 @@ export async function updateFromPath(client: ArtifactSiteClient, slug: string, t
         : null;
       if (!file) throw new Error(`${slug} is a single-page site: give it one .html file`);
       say(`replacing the page from ${path.basename(file)}`);
-      const r = await client.edit(slug, { content: await readFile(file, "utf8") }, opts.expectedVersion);
+      const r = opts.official ? await client.replaceWithFile(slug, path.basename(file), new Uint8Array(await readFile(file)), opts.expectedVersion, true) : await client.edit(slug, { content: await readFile(file, "utf8") }, opts.expectedVersion);
       return { ...r, kind: "single" };
     }
     case "folder": {
       if (shape.type === "zip") {
         say(`uploading ${path.basename(shape.file)}`);
-        return { ...(await client.replaceWithZip(slug, new Uint8Array(await readFile(shape.file)), opts.expectedVersion)), kind: "folder" };
+        return { ...(await client.replaceWithZip(slug, new Uint8Array(await readFile(shape.file)), opts.expectedVersion, opts.official)), kind: "folder" };
       }
       if (shape.type !== "dir") throw new Error(`${slug} is a file-tree site: give it a directory or a zip`);
       if (shape.size > oneShotLimit()) {
         say(`${shape.files.length} files, ${mb(shape.size)}: chunked upload`);
-        return { ...(await chunkedCreate(client, shape.files, { slug, onProgress: opts.onProgress, expectedVersion: opts.expectedVersion })), kind: "folder" };
+        return { ...(await chunkedCreate(client, shape.files, { slug, onProgress: opts.onProgress, expectedVersion: opts.expectedVersion, official: opts.official })), kind: "folder" };
       }
       say(`zipping ${shape.files.length} files (${mb(shape.size)})`);
-      return { ...(await client.replaceWithZip(slug, await zipFiles(shape.files), opts.expectedVersion)), kind: "folder" };
+      return { ...(await client.replaceWithZip(slug, await zipFiles(shape.files), opts.expectedVersion, opts.official)), kind: "folder" };
     }
     case "document": {
       if (shape.type !== "document") throw new Error(`${slug} is a document site: give it a pdf/pptx/ppt/docx/doc file`);
       if (shape.size > oneShotLimit()) {
         if (path.extname(shape.file).toLowerCase() !== ".pdf") throw new Error("Office documents over the one-shot limit must be converted to PDF first");
-        return { ...(await chunkedCreate(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], { slug, onProgress: opts.onProgress, expectedVersion: opts.expectedVersion })), kind: "document" };
+        return { ...(await chunkedCreate(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], { slug, onProgress: opts.onProgress, expectedVersion: opts.expectedVersion, official: opts.official })), kind: "document" };
       }
       say(`uploading ${path.basename(shape.file)}`);
-      return { ...(await client.replaceWithFile(slug, path.basename(shape.file), new Uint8Array(await readFile(shape.file)), opts.expectedVersion)), kind: "document" };
+      return { ...(await client.replaceWithFile(slug, path.basename(shape.file), new Uint8Array(await readFile(shape.file)), opts.expectedVersion, opts.official)), kind: "document" };
     }
   }
 }

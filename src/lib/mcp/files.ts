@@ -138,7 +138,7 @@ export async function assertUploadTarget(request: Request, uploadId: string, slu
 
 /** Office/ZIP uploads retain the existing single-request processing ceiling even though
  * the client transfers bytes through small MCP messages. PDF/tree commits stay streaming. */
-export async function commitUpload(request: Request, versionId: string, title?: string, expectedVersion?: string) {
+export async function commitUpload(request: Request, versionId: string, title?: string, expectedVersion?: string, official?: boolean) {
   const session = await getUploadSession(versionId, await owner(request));
   if (!session) throw missing();
   const children = await listUploadSessionsForTarget(`mcp-parts:${session.ownerKey}`, versionId);
@@ -153,7 +153,7 @@ export async function commitUpload(request: Request, versionId: string, title?: 
     if (only && /\.(docx?|pptx?|zip)$/i.test(only.relpath)) {
       if (only.bytes > limits.inlineUploadMaxBytes - 4096) throw new BadRequestError("Office/ZIP processing exceeds the single-request limit; the upload has been discarded. Convert Office to PDF or start a new upload with an unpacked web tree");
       const bytes = await getStorage().read(session.siteId, session.versionId, only.relpath);
-      const form = new FormData(); form.set("mode", /\.zip$/i.test(only.relpath) ? "zip" : "file");
+      const form = new FormData(); if (official !== undefined) form.set("official", String(official)); form.set("mode", /\.zip$/i.test(only.relpath) ? "zip" : "file");
       form.set("file", new Blob([Buffer.from(bytes)]), only.relpath.split("/").pop()!);
       if (title ?? session.title) form.set("title", (title ?? session.title)!);
       const commitHeaders = new Headers(request.headers);
@@ -162,7 +162,7 @@ export async function commitUpload(request: Request, versionId: string, title?: 
       const result = await callApi(commitRequest, session.targetSlug ? "update" : "publish", { slug: session.targetSlug ?? undefined, body: form, query: expectedVersion ? { expected_version: expectedVersion } : undefined });
       await discardUploadSession(versionId); await cleanup(); return result;
     }
-    const result = await callApi(request, "upload_commit", { versionId, body: { title }, query: expectedVersion ? { expected_version: expectedVersion } : undefined });
+    const result = await callApi(request, "upload_commit", { versionId, body: { title, official }, query: expectedVersion ? { expected_version: expectedVersion } : undefined });
     await cleanup(); return result;
   } catch (error) {
     // Conflicts keep both the complete draft and its sealed parts for deliberate recovery.

@@ -194,6 +194,10 @@ export interface Site {
   title: string;
   kind: SiteKind;
   currentVersionId: string;
+  officialVersionId?: string | null;
+  officialSetAt?: number | null;
+  officialSetBy?: string | null;
+  officialRevision?: number;
   createdAt: number;
   updatedAt: number;
   /** Soft-delete tombstone. The files stay for `config.deletedRetentionMs` so an administrator
@@ -377,6 +381,7 @@ export interface Actor {
 
 /** What happened. Only version-producing actions are recorded atomically; the rest are best-effort. */
 export type AuditAction =
+  | "official.set" | "official.clear"
   | "create" | "edit" | "rollback" | "fork" | "rename" | "delete" | "share" | "collab"
   // Ownership changes are recorded for accountability.
   | "claim" | "transfer" | "disown";
@@ -411,10 +416,14 @@ export interface Version {
 }
 
 /** A version row plus whether it is the one currently served — the shape the history UI wants. */
-export type VersionInfo = Version & { current: boolean };
+export type VersionInfo = Version & { current: boolean; official?: boolean; number?: number };
 
 /** Site + its current version + how many versions it has — the shape the list UI wants. */
 export interface SiteSummary {
+  /** All recorded direct and share opens, available only to the owner. */
+  totalViews?: number;
+  officialVersionId?: string | null;
+  officialVersionNumber?: number | null;
   slug: string;
   title: string;
   kind: SiteKind;
@@ -446,11 +455,11 @@ export interface UploadFile {
 }
 
 /** The four ways a finished front-end enters the system (POST /api/sites). */
-export type UploadInput =
+export type UploadInput = { official?: boolean } & (
   | { mode: "paste"; html: string; title?: string }
   | { mode: "file"; filename: string; bytes: Uint8Array; title?: string }
   | { mode: "folder"; files: UploadFile[]; title?: string }
-  | { mode: "zip"; bytes: Uint8Array; title?: string };
+  | { mode: "zip"; bytes: Uint8Array; title?: string });
 
 /** Normalized result of parsing any UploadInput — ready to store as a version. */
 export interface NormalizedUpload {

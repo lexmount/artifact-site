@@ -221,3 +221,21 @@ it("accepts a hyphen-prefixed slug after the option separator", async () => {
   expect(new URL(requested).pathname).toBe("/api/sites/-leading-slug/text");
   expect(lastJson().text).toBe("read successfully");
 });
+
+it("supports official publication, replacement, historical designation and clearing", async () => {
+  expect(await cli("--base", server.url, "login", "--no-open")).toBe(0);
+  expect(await cli("--json", "publish", path.join(dir, "page.html"), "--official", "--share", "none")).toBe(0);
+  const created = lastJson(), slug = created.slug;
+  expect(created.officialVersionId).toBeTruthy();
+  expect(await cli("--json", "update", slug, path.join(dir, "page.html"), "--official")).toBe(0);
+  const updated = lastJson();
+  expect(updated.officialVersionId).toBe(updated.versionId);
+  expect(updated.officialVersionId).not.toBe(created.officialVersionId);
+  expect(await cli("--json", "official", "set", slug, created.officialVersionId)).toBe(0);
+  expect(lastJson().previousOfficialVersionId).toBe(updated.versionId);
+  expect(await cli("--json", "info", slug)).toBe(0);
+  expect(lastJson().officialVersionId).toBe(created.officialVersionId);
+  expect(lastJson().currentVersionId).toBe(updated.versionId);
+  expect(await cli("--json", "official", "clear", slug)).toBe(0);
+  expect(lastJson().officialVersionId).toBeNull();
+});

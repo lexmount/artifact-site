@@ -1,0 +1,170 @@
+import { z } from "zod";
+
+/** Wire format version, independent of the artifact version being discussed. */
+export const COMMENT_CONTRACT_VERSION = 1 as const;
+export const COMMENT_LIMITS = { body: 10_000, quote: 2_000, selector: 2_000, pageSize: 100 } as const;
+const id = z.string().min(1).max(128);
+const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const unit = z.number().finite().min(0).max(1);
+const point = z.strictObject({ x: unit, y: unit });
+const rect = z.strictObject({ x: unit, y: unit, width: unit.gt(0), height: unit.gt(0) })
+  .refine(r => r.x + r.width <= 1 && r.y + r.height <= 1, "Region exceeds the page");
+const quote = z.strictObject({
+  exact: z.string().min(1).max(COMMENT_LIMITS.quote),
+  prefix: z.string().max(200).optional(), suffix: z.string().max(200).optional(),
+});
+const region = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("point"), point }),
+  z.strictObject({ kind: z.literal("rect"), rect }),
+]);
+
+/** File paths are validated with safeRelativePath by the server parser, never used as URLs. */
+export const commentAnchorSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("document"), schemaVersion: z.literal(1), filePath: z.string().min(1).max(1024) }),
+  z.strictObject({
+    kind: z.literal("html"), schemaVersion: z.literal(1), filePath: z.string().min(1).max(1024),
+    selector: z.string().min(1).max(COMMENT_LIMITS.selector), quote: quote.optional(),
+    rect: rect.optional(), viewport: z.strictObject({ width: z.number().int().positive().max(100_000), height: z.number().int().positive().max(100_000) }),
+  }),
+  z.strictObject({
+    kind: z.literal("image"), schemaVersion: z.literal(1), filePath: z.string().min(1).max(1024), region,
+  }),
+  z.strictObject({
+    kind: z.literal("pdf"), schemaVersion: z.literal(1), filePath: z.string().min(1).max(1024),
+    page: z.number().int().positive().max(1_000_000), region, quote: quote.optional(),
+  }),
+]);
+export type CommentAnchor = z.infer<typeof commentAnchorSchema>;
+export const commentScopeSchema = z.strictObject({
+  siteId: id, versionId: id,
+  entry: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("main") }),
+    z.strictObject({ kind: z.literal("share"), shareId: id }),
+  ]),
+});
+export type CommentScope = z.infer<typeof commentScopeSchema>;
+export const mainCommentPolicySchema = z.enum(["off", "login", "members"]);
+export type MainCommentPolicy = z.infer<typeof mainCommentPolicySchema>;
+export const DEFAULT_MAIN_COMMENT_POLICY: MainCommentPolicy = "login";
+const body = z.string().trim().min(1).max(COMMENT_LIMITS.body);
+export const createCommentSchema = z.strictObject({
+  scope: commentScopeSchema, clientRequestId: z.uuid(), anchor: commentAnchorSchema, body,
+});
+export const replyCommentSchema = z.strictObject({ clientRequestId: z.uuid(), body });
+export const editCommentSchema = z.strictObject({ expectedRevision: revision, body });
+export const deleteCommentSchema = z.strictObject({ expectedRevision: revision });
+export const resolveCommentSchema = z.strictObject({ expectedRevision: revision, status: z.enum(["open", "resolved"]) });
+export const commentSettingsSchema = z.strictObject({ mainPolicy: mainCommentPolicySchema });
+export type CreateCommentInput = z.infer<typeof createCommentSchema>;
+export type ReplyCommentInput = z.infer<typeof replyCommentSchema>;
+
+/** Server-generated evidence, not arbitrary client metadata. Never include HTML or credentials. */
+export interface CommentContext {
+  schemaVersion: 1;
+  excerpt: string | null;
+  /** Office originals map to an immutable PDF rendition, not to editable source coordinates. */
+  originalFilePath: string | null;
+  rendition: { filePath: string; sha256: string } | null;
+  assetIds: string[];
+}
+export interface CommentSpace extends CommentScope { id: string; createdAt: number }
+export interface CommentThread {
+  id: string;
+  spaceId: string;
+  createdBy: string;
+  anchor: CommentAnchor;
+  context: CommentContext;
+  resolution: { status: "open" } | { status: "resolved"; resolvedBy: string; resolvedAt: number };
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface CommentMessage {
+  id: string;
+  threadId: string;
+  authorUserId: string;
+  isRoot: boolean;
+  content: { state: "visible"; body: string } | { state: "deleted"; deletedAt: number; deletedBy: string };
+  revision: number;
+  createdAt: number;
+  editedAt: number | null;
+}
+export interface CommentContextAsset {
+  id: string; messageId: string; kind: "region_image" | "page_image";
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  byteSize: number; pixelWidth: number; pixelHeight: number; sha256: string;
+  createdAt: number; deletedAt: number | null;
+}
+/** Storage keys are backend-only; readers receive an authorized asset route. */
+export interface StoredCommentContextAsset extends CommentContextAsset { storageKey: string }
+export interface StoredCommentMessage extends CommentMessage {
+  clientRequestId: string;
+  /** Immutable, keyed request digest for conflict detection; never serialize to readers. */
+  requestFingerprint: string;
+}
+export interface CommentPage<T> { items: T[]; nextCursor: string | null }
+export interface CommentThreadDetail {
+  space: CommentSpace;
+  thread: CommentThread;
+  messages: CommentPage<CommentMessage>;
+  /** Server-derived affordances, never persisted or accepted back as authorization. */
+  permissions: {
+    canReply: boolean;
+    canResolve: boolean;
+    canReopen: boolean;
+    messages: Record<string, { canEdit: boolean; canDelete: boolean }>;
+  };
+}
+export type CommentListFilter =
+  | { kind: "space"; scope: CommentScope; status?: "open" | "resolved"; cursor?: string; limit?: number }
+  | { kind: "aggregate"; siteId: string; versionId?: string; entry?: CommentScope["entry"]; status?: "open" | "resolved"; cursor?: string; limit?: number };
+/** Reserved extension; only site targets are enabled by the first implementation. */
+export type ReactionTarget = { kind: "site"; siteId: string } | { kind: "comment_message"; siteId: string; messageId: string };
+export interface AgentCommentBundle {
+  schemaVersion: 1;
+  scope: CommentScope;
+  threads: CommentThreadDetail[];
+  /** Always explicit: comment access does not imply source export or editing. */
+  capabilities: { canExportSource: boolean; canEditContent: boolean };
+}
+
+/** Untrusted preview events. The host binds channel + iframe Window + immutable scope. */
+export const previewCommentEventSchema = z.strictObject({
+  protocol: z.literal("artifact-comments"), schemaVersion: z.literal(1), channelId: z.uuid(),
+  scope: commentScopeSchema,
+  event: z.discriminatedUnion("type", [
+    z.strictObject({ type: z.literal("ready") }),
+    z.strictObject({ type: z.literal("selected"), anchor: commentAnchorSchema }),
+    z.strictObject({ type: z.literal("cancelled") }),
+    z.strictObject({ type: z.literal("located"), threadId: id, outcome: z.enum(["exact", "approximate", "missing"]) }),
+  ]),
+});
+export type PreviewCommentEvent = z.infer<typeof previewCommentEventSchema>;
+export type PreviewCommentCommand = {
+  protocol: "artifact-comments"; schemaVersion: 1; channelId: string; scope: CommentScope;
+  command: { type: "select" } | { type: "cancel" } | { type: "markers"; visible: boolean; markers: { threadId: string; anchor: CommentAnchor }[] } | { type: "locate"; threadId: string; anchor: CommentAnchor };
+
+};
+
+export type EditCommentInput = z.infer<typeof editCommentSchema>;
+export type DeleteCommentInput = z.infer<typeof deleteCommentSchema>;
+export type ResolveCommentInput = z.infer<typeof resolveCommentSchema>;
+export type CommentSettings = z.infer<typeof commentSettingsSchema>;
+/** Accept decimal URL query strings or numbers; reject blank/null/boolean coercions. */
+export const commentPaginationSchema = z.strictObject({
+  cursor: z.string().min(1).max(2048).optional(),
+  limit: z.union([z.number(), z.string().regex(/^[0-9]+$/).transform(Number)]).pipe(z.number().int().min(1).max(COMMENT_LIMITS.pageSize)).default(30),
+});
+
+/** Parse Object.fromEntries(searchParams); duplicate keys must be rejected by the route. */
+export const commentListQuerySchema = commentPaginationSchema.extend({
+  versionId: id,
+  shareId: id.optional(),
+  status: z.enum(["open", "resolved"]).optional(),
+});
+export const commentAggregateQuerySchema = commentPaginationSchema.extend({
+  versionId: id.optional(),
+  shareId: id.optional(),
+  entry: z.literal("main").optional(),
+  status: z.enum(["open", "resolved"]).optional(),
+}).refine(value => !(value.shareId && value.entry), "Choose main or a share, not both");

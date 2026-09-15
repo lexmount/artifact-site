@@ -40,7 +40,7 @@ export function auditRequestMeta(request: Request): { ip: string | null; userAge
 
 /** Build an AuditContext for a non-text action (create / fork / rollback / rename / delete / share)
  *  from a request and its resolved actor. `method: "api"` — none of these came through an editor. */
-export function apiAuditContext(request: Request, actor: Actor): AuditContext {
+export function apiAuditContext(request: Request, actor: Actor): AuditContext & { authorizationRequest: Request } {
   return { actor, method: "api", ...auditRequestMeta(request), authorizationRequest: request };
 }
 

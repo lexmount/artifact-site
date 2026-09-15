@@ -2,6 +2,10 @@ import type { Messages } from "@/lib/i18n";
 
 /** Viewer chrome (/s/[slug]), the source + visual editors, and the assistant mount. */
 export const editor: Messages = {
+  "This report has changed. Your edits are still here; copy them before refreshing to review the latest version.": "报告已有新版本。你的修改仍保留，请先复制修改内容，再刷新查看最新版。",
+  "All files come from {label}; saving creates a new latest version": "所有文件均来自 {label}，保存后将创建新的最新版",
+  "All files come from earlier version {label}. Saving creates a new latest version; {label} and the official version remain unchanged.": "所有文件均来自历史版本 {label}。保存后将创建新的最新版，{label} 和正式版均保持不变。",
+
   // ── site-viewer ──────────────────────────────────────────────────────────────
   "Published · Only you can open it for now. Create a share link under Sharing settings before sending it to others":
     "已发布 · 目前只有你能打开，到「分享设置」里建一条分享链接再发给别人",
@@ -64,8 +68,6 @@ export const editor: Messages = {
     "查看是公开的，但只有站点所有者或持有「可编辑链接」的人才能修改它。",
   "Copy into a new site that you own and can edit": "复制成一个你自己拥有、可编辑的新站点",
   "Save as my editable copy": "另存为我的可编辑副本",
-  "Content taken from {label}; saving creates a new version on top of the current one":
-    "内容取自 {label}；保存会在当前版本之上生成新版本",
   "Based on {label}": "基于 {label}",
   "Back to version selection: pick a different base version, or make a copy and edit that":
     "回到版本选择：换一个基准版本，或者复制成副本再改",
@@ -79,8 +81,6 @@ export const editor: Messages = {
   "Edit visually": "可视化编辑",
   "Save new version": "保存新版本",
   "Editing version {version}": "编辑版本 {version}",
-  "Content taken from earlier version {label}; saving creates a new version on top of the current one, and {label} itself is not rewritten.":
-    "内容取自历史版本 {label}；保存会在当前版本之上生成一个新版本，{label} 本身不会被改写。",
   "Saving creates a new immutable version; earlier versions stay unchanged.": "保存会生成一个新的不可变版本；旧版本保持不变。",
   "Unsaved": "未保存",
   "Choose a file to edit": "选择要编辑的文件",

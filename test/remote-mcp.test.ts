@@ -527,3 +527,25 @@ it("rejects further MCP chunks immediately after an editor is removed", async ()
   expect((await call(ce,"upload_write",{upload_id,path:"index.html",index:1,base64:"Yg==",final:false})).data.status).toBe(403);
   expect((await getSiteBySlug(slug))!.currentVersionId).toBe(site.currentVersionId);
 });
+
+it("manages the unique official designation through publish, update, set and clear", async () => {
+  const a = await identity("official-owner"), b = await identity("official-other");
+  const ca = await connect(a.token), cb = await connect(b.token);
+  const created = await call(ca, "publish", { html: "<h1>Official one</h1>", official: true, share: false });
+  expect(created.error).toBe(false);
+  const { slug, versionId } = created.data;
+  expect(created.data.officialVersionId).toBe(versionId);
+  expect((await call(cb, "set_official", { slug, version_id: versionId })).error).toBe(true);
+  const update = await call(ca, "update", { slug, html: "<h1>Official two</h1>", expected_version: versionId, official: true });
+  expect(update.error).toBe(false);
+  expect(update.data.officialVersionId).toBe(update.data.versionId);
+  const info = await call(ca, "get_site", { slug });
+  expect(info.data).not.toHaveProperty("versions");
+  expect((await call(ca, "get_site", { slug, include: ["versions"] })).data.versions).toHaveLength(2);
+  const set = await call(ca, "set_official", { slug, version_id: versionId, expected_revision: info.data.officialRevision });
+  expect(set.error).toBe(false);
+  expect(set.data.currentVersionId).toBe(update.data.versionId);
+  expect((await call(ca, "set_official", { slug, version_id: update.data.versionId, expected_revision: info.data.officialRevision })).error).toBe(true);
+  expect((await call(ca, "clear_official", { slug })).error).toBe(false);
+  expect((await call(ca, "get_site", { slug })).data.officialVersionId).toBeNull();
+});

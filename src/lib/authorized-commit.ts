@@ -1,5 +1,5 @@
 import "server-only";
-import { rbacTransaction, toSite, type InsertSiteInput, type InsertAuditInput, type InsertVersionInput, type VersionCommit } from "@/lib/db";
+import { createId, rbacTransaction, toSite, type InsertSiteInput, type InsertAuditInput, type InsertVersionInput, type VersionCommit } from "@/lib/db";
 import { AuthError, EditForbiddenError, assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
 import { requirePermission } from "@/lib/authz";
 import { resolveSession } from "@/lib/session";
@@ -36,18 +36,21 @@ export async function withPermissionCommit<T>(request: Request, siteId: string, 
 }
 /** Version pointer, audit row and final permission check commit together after storage I/O. */
 export async function commitAuthorizedVersion(siteId: string, version: InsertVersionInput, audit: InsertAuditInput, expected?: string): Promise<VersionCommit> {
-    return withPermissionCommit(audit.authorizationRequest!, siteId, audit.action === "rollback" ? "site.version.rollback" : "site.content.edit", async (q, site) => {
+    if (!audit.authorizationRequest) throw new Error("authorizationRequest is required for an authorized version commit");
+    return withPermissionCommit(audit.authorizationRequest, siteId, version.official ? "site.version.official.manage" : audit.action === "rollback" ? "site.version.rollback" : "site.content.edit", async (q, site) => {
         if (expected && site.currentVersionId !== expected)
             return "stale";
         const now = Date.now();
         await q("INSERT INTO versions(id,site_id,entry,file_count,byte_size,source,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [version.id, siteId, version.entry, version.fileCount, version.byteSize, version.source, now]);
         await q("UPDATE sites SET current_version_id=$1,updated_at=$2 WHERE id=$3", [version.id, now, siteId]);
         await writeCommitAudit(q, { ...audit, siteId, versionId: version.id }, now);
+        if (version.official) await designateOfficial(q, siteId, version.id, audit, now);
         return "applied";
     });
 }
 export async function commitAuthorizedCreation(site: InsertSiteInput, version: InsertVersionInput, audit: InsertAuditInput): Promise<void> {
-    const request = audit.authorizationRequest!;
+    if (!audit.authorizationRequest) throw new Error("authorizationRequest is required for an authorized creation commit");
+    const request = audit.authorizationRequest;
     const session = await resolveSession(request);
     await assertCanCreate(request);
     const { creationTenant } = await import("@/lib/rbac-access");
@@ -66,6 +69,7 @@ export async function commitAuthorizedCreation(site: InsertSiteInput, version: I
         await q("INSERT INTO sites(id,slug,title,kind,current_version_id,created_at,updated_at,edit_token,claim_token,anon_owner_id,owner_id,visibility,tenant_id) VALUES($1,$2,$3,$4,$5,$6,$6,$7,NULL,$8,$9,$10,$11)", [site.id, site.slug, site.title, site.kind, version.id, now, site.ownerId ? "" : site.editToken, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, tenantId]);
         await q("INSERT INTO versions(id,site_id,entry,file_count,byte_size,source,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [version.id, site.id, version.entry, version.fileCount, version.byteSize, version.source, now]);
         await writeCommitAudit(q, audit, now);
+        if (version.official) await designateOfficial(q, site.id, version.id, audit, now);
     }).catch(async (error) => {
         if ((error as {
             code?: string;
@@ -79,4 +83,10 @@ export async function commitAuthorizedCreation(site: InsertSiteInput, version: I
 }
 export async function writeCommitAudit(q: RbacQuery, audit: InsertAuditInput, now = Date.now()): Promise<void> {
     await q("INSERT INTO audit_log(id,site_id,version_id,action,editor_kind,actor_user_id,actor_anon_id,method,ip,user_agent,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", [audit.id, audit.siteId, audit.versionId, audit.action, audit.editorKind, audit.actorUserId, audit.actorAnonId, audit.method, audit.ip, audit.userAgent, now]);
+}
+
+/** Publication and its designation share the final authorization check and transaction. */
+async function designateOfficial(q: RbacQuery, siteId: string, versionId: string, audit: InsertAuditInput, now: number): Promise<void> {
+    await q("UPDATE sites SET official_version_id=$1,official_set_at=$2,official_set_by=$3,official_revision=official_revision+1 WHERE id=$4", [versionId, now, audit.actorUserId ?? audit.actorAnonId, siteId]);
+    await writeCommitAudit(q, { ...audit, id: createId("aud"), siteId, versionId, action: "official.set" }, now);
 }

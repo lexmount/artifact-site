@@ -29,6 +29,9 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 - Platform-admin audit retention setting (0–3650 days, default 0 = forever) for site, admin and
   RBAC logs, with time-budgeted maintenance cleanup, bounded transactions and a manual System action. Console settings
   override `ARTIFACT_AUDIT_RETENTION_DAYS`; expired deletions are permanent.
+- My sites lists total recorded views and lets owners select or clear an official version from the Versions column with confirmation.
+
+- Designate one current or historical version as official from the viewer, upload confirmation, CLI or MCP. Latest links keep following updates; fixed shares and immutable snapshots stay unchanged.
 
 - Tenant-scoped RBAC with `init` and `anonymous` system tenants, tenant/site administrators,
   permanent editor memberships, independent view/comment/edit share modes and fixed-version links.

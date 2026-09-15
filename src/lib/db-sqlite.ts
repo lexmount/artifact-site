@@ -495,6 +495,10 @@ export class SqliteStore implements MetadataStore {
     this.addColumnIfMissing("site_shares", "mode", "TEXT NOT NULL DEFAULT 'view' CHECK (mode IN ('view','comment','edit'))");
     this.addColumnIfMissing("site_shares", "version_id", "TEXT REFERENCES versions(id)");
     this.addColumnIfMissing("upload_sessions", "tenant_id", "TEXT");
+    this.addColumnIfMissing("sites", "official_version_id", "TEXT REFERENCES versions(id) ON DELETE SET NULL");
+    this.addColumnIfMissing("sites", "official_set_at", "BIGINT");
+    this.addColumnIfMissing("sites", "official_set_by", "TEXT");
+    this.addColumnIfMissing("sites", "official_revision", "BIGINT NOT NULL DEFAULT 0");
     await this.rbacTransaction(migrateRbac);
     await this.backfillEditTokens();
   }
@@ -528,6 +532,10 @@ export class SqliteStore implements MetadataStore {
       this.db.prepare("INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now);
       if (audit) this.writeAuditRow(audit, now);
+      if (version.official) {
+        this.db.prepare("UPDATE sites SET official_version_id=?, official_set_at=?, official_set_by=?, official_revision=official_revision+1 WHERE id=?").run(version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId);
+        if (audit) this.writeAuditRow({ ...audit, id: createId("aud"), action: "official.set" }, now);
+      }
       this.db.exec("COMMIT");
     } catch (error) {
       // Swallow a failing ROLLBACK — it can throw in exactly the situations that got us here (the
@@ -552,6 +560,10 @@ export class SqliteStore implements MetadataStore {
         .run(version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now);
       this.db.prepare("UPDATE sites SET current_version_id=?, updated_at=? WHERE id=?").run(version.id, now, siteId);
       if (audit) this.writeAuditRow(audit, now);
+      if (version.official) {
+        this.db.prepare("UPDATE sites SET official_version_id=?, official_set_at=?, official_set_by=?, official_revision=official_revision+1 WHERE id=?").run(version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId);
+        if (audit) this.writeAuditRow({ ...audit, id: createId("aud"), action: "official.set" }, now);
+      }
       this.db.exec("COMMIT");
       return true;
     } catch (error) {
@@ -591,6 +603,10 @@ export class SqliteStore implements MetadataStore {
         .run(version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now);
       this.db.prepare("UPDATE sites SET current_version_id=?, updated_at=? WHERE id=?").run(version.id, now, siteId);
       if (audit) this.writeAuditRow(audit, now);
+      if (version.official) {
+        this.db.prepare("UPDATE sites SET official_version_id=?, official_set_at=?, official_set_by=?, official_revision=official_revision+1 WHERE id=?").run(version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId);
+        if (audit) this.writeAuditRow({ ...audit, id: createId("aud"), action: "official.set" }, now);
+      }
       this.db.exec("COMMIT");
       return "applied";
     } catch (error) {
@@ -646,13 +662,15 @@ export class SqliteStore implements MetadataStore {
     this.db.prepare("UPDATE sites SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL").run(now, now, id);
   }
 
-  async listSiteSummaries(viewer?: ListViewer): Promise<SiteSummary[]> {
+  async listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean }): Promise<SiteSummary[]> {
     // Same predicate as the Postgres side, same reasons — see the comment there. Only the
     // placeholders differ, and node:sqlite binds a JS null as SQL NULL, so the no-viewer call
     // degrades to public-only exactly like $1/$2 do.
     const rows = this.db.prepare(`
-      SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at,
+      SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
+             (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.rowid <= (SELECT rowid FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
+             ${options?.withViews ? `CASE WHEN (s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (s.owner_id IS NULL AND s.anon_owner_id = ?) THEN (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) END AS total_views,` : ""}
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
@@ -663,7 +681,7 @@ export class SqliteStore implements MetadataStore {
              OR EXISTS (SELECT 1 FROM site_members c
                          WHERE c.site_id = s.id AND c.user_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
       ORDER BY s.updated_at DESC
-    `).all(viewer?.userId ?? null, viewer?.anonId ?? null, viewer?.userId ?? null) as Row[];
+    `).all(...(options?.withViews ? [viewer?.userId ?? null, viewer?.anonId ?? null] : []), viewer?.userId ?? null, viewer?.anonId ?? null, viewer?.userId ?? null) as Row[];
     return rows.map(toSummary);
   }
 
@@ -683,7 +701,7 @@ export class SqliteStore implements MetadataStore {
   }
 
   async listVersions(siteId: string): Promise<Version[]> {
-    const rows = this.db.prepare("SELECT * FROM versions WHERE site_id=? ORDER BY created_at DESC, rowid DESC").all(siteId) as Row[];
+    const rows = this.db.prepare("SELECT * FROM versions WHERE site_id=? ORDER BY rowid DESC").all(siteId) as Row[];
     return rows.map(toVersion);
   }
 
@@ -981,8 +999,10 @@ export class SqliteStore implements MetadataStore {
   }
 
   async listSitesByOwner(ownerId: string): Promise<SiteSummary[]> {
-    return (this.db.prepare(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at,
+    return (this.db.prepare(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
+             (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.rowid <= (SELECT rowid FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
+             (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) AS total_views,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members m WHERE m.tenant_id=s.tenant_id AND m.user_id=s.owner_id)
@@ -990,7 +1010,8 @@ export class SqliteStore implements MetadataStore {
   }
 
   async listSitesForCollaborator(userId: string): Promise<SiteSummary[]> {
-    return (this.db.prepare(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at,
+    return (this.db.prepare(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
+             (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.rowid <= (SELECT rowid FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id

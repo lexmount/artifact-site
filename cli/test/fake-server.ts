@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import { unzipSync, zipSync } from "fflate";
 
 interface Version { id: string; createdAt: number; source: string; files: Record<string, Uint8Array> }
-interface Site { slug: string; title: string; kind: "single" | "folder" | "document"; visibility: string; owner: string | null; versions: Version[]; deleted?: boolean }
+interface Site { officialVersionId?: string | null; officialRevision?: number; slug: string; title: string; kind: "single" | "folder" | "document"; visibility: string; owner: string | null; versions: Version[]; deleted?: boolean }
 interface UploadSession { versionId: string; slug?: string; title?: string; files: Record<string, Uint8Array>; owner: string | null }
 
 export interface FakeServer {
@@ -78,26 +78,28 @@ export async function startFakeServer(): Promise<FakeServer> {
     return null;
   }
 
-  async function readUpload(request: Request): Promise<{ files: Record<string, Uint8Array>; title?: string } | { error: string }> {
+  async function readUpload(request: Request): Promise<{ files: Record<string, Uint8Array>; title?: string; official?: boolean } | { error: string }> {
     const ct = request.headers.get("content-type") ?? "";
     if (ct.includes("application/json")) {
       const body = (await request.json()) as Record<string, unknown>;
+      const official = body.official === true;
       const title = typeof body.title === "string" ? body.title : undefined;
-      if (body.mode === "paste") return { files: { "index.html": new TextEncoder().encode(String(body.html)) }, title };
-      if (body.mode === "file") return { files: { [String(body.filename)]: body.content !== undefined ? new TextEncoder().encode(String(body.content)) : new Uint8Array(Buffer.from(String(body.base64), "base64")) }, title };
-      if (body.mode === "folder") return { files: Object.fromEntries((body.files as { path: string; content: string }[]).map((f) => [f.path, new TextEncoder().encode(f.content)])), title };
-      if (body.mode === "zip") return { files: unzipSafe(new Uint8Array(Buffer.from(String(body.base64), "base64"))) ?? {}, title };
+      if (body.mode === "paste") return { files: { "index.html": new TextEncoder().encode(String(body.html)) }, title, official };
+      if (body.mode === "file") return { files: { [String(body.filename)]: body.content !== undefined ? new TextEncoder().encode(String(body.content)) : new Uint8Array(Buffer.from(String(body.base64), "base64")) }, title, official };
+      if (body.mode === "folder") return { files: Object.fromEntries((body.files as { path: string; content: string }[]).map((f) => [f.path, new TextEncoder().encode(f.content)])), title, official };
+      if (body.mode === "zip") return { files: unzipSafe(new Uint8Array(Buffer.from(String(body.base64), "base64"))) ?? {}, title, official };
       return { error: `Unknown or missing mode: ${String(body.mode ?? "(none)")}` };
     }
     if (ct.includes("multipart/form-data")) {
       const form = await request.formData();
       const mode = form.get("mode");
+      const official = form.get("official") === "true";
       const title = (form.get("title") as string | null) ?? undefined;
       const file = form.get("file");
-      if (mode === "file" && file instanceof File) return { files: { [file.name]: new Uint8Array(await file.arrayBuffer()) }, title };
+      if (mode === "file" && file instanceof File) return { files: { [file.name]: new Uint8Array(await file.arrayBuffer()) }, title, official };
       if (mode === "zip" && file instanceof File) {
         const files = unzipSafe(new Uint8Array(await file.arrayBuffer()));
-        return files ? { files, title } : { error: "Not a valid zip archive" };
+        return files ? { files, title, official } : { error: "Not a valid zip archive" };
       }
       return { error: `Unknown or missing mode: ${String(mode ?? "(none)")}` };
     }
@@ -120,7 +122,7 @@ export async function startFakeServer(): Promise<FakeServer> {
   }
 
   function siteJson(site: Site) {
-    return { slug: site.slug, url: `/s/${site.slug}`, title: site.title, kind: site.kind };
+    return { officialVersionId: site.officialVersionId ?? null, officialRevision: site.officialRevision ?? 0, slug: site.slug, url: `/s/${site.slug}`, title: site.title, kind: site.kind };
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -179,6 +181,7 @@ export async function startFakeServer(): Promise<FakeServer> {
       if ("error" in r) return send(res, 400, { error: r.error });
       const bad = assertSafe(r.files); if (bad) return send(res, 400, { error: bad });
       const site: Site = { slug: slugOf(), title: r.title ?? Object.keys(r.files)[0].replace(/\.[^.]+$/, ""), kind: kindOf(r.files), visibility: "private", owner: user?.id ?? null, versions: [{ id: id("ver"), createdAt: Date.now(), source: "upload", files: r.files }] };
+      if (r.official) { site.officialVersionId = site.versions.at(-1)!.id; site.officialRevision = 1; }
       state.sites.set(site.slug, site);
       return send(res, 200, { ...siteJson(site), editToken: "edit-" + site.slug, claimToken: user ? undefined : "claim-" + site.slug, notice: user ? undefined : "Anonymous publish: bind an identity next time" });
     }
@@ -211,6 +214,7 @@ export async function startFakeServer(): Promise<FakeServer> {
       let site = s.slug ? state.sites.get(s.slug)! : undefined;
       if (site) { site.versions.push(version); }
       else { site = { slug: slugOf(), title: body.title ?? s.title ?? "Untitled site", kind: kindOf(s.files), visibility: "private", owner: user?.id ?? null, versions: [version] }; state.sites.set(site.slug, site); }
+      if (body.official) { site.officialVersionId = version.id; site.officialRevision = (site.officialRevision ?? 0) + 1; }
       state.uploads.delete(s.versionId);
       return send(res, 201, { ...siteJson(site), versionId: version.id, editToken: "edit-" + site.slug });
     }
@@ -228,6 +232,17 @@ export async function startFakeServer(): Promise<FakeServer> {
       return null;
     };
 
+    if (sub === "official") {
+      if (method === "GET") return send(res, 200, { officialVersionId: site.officialVersionId ?? null, officialRevision: site.officialRevision ?? 0 });
+      if (!mayEdit()) return send(res, 403, { error: "forbidden" });
+      const body = await (await toRequest(req, url)).json() as { versionId?: string; expectedRevision?: number };
+      if (body.expectedRevision !== undefined && body.expectedRevision !== (site.officialRevision ?? 0)) return send(res, 409, { error: "stale" });
+      if (method === "PUT" && !site.versions.some(v => v.id === body.versionId)) return send(res, 404, { error: "version not found" });
+      const previousOfficialVersionId = site.officialVersionId ?? null;
+      site.officialVersionId = method === "DELETE" ? null : body.versionId;
+      site.officialRevision = (site.officialRevision ?? 0) + 1;
+      return send(res, 200, { officialVersionId: site.officialVersionId, previousOfficialVersionId });
+    }
     if (sub === "" && method === "GET") return send(res, 200, { ...siteJson(site), site: { slug: site.slug, title: site.title, kind: site.kind, visibility: site.visibility }, version: { id: current().id, createdAt: current().createdAt, source: current().source, fileCount: Object.keys(current().files).length }, files: Object.keys(current().files), file: "index.html", content: "" });
     if (sub === "" && method === "PATCH") { if (!mayEdit()) return send(res, 403, { error: "forbidden" }); const b = (await (await toRequest(req, url)).json()) as { title: string }; site.title = b.title; return send(res, 200, { slug: site.slug, title: site.title }); }
     if (sub === "" && method === "DELETE") { if (!mayEdit()) return send(res, 403, { error: "forbidden" }); site.deleted = true; return send(res, 200, { deleted: true, slug: site.slug }); }
@@ -265,6 +280,7 @@ export async function startFakeServer(): Promise<FakeServer> {
       const shape = kindOf(r.files);
       if (site.kind === "document" ? shape !== "document" : shape === "document") return send(res, 400, { error: "the shape does not match the site's kind" });
       const v: Version = { id: id("ver"), createdAt: Date.now(), source: "upload", files: r.files }; site.versions.push(v);
+      if (r.official) { site.officialVersionId = v.id; site.officialRevision = (site.officialRevision ?? 0) + 1; }
       return send(res, 200, { ...siteJson(site), versionId: v.id });
     }
     if (sub === "rollback" && method === "POST") {

@@ -24,7 +24,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
   try {
     checkRateLimit(request);
     const { slug } = await context.params;
-    const view = await getReadableView(request, slug);
+    const view = await getReadableView(request, slug, { versionAlias: true });
     if (!view) return json({ error: "site not found" }, 404);
     if (!view.readable) {
       if (view.site.takenDownAt) return json({ error: "This site has been taken down by an administrator", code: "taken_down" }, 410);

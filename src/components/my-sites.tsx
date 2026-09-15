@@ -26,6 +26,7 @@ import ArtifactCard, { kindLabel } from "@/components/artifact-card";
 import { relTime } from "@/lib/rel-time";
 import { useOwnedTokens } from "@/lib/edit-token";
 import { useSiteActions } from "@/lib/site-actions";
+import SiteVersionCell from "@/components/site-version-cell";
 import MoreMenu from "@/components/more-menu";
 import { useLocale, useT } from "@/components/locale-provider";
 import { countText } from "@/lib/i18n";
@@ -230,10 +231,10 @@ export default function MySites({ sites, onMutated, manage = true }: { sites: Si
               <SiteDownload slug={s.slug} editToken={tokens[s.slug]} />
             </MoreMenu> : undefined} />)}</div>
           ) : (
-            <div className="site-list">
-              <div className="list-header"><span>{t("Site")}</span><span>{t("Who can open")}</span><span>{t("Versions")}</span><span>{t("Updated")}</span><span /></div>
+            <div className="site-list my-sites-list">
+              <div className="list-header"><span>{t("Site")}</span><span className="row-views">{t("Views")}</span><span className="row-visibility">{t("Who can open")}</span><span className="row-versions">{t("Versions")}</span><span className="row-date">{t("Updated")}</span><span /></div>
               {pageItems.map((s) => (
-                <div className="site-row" key={s.slug}>
+                <div className="site-row" key={s.slug} data-slug={s.slug}>
                   <div className="site-name">
                     <SiteLink slug={s.slug} href={`/s/${s.slug}`} className="mini" aria-hidden="true" tabIndex={-1}>
                       <iframe src={`/api/preview/${s.slug}?thumb=1`} title="" loading="lazy" tabIndex={-1} inert sandbox="" />
@@ -243,8 +244,9 @@ export default function MySites({ sites, onMutated, manage = true }: { sites: Si
                       <small>{kindLabel(s.kind, t)}{s.takenDownAt ? ` · ${t("Taken down")}` : ""}</small>
                     </div>
                   </div>
+                  <span className="row-views" data-label={t("Views")} title={t("All recorded direct and share-link opens, including your own. Repeat opens within 30 minutes are combined per link.")}>{s.totalViews == null ? "—" : s.totalViews.toLocaleString(locale)}</span>
                   <span className="row-visibility"><VisibilityCell site={s} t={t} /></span>
-                  <span>{s.versionCount}</span>
+                  <SiteVersionCell key={`${s.slug}:${s.officialVersionId}:${s.versionCount}`} site={s} canManage={Boolean(permissions[s.slug]?.canManageSharing)} token={tokens[s.slug]} onMutated={onMutated} />
                   <span className="row-date">{relTime(s.updatedAt, t, locale)}</span>
                   <span className="row-menu-wrap">
                     <MoreMenu label={t("Actions for {title}", { title: s.title })} iconOnly buttonClassName="row-more" buttonContent="⋯">

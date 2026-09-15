@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { chooseUploadRoute, INLINE_UPLOAD_MAX_BYTES } from "@/lib/upload-route";
 import { UploadCloud, FileCode2, FolderUp, FileArchive, ClipboardPaste, Loader2, ArrowUp, ChevronDown } from "lucide-react";
 import { useT } from "@/components/locale-provider";
+import { useUploadConfirmation } from "@/components/upload-confirmation";
 import MoreMenu from "@/components/more-menu";
 
 type Picked = { path: string; file: File };
@@ -60,6 +61,7 @@ async function collectFromDrop(dt: DataTransfer): Promise<Picked[]> {
 export default function Uploader({ compact = false }: { compact?: boolean } = {}) {
   const t = useT();
   const router = useRouter();
+  const { confirmUpload, uploadConfirmation } = useUploadConfirmation();
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState(false);
   /** Chunked-upload progress (bytes). The old path has no readable progress, so this is only set on the chunked route. */
@@ -106,13 +108,15 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
    * extraction and Office conversion live — things the server can only do with the complete content.
    */
   async function submitChunked(files: Picked[], title: string) {
+    const official = await confirmUpload();
+    if (official === null) return;
     setBusy(true);
     setError(null);
     setProgress({ done: 0, total: files.reduce((sum, f) => sum + f.file.size, 0) });
     try {
       const opened = await fetch("/api/uploads", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: title || undefined }),
+        body: JSON.stringify({ title: title || undefined, official }),
       });
       const session = await opened.json().catch(() => ({}));
       if (!opened.ok || !session.versionId) throw new Error(session?.error || t("Could not start the upload"));
@@ -136,7 +140,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
 
       const committed = await fetch(`/api/uploads/${session.versionId}/commit`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: title || undefined }),
+        body: JSON.stringify({ title: title || undefined, official }),
       });
       const data = await committed.json().catch(() => ({}));
       if (!committed.ok || !data.slug) throw new Error(data?.error || t("Failed to commit the upload"));
@@ -150,6 +154,9 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
   }
 
   async function submit(body: FormData) {
+    const official = await confirmUpload();
+    if (official === null) return;
+    body.set("official", String(official));
     setBusy(true);
     setError(null);
     try {
@@ -218,6 +225,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
       path: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
       file,
     }));
+    for (const input of [fileInput, folderInput, zipInput]) if (input.current) input.current.value = "";
     submitPicked(picked);
   }
 
@@ -232,6 +240,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
 
   const inputs = (
     <>
+      {uploadConfirmation}
       <input ref={fileInput} type="file" accept=".html,.htm,.pdf,.pptx,.ppt,.docx,.doc,.zip,application/zip" hidden onChange={(e) => onPickFiles(e.target.files, "file")} />
       {/* @ts-expect-error webkitdirectory is a valid non-standard attribute */}
       <input ref={folderInput} type="file" webkitdirectory="" directory="" multiple hidden onChange={(e) => onPickFiles(e.target.files, "folder")} />
@@ -293,6 +302,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
 
   return (
     <div>
+      {uploadConfirmation}
       {!paste ? (
         <div
           className={`dropzone${drag ? " is-drag" : ""}${busy ? " busy" : ""}`}

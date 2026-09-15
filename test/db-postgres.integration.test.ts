@@ -47,6 +47,19 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
     } finally { pool.options.connectionTimeoutMillis = timeout; }
   });
 
+  it("adds the official foreign key to an existing pointer column idempotently", async () => {
+    const pool = new pg.Pool({ connectionString: process.env.ARTIFACT_DATABASE_URL, max: 1 });
+    try {
+      await pool.query("ALTER TABLE sites DROP CONSTRAINT sites_official_version_fk");
+      for (let i = 0; i < 2; i++) {
+        const migrated = new PostgresStore();
+        try { await migrated.init(); } finally { await migrated.close(); }
+      }
+      const result = await pool.query("SELECT confdeltype FROM pg_constraint WHERE conrelid='sites'::regclass AND conname='sites_official_version_fk'");
+      expect(result.rows).toEqual([{ confdeltype: "n" }]); // ON DELETE SET NULL
+    } finally { await pool.end(); }
+  });
+
   it("atomically appends upload chunks across concurrent requests", async () => {
     const versionId = "ver_mcp_cas_test";
     await store.insertUploadSession({ versionId, siteId: "site_mcp_cas_test", targetSlug: "ver_mcp_parent_test", title: null, ownerKey: "u:test", files: [], createdAt: Date.now() });

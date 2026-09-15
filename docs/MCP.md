@@ -5,7 +5,7 @@ the CLI and never reads a path on the server's filesystem supplied by a caller.
 
 ## Connect
 
-Two ways in; both end at the same 15 tools with the account's own permissions.
+Two ways in; both end at the same 17 tools with the account's own permissions.
 
 ### Sign in from the client (OAuth)
 
@@ -127,7 +127,7 @@ cannot approve.
 
 ## Operations
 
-The server exposes **15 tools**. Descriptions state when to use each tool, its inputs and results,
+The server exposes **17 tools**. Descriptions state when to use each tool, its inputs and results,
 and permission or mutation boundaries. The connection also supplies server instructions for agents.
 
 | CLI | Remote tool |
@@ -199,7 +199,7 @@ and limits to `connection`, versions/shares to `get_site` includes, rename to ti
 and file download to `export`. Replace the old six-step upload protocol with the flow above.
 CLI `list`, `search` and `rename` remain callable compatibility commands, hidden from top-level help.
 
-Reload the client and confirm exactly 15 tools. In a new conversation, try these requests without
+Reload the client and confirm exactly 17 tools. In a new conversation, try these requests without
 mentioning MCP or a tool name: “What artifacts have I published?”, “Find last week's report”,
 “Read that report”, “Publish this page without sharing it”, and “Rename this artifact”.
 For Chinese hosts, also try “我有哪些作品”, “找一下之前的报告”, and “把这份报告发布成链接”.
@@ -260,3 +260,13 @@ invalid request. Successful writes always return `bytes`, including final writes
 Office/ZIP processing-limit failures discard the draft and say so explicitly; start a new upload
 after converting the document or unpacking the web tree. Cancellation accepts only the project
 upload ID returned by `upload_start`, not internal chunk-session IDs.
+
+## Official versions
+
+`artifact_site_publish` and content-bearing `artifact_site_update` accept `official: true`.
+The upload and designation commit together, including chunked uploads.
+`artifact_site_set_official` takes `slug`, `version_id` and optional `expected_revision`;
+`artifact_site_clear_official` takes `slug` and optional `expected_revision`.
+Read `officialRevision` with `artifact_site_get_site` before a conditional change.
+Designation requires site management permission and never changes the latest version.
+See [Official versions](OFFICIAL-VERSIONS.md) for the HTTP and UI contract.

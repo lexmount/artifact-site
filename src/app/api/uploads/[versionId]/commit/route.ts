@@ -8,6 +8,7 @@
 // A version either exists in full or never existed: commit is the last step, an upload interrupted
 // before it leaves only orphan bytes (collected by session-expiry cleanup), and the database never
 // holds half a version.
+import { z } from "zod";
 import type { NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { resolveUploadTarget, resolveUploadTargetForSite, type UploadDocumentTarget } from "@/lib/upload";
@@ -15,7 +16,7 @@ import { completeUploadSession, discardUploadSession, getUploadSession, ownerKey
 import { CROSS_SITE_REJECTED, isCrossSiteForTarget } from "@/lib/upload-csrf";
 import { commitUploadedVersion, getSiteView } from "@/lib/sites";
 import { apiAuditContext } from "@/lib/audit";
-import { requireCapability } from "@/lib/authz";
+import { requirePermission, requireCapability } from "@/lib/authz";
 import { isAdmin, assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
 import { resolveSession } from "@/lib/session";
 import { anonIdFromRequest } from "@/lib/anon";
@@ -33,7 +34,8 @@ export async function POST(request: Request, context: { params: Promise<{ versio
 
     const expected = parseExpectedVersion(request);
     if (expected.rejection) return expected.rejection;
-    const body = (await request.json().catch(() => ({}))) as { title?: string };
+    const text = await request.text();
+    const body = z.object({ title: z.string().optional(), official: z.boolean().optional() }).parse(text ? JSON.parse(text) : {});
     const relpaths = session.files.map((f) => f.relpath);
     // New site: a single PDF → document site; anything else has its entry detected as an HTML site.
     // Existing site: whatever the site is, the new version must still be (a document site only accepts a single PDF, a web site accepts no documents) — see resolveUploadTargetForSite.
@@ -42,6 +44,7 @@ export async function POST(request: Request, context: { params: Promise<{ versio
       const view = await getSiteView(session.targetSlug);
       if (!view) return json({ error: "site not found" }, 404);
       await requireCapability(request, view.site, "content");
+      if (body.official) await requirePermission(request, view.site, "site.version.official.manage", undefined, false);
       target = resolveUploadTargetForSite(view.site.kind, relpaths);
     } else {
       await assertCanCreate(request);
@@ -53,7 +56,7 @@ export async function POST(request: Request, context: { params: Promise<{ versio
     const anonId = anonIdFromRequest(request);
     const actor: Actor = isAdmin(request) ? { kind: "admin", userId: null, anonId: null } : who ? { kind: "user", userId: who.userId, anonId } : { kind: "anon", userId: null, anonId };
     const result = await commitUploadedVersion(request, {
-      session, entry: target.entry, document: target.document, expectedVersionId: expected.value,
+      official: body.official, session, entry: target.entry, document: target.document, expectedVersionId: expected.value,
       title: body.title ?? session.title ?? undefined, ctx: apiAuditContext(request, actor),
     });
     await completeUploadSession(versionId);

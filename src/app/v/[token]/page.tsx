@@ -19,7 +19,7 @@ import Link from "next/link";
 import { config } from "@/lib/config";
 import Assistant from "@/components/assistant";
 import { getShareByTokenHash, getSite, getVersion } from "@/lib/db";
-import { canReadSite, hashToken, isLive, logShareView, resolveShareAccess, type ShareDenial } from "@/lib/share";
+import { canReadVersion, canReadSite, hashToken, isLive, logShareView, resolveShareAccess, type ShareDenial } from "@/lib/share";
 import { viewerRequestFromHeaders } from "@/lib/authz";
 import { resolveSession } from "@/lib/session";
 import { anonIdFromRequest } from "@/lib/anon";
@@ -29,6 +29,7 @@ import { extractDescription } from "@/lib/upload";
 import { resolvePublicBase } from "@/lib/publish-skill";
 import { getT } from "@/lib/i18n-server";
 import type { Translator } from "@/lib/i18n";
+import OfficialVersion from "@/components/official-version";
 import type { SharePolicy, Site, Version } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -132,10 +133,10 @@ export default async function SharedViewPage({
   params, searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ e?: string }>;
+  searchParams: Promise<{ e?: string; version?: string }>;
 }) {
   const { token } = await params;
-  const { e } = await searchParams;
+  const { e, version: requestedVersion } = await searchParams;
 
   // Server components get no Request, so rebuild the one the gate AND the view log need — the
   // credentials (session + anonymous id + the passcode grant + scheme), plus the reader's address
@@ -146,10 +147,11 @@ export default async function SharedViewPage({
 
   if (!access.ok) return denied(t, access.reason, token, e);
 
-  const target = await resolveTarget(access.share.siteId,access.share.versionId);
+  request.headers.set("x-artifact-share", token);
+  const target = await resolveTarget(access.share.siteId, requestedVersion ?? access.share.versionId);
   // The link is live but the artifact is not. Same undifferentiated answer — from the reader's seat
   // a deleted site and a revoked link are the same event.
-  if (!target) return dead(t);
+  if (!target || !(await canReadVersion(request, target.site, target.version.id, session))) return dead(t);
   // Taken down: the share is live but the site is served to its owner and administrators only.
   if (target.site.takenDownAt && !(await canReadSite(request, target.site, session))) return removed(t);
 
@@ -161,7 +163,7 @@ export default async function SharedViewPage({
 
   // Q&A mode: the assistant appears for THIS link's readers only when its owner switched it on —
   // and it carries no edit coordinates (see buildAssistantContext's null-site arm).
-  return reader(t, target.site, Boolean(config.assistantUrl && access.share.allowAi), token, access.share.versionId, access.share.mode);
+  return reader(t, target.site, Boolean(config.assistantUrl && access.share.allowAi), token, requestedVersion ?? access.share.versionId, access.share.mode);
 }
 
 // --- surfaces -----------------------------------------------------------------
@@ -295,7 +297,7 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
             </div>
           </div>
           <div className="controls">
-            {mode === "edit" && <Link className="btn" href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}`}>{t("Edit")}</Link>}
+            {mode === "edit" && <Link className="btn" href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}${versionId ? `&version=${encodeURIComponent(versionId)}` : ""}`}>{t("Edit")}</Link>}
             {/* Unpinned: a share is a window onto whatever is CURRENT. Naming a version here would
                 quietly freeze the link at the moment it was opened, and the reader has no history
                 to navigate back out of it — that is the owner's surface, not this one. */}
@@ -303,6 +305,7 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
               {t("Open in a new tab")}
             </a>
           </div>
+          <OfficialVersion slug={site.slug} versionId={versionId ?? site.currentVersionId} share={token} />
         </header>
       </div>
       {assistant && <Assistant sdkBase={config.assistantUrl} slug={site.slug} mode="qa" />}

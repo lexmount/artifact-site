@@ -45,7 +45,7 @@ export default function RecentList({ shelf }: { shelf: RecentShelf }) {
               </div>
             </div>
             <span className="row-visibility"><VisibilityCell site={s} t={t} /></span>
-            <span>{s.versionCount}</span>
+            <span>{s.versionCount} {s.officialVersionId && <Link className="official-pill" href={`/s/${s.slug}?version=${encodeURIComponent(s.officialVersionId)}`}>{t("Official v{n}", { n: s.officialVersionNumber ?? "" })}</Link>}</span>
             <span className="row-date">{relTime(visitedAt, t, locale)}</span>
             <span className="row-menu-wrap">
               <MoreMenu label={t("Actions for {title}", { title: s.title })} iconOnly buttonClassName="row-more" buttonContent="⋯">

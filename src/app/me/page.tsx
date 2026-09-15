@@ -20,6 +20,6 @@ export default async function Me() {
   const h = await headers();
   const proto = forwardedProto(h) === "https" ? "https" : "http";
   const viewer = await listViewerFromRequest(new Request(`${proto}://x/`, { headers: { cookie: h.get("cookie") ?? "" } }));
-  const sites = await listSites(viewer);
+  const sites = await listSites(viewer, { withViews: true });
   return <MePage allSites={sites} />;
 }

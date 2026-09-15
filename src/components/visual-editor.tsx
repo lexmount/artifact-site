@@ -540,12 +540,13 @@ export default function VisualEditor({
         const body = kind === "single"
           ? { content: result.html, method: "visual" as const }
           : { path: entry, content: result.html, method: "visual" as const };
-        const res = await fetch(`/api/sites/${slug}/edit`, {
+        const res = await fetch(`/api/sites/${slug}/edit?expected_version=${encodeURIComponent(versionId)}`, {
           method: "POST",
           headers: { "content-type": "application/json", ...(editToken ? { "x-edit-token": editToken } : {}) },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ ...body, baseVersionId }),
         });
         const data = await res.json().catch(() => ({}));
+        if (res.status === 409) throw new Error(t("This report has changed. Your edits are still here; copy them before refreshing to review the latest version."));
         if (!res.ok) throw new Error(data?.error || t("Save failed ({status})", { status: res.status }));
         posted = true;
         savedVersion = typeof data?.versionId === "string" ? data.versionId : null;
@@ -568,7 +569,7 @@ export default function VisualEditor({
     } finally {
       setBusy(false);
     }
-  }, [slug, kind, entry, editToken, busy, source, onSaved, reload, t]);
+  }, [slug, kind, entry, editToken, busy, source, onSaved, reload, t, versionId, baseVersionId]);
 
   useEffect(() => {
     onState?.({ previewing, dirty, busy, ready: phase === "ready", togglePreview, save });
