@@ -6,6 +6,7 @@
 import type { NextResponse } from "next/server";
 import { approveDeviceGrant } from "@/lib/db";
 import { AuthError } from "@/lib/auth";
+import { isTokenSession } from "@/lib/publish-token";
 import { isSameOrigin, resolveSession } from "@/lib/session";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { errorResponse, json } from "../../_util";
@@ -22,7 +23,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!isSameOrigin(request)) throw new AuthError("Cross-site request rejected");
     const session = await resolveSession(request);
     if (!session) throw new AuthError("Please sign in first");
-    if (session.id.startsWith("pt:")) throw new AuthError("A publish token cannot authorize new devices");
+    if (isTokenSession(session)) throw new AuthError("A publish token cannot authorize new devices");
 
     const body = (await request.json().catch(() => ({}))) as { user_code?: unknown };
     const userCode = normalizeUserCode(typeof body.user_code === "string" ? body.user_code : "");

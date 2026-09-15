@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { limits } from "@/lib/config";
 import { BadRequestError, QuotaExceededError } from "@/lib/errors";
-import { TokenRejectedError } from "@/lib/auth";
+import { InsufficientScopeError, TokenRejectedError } from "@/lib/auth";
 import { getSkillVersion, LEGACY_SKILL_VERSION_HEADER, SKILL_VERSION_HEADER } from "@/lib/publish-skill";
 import type { UploadFile, UploadInput } from "@/lib/types";
 
@@ -42,6 +42,7 @@ export function errorResponse(error: unknown): NextResponse {
       // internal reaches a client by accident.
       const extra = error instanceof QuotaExceededError ? { code: error.code, details: error.details }
         : error instanceof TokenRejectedError ? { code: error.code }
+        : error instanceof InsufficientScopeError ? { code: error.code, scope: error.scope }
         : {};
       return json({ error: error instanceof Error ? error.message : String(error), ...extra }, status);
     }

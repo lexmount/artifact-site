@@ -1,8 +1,8 @@
 "use client";
 
 // /me — the person's own sites: title and the upload action, two scopes (created by me / I can
-// edit), the folder rail and list, and the low-frequency account tools (publish tokens)
-// behind one menu instead of two more tabs.
+// edit), the folder rail and list, and the low-frequency account tools (publish tokens, the
+// applications connected through OAuth) behind one menu instead of more tabs.
 //
 // Signed out — an anonymous creator, or every visitor on a deployment with no identity provider —
 // the page still lists the sites THIS BROWSER created: the owner tokens in local storage, matched
@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { ArrowUp, Loader2 } from "lucide-react";
 import PublishTokensCard from "@/components/publish-tokens";
+import ConnectedAppsCard from "@/components/connected-apps";
 import MySites from "@/components/my-sites";
 import RecentList from "@/components/recent-list";
 import { useRecentShelf } from "@/components/recent-sites";
@@ -23,7 +24,7 @@ import { loginHref, useAuth } from "@/lib/use-auth";
 import type { SiteSummary } from "@/lib/types";
 import { NO_SLUGS, mergeMySites, useOwnerSlugs } from "@/lib/my-sites";
 
-type TabId = "owned" | "collab" | "recent" | "tokens";
+type TabId = "owned" | "collab" | "recent" | "tokens" | "connections";
 
 const subscribeNever = () => () => {};
 
@@ -115,11 +116,12 @@ export default function MePage({ allSites }: { allSites: SiteSummary[] }) {
               {/* Publish tokens are kept in the account tools menu. */}
               <MoreMenu label={t("Account tools")} buttonClassName="quiet" buttonContent={<>{t("Account tools")} ⌄</>}>
                 <button type="button" role="menuitem" className="menu-item" data-active={tab === "tokens"} onClick={() => setPicked("tokens")}>{t("Publish tokens")}</button>
+                <button type="button" role="menuitem" className="menu-item" data-active={tab === "connections"} onClick={() => setPicked("connections")}>{t("Connected applications")}</button>
               </MoreMenu>
             </span>
           </div>
 
-          <div role="tabpanel" id="me-panel" aria-labelledby={tab === "owned" || tab === "collab" || tab === "recent" ? `me-tab-${tab}` : undefined} aria-label={tab === "tokens" ? t("Publish tokens") : undefined}>
+          <div role="tabpanel" id="me-panel" aria-labelledby={tab === "owned" || tab === "collab" || tab === "recent" ? `me-tab-${tab}` : undefined} aria-label={tab === "tokens" ? t("Publish tokens") : tab === "connections" ? t("Connected applications") : undefined}>
             {error && <p className="page-note error" role="alert">{error}</p>}
             {(tab === "owned" || tab === "collab") && !data && !error && (
               <p className="page-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>
@@ -132,6 +134,7 @@ export default function MePage({ allSites }: { allSites: SiteSummary[] }) {
             {tab === "collab" && data && <MySites sites={data.collaborating} serverOwned={ownedSlugs} onMutated={load} manage={false} editable />}
             {tab === "recent" && <RecentList shelf={shelf} />}
             {tab === "tokens" && <div className="account-tool"><PublishTokensCard /></div>}
+            {tab === "connections" && <div className="account-tool"><ConnectedAppsCard /></div>}
           </div>
         </>
       )}

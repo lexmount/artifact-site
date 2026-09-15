@@ -1,17 +1,24 @@
-<div align="center">
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/artifact-site-banner-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/artifact-site-banner.png">
+    <img src="docs/assets/artifact-site-banner.png" alt="artifact-site：给 AI 生成的网页和文档一个集中管理、分享和持续更新的地方，部署在你自己的服务器上。开源、自托管、适配 agent。" width="1000">
+  </picture>
+</p>
 
-# artifact-site
+<h1 align="center">artifact-site</h1>
 
-**给 AI 生成的网页和文档一个集中管理、分享和持续更新的地方。**
+<p align="center">
+  <a href="README.md">English</a> |
+  <strong>简体中文</strong>
+</p>
 
-[![CI](https://github.com/lexmount/artifact-site/actions/workflows/ci.yml/badge.svg)](https://github.com/lexmount/artifact-site/actions/workflows/ci.yml)
-[![License: Apache-2.0 OR MIT](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](#协议)
-[![Node 24](https://img.shields.io/badge/node-%E2%89%A5%2024-brightgreen.svg)](.nvmrc)
-[![Roadmap](https://img.shields.io/badge/roadmap-what's%20next-8a5a2b.svg)](ROADMAP.md)
-
-[English](README.md) · 简体中文
-
-</div>
+<p align="center">
+  <a href="https://github.com/lexmount/artifact-site/actions/workflows/ci.yml"><img src="https://github.com/lexmount/artifact-site/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="#协议"><img src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg" alt="协议：Apache-2.0 OR MIT"></a>
+  <a href=".nvmrc"><img src="https://img.shields.io/badge/node-%E2%89%A5%2024-brightgreen.svg" alt="Node 24"></a>
+  <a href="ROADMAP.md"><img src="https://img.shields.io/badge/roadmap-what's%20next-8a5a2b.svg" alt="路线图"></a>
+</p>
 
 AI 越来越擅长生成东西：一张交互图表、一份分析报告、一个网页原型、一套幻灯片。但这些作品往往散落在聊天记录、本地目录和不同工具里，缺少一个集中查看、分享和继续维护的地方。发给别人看还要部署、传文件或截图；过一阵再找，又不容易确认哪个是最新版本。
 
@@ -77,7 +84,7 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 
 ## 接入 coding agent
 
-打开部署后的 **Agent 指南**，选择交给 Agent、CLI 或 MCP。`/for-agents#cli` 和 `/for-agents#mcp` 提供当前服务器的命令、认证步骤与客户端配置。远程 MCP 的每次请求都需要有效 Token；CLI 发布、更新、分享和删除需要 Token；发布默认创建公开分享，不分享时使用 `--share none`（CLI）或 `share: false`（MCP）。
+打开部署后的 **Agent 指南**，选择交给 Agent、CLI 或 MCP。`/for-agents#cli` 和 `/for-agents#mcp` 提供当前服务器的命令、认证步骤与客户端配置。远程 MCP 的每次请求都要认证：ChatGPT、Claude 等支持 OAuth 的客户端通过本服务自己的授权页登录，其他客户端携带个人 Token；CLI 发布、更新、分享和删除需要 Token；发布默认创建公开分享，不分享时使用 `--share none`（CLI）或 `share: false`（MCP）。
 
 <p align="center"><img src="docs/assets/agent.zh-CN.gif" alt="coding agent 用 artifact-site 的 CLI 发布构建目录并交回分享链接" width="820"></p>
 <p align="center"><sub><b>或者交给你的 coding agent。</b>有了 agent 指南（<code>/for-agents.md</code>）、CLI 或 MCP 服务，"把这个发布了给我个链接"就是一句话的事——之后的更新、搜索、读取也一样。</sub></p>
@@ -100,7 +107,7 @@ artifact-site read YOUR_SITE_SLUG                    # 替换为作品标识，�
 ```
 
 以上登录示例需要 OIDC。远程 MCP 是另一套完整入口，地址为 `https://your-server/mcp`，无需安装 CLI。
-打开部署后的 `/for-agents#mcp`，创建个人 Token 并复制认证配置，即可发布、更新、搜索、读取、分享、管理版本、导出和删除。
+ChatGPT、Claude 等实现了 MCP 授权规范的客户端只需填入这个地址，然后在本服务的 OAuth 授权页登录即可；其他客户端打开部署后的 `/for-agents#mcp`，创建个人 Token 并复制认证配置。之后即可发布、更新、搜索、读取、分享、管理版本、导出和删除。
 二进制文件和文件夹也可通过 MCP 工具上传，无需调用 CLI。
 
 完整说明见 [CLI 命令](cli/README.md)和[远程 MCP 接入及工具](docs/MCP.md)。

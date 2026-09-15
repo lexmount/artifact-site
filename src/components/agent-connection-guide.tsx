@@ -18,10 +18,16 @@ function Step({ number, title, children }: { number: number; title: string; chil
   return <section className="connection-step"><h2><span aria-hidden="true">{number}</span>{title}</h2><div>{children}</div></section>;
 }
 
-export default function AgentConnectionGuide({ base, oidcEnabled }: { base: string; oidcEnabled: boolean }) {
+/** `dcrEnabled`: whether this server accepts dynamic client registration — the registration method the
+ *  ChatGPT instructions recommend, because it works from any network (ChatGPT connects to us). With it
+ *  off, the metadata document is the only way in and the instructions say so. */
+export default function AgentConnectionGuide({ base, oidcEnabled, dcrEnabled = true }: { base: string; oidcEnabled: boolean; dcrEnabled?: boolean }) {
   const t = useT();
   const [mode, setMode] = useState<Mode>("agent");
   const [auth, setAuth] = useState<"login" | "token">(oidcEnabled ? "login" : "token");
+  // Remote MCP: sign in from the client (OAuth — ChatGPT, Claude, …) or paste a token (Cursor,
+  // scripts). OAuth needs an identity provider to sign in with, so without OIDC only the token path exists.
+  const [mcpAuth, setMcpAuth] = useState<"oauth" | "token">(oidcEnabled ? "oauth" : "token");
   const [token, setToken] = useState("");
   const [copyResult, setCopyResult] = useState<{ token: string; status: "copied" | "failed" } | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -82,23 +88,46 @@ export default function AgentConnectionGuide({ base, oidcEnabled }: { base: stri
       <p className="connection-note">{t("Connect directly to this server over HTTP. No Node.js, CLI installation or local MCP process is needed.")}</p>
       <Step number={1} title={t("MCP server address")}>{command(c.endpoint)}</Step>
       <Step number={2} title={t("Authorize your agent")}>
-        <p>{t("Use a personal token to act with your account permissions. Create one below or paste an existing token. Tokens stay in this page's memory and are never saved by this page.")}</p>
-        {user ? <TokenCreate onCreated={setToken} /> : <p>{t("Sign in to create a personal token. Without browser sign-in, ask the operator for a configured token; it has administrator privileges.")}</p>}
-        <label htmlFor="mcp-access-token">{t("Access token")}</label>
-        <div className="connection-token-value">
-          <input id="mcp-access-token" className="field" type="text" autoComplete="off" autoCapitalize="none" spellCheck={false} value={token} onChange={(event) => setToken(event.target.value)} />
-          <button type="button" className="btn" disabled={!token.trim()} aria-label={t("Copy token")} onClick={copyToken}>{tokenCopyStatus === "copied" ? t("Copied") : t("Copy token")}</button>
-        </div>
-        <span className="connection-copy-status" role="status">{tokenCopyStatus === "copied" ? t("Copied") : ""}</span>
-        {tokenCopyStatus === "failed" && <p role="alert">{t("Could not copy automatically. Select the token and copy it manually.")}</p>}
-        <p>{t("Copy the configuration before leaving. Manage and revoke personal tokens in My sites.")} <Link href="/me">{t("My sites")}</Link></p>
+        {oidcEnabled && <div className="connection-auth" role="group" aria-label={t("Authorization method")}><button type="button" aria-pressed={mcpAuth === "oauth"} onClick={() => setMcpAuth("oauth")}>{t("Sign in from the client")}</button><button type="button" aria-pressed={mcpAuth === "token"} onClick={() => setMcpAuth("token")}>{t("Use a token")}</button></div>}
+        {/* One panel at a time, rendered rather than hidden: a hidden twin would double every
+            selector on this page (the e2e suite clicks the copy buttons) and, without OIDC, the
+            OAuth panel could never be used anyway. */}
+        {mcpAuth === "oauth" && <div>
+          <p>{t("Clients with OAuth support — ChatGPT, Claude and others — need no token. Add the server address, choose OAuth, and the client opens this site's sign-in and a consent page; disconnect it at any time from My sites.")}</p>
+          <details open><summary>{t("ChatGPT")}</summary>
+            <p>{t("Settings → Connectors → Create. Enter the server address and set Authentication to OAuth.")}</p>
+            {dcrEnabled
+              ? <p>{t("Under Client registration choose Dynamic Client Registration: ChatGPT connects to this server, so it works from any network. Client ID Metadata Document also works, but only if this server can reach chatgpt.com — if the consent page says the client metadata document could not be fetched, switch to Dynamic Client Registration.")}</p>
+              : <p>{t("Under Client registration choose Client ID Metadata Document (dynamic registration is turned off on this server). This requires that this server can reach chatgpt.com.")}</p>}
+            <p>{t("Leave the default scopes empty: this server asks for artifacts:read and artifacts:write itself. Create, then approve the connection in the window ChatGPT opens.")}</p>
+          </details>
+          <details><summary>{t("Claude, Cursor and other clients")}</summary><p>{t("Add a custom connector or remote MCP server with the address alone, without a token or header. When the client asks you to sign in, approve the connection in the browser window it opens.")}</p></details>
+        </div>}
+        {mcpAuth === "token" && <div>
+          <p>{t("Use a personal token to act with your account permissions. Create one below or paste an existing token. Tokens stay in this page's memory and are never saved by this page.")}</p>
+          {user ? <TokenCreate onCreated={setToken} /> : <p>{t("Sign in to create a personal token. Without browser sign-in, ask the operator for a configured token; it has administrator privileges.")}</p>}
+          <label htmlFor="mcp-access-token">{t("Access token")}</label>
+          <div className="connection-token-value">
+            <input id="mcp-access-token" className="field" type="text" autoComplete="off" autoCapitalize="none" spellCheck={false} value={token} onChange={(event) => setToken(event.target.value)} />
+            <button type="button" className="btn" disabled={!token.trim()} aria-label={t("Copy token")} onClick={copyToken}>{tokenCopyStatus === "copied" ? t("Copied") : t("Copy token")}</button>
+          </div>
+          <span className="connection-copy-status" role="status">{tokenCopyStatus === "copied" ? t("Copied") : ""}</span>
+          {tokenCopyStatus === "failed" && <p role="alert">{t("Could not copy automatically. Select the token and copy it manually.")}</p>}
+          <p>{t("Copy the configuration before leaving. Manage and revoke personal tokens in My sites.")} <Link href="/me">{t("My sites")}</Link></p>
+        </div>}
       </Step>
       <Step number={3} title={t("Copy MCP configuration")}>
-        <CommandBlock command={c.cursor} copyLabel={t("Copy configuration")} disabled={!token.trim()} />
-        <p>{t("The configuration contains your token. Keep it in your client's private user settings, outside repositories. If your client asks for separate fields, use the server address and Authorization: Bearer token.")}</p>
-        <details><summary>{t("Client-specific instructions")}</summary><p>{t("For Cursor, merge this entry into mcpServers in ~/.cursor/mcp.json. Other clients may use different configuration keys; choose Streamable HTTP and supply the same Authorization header.")}</p></details>
+        {mcpAuth === "oauth" && <div>
+          <CommandBlock command={c.cursorOauth} copyLabel={t("Copy configuration")} />
+          <p>{t("For clients configured with a JSON file. This entry holds no credential; the client starts the sign-in itself. ChatGPT needs no configuration file.")}</p>
+        </div>}
+        {mcpAuth === "token" && <div>
+          <CommandBlock command={c.cursor} copyLabel={t("Copy configuration")} disabled={!token.trim()} />
+          <p>{t("The configuration contains your token. Keep it in your client's private user settings, outside repositories. If your client asks for separate fields, use the server address and Authorization: Bearer token.")}</p>
+          <details><summary>{t("Client-specific instructions")}</summary><p>{t("For Cursor, merge this entry into mcpServers in ~/.cursor/mcp.json. Other clients may use different configuration keys; choose Streamable HTTP and supply the same Authorization header.")}</p></details>
+        </div>}
       </Step>
-      <Step number={4} title={t("Verify the connection")}><p>{t("Reload the client and check that 15 tools are available. Ask “What artifacts have I published?” without naming MCP. Then publish a test file, read it back and delete it. Use artifact_site_connection to diagnose identity or limits.")}</p></Step>
+      <Step number={4} title={t("Verify the connection")}><p>{t("Reload the client and check that 15 tools are available. Ask “What artifacts have I published?” without naming MCP. Then publish a test file, read it back and delete it. Use artifact_site_connection to diagnose identity or limits.")}</p><p>{t("In ChatGPT, ask “What artifacts have I published?” in a new conversation; the first answer should already list your sites. Connected applications can be reviewed and disconnected in My sites.")}</p></Step>
       <div className="connection-capabilities"><h2>{t("Available tools")}</h2><p>{t("Publish and update · Search and read · List and share")}</p>
         <details><summary>{t("All tools and parameters")}</summary><p>{t("Your MCP client discovers each tool's parameter schema automatically. Export, rollback and delete are also available; confirm destructive actions before use.")}</p><dl className="connection-tools">{tools.map(([name, label]) => <div key={name}><dt><code>{name}</code></dt><dd>{t(label)}</dd></div>)}</dl><p>{t("The artifact-site://skill resource provides the publishing contract and runtime limits. Full HTTP API details remain in the publishing guide below.")}</p></details>
       </div>

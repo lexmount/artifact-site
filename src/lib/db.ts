@@ -32,6 +32,7 @@ import type {
   VersionSource,
   Visibility,
   AdminAction, AdminLogEntry, AdminOverview, AdminSiteRow, AdminSiteState, AdminUserRow, SettingRow, SettingWrite,
+  OauthAuthorization, OauthClientRecord, OauthConnection, OauthToken,
 } from "@/lib/types";
 import { flushAfterResponseForTests } from "@/lib/after-response";
 import { notifySiteVersion } from "@/lib/site-events";
@@ -121,6 +122,75 @@ export function toPublishToken(row: Row): PublishToken {
     createdAt: Number(row.created_at),
     lastUsedAt: row.last_used_at == null ? null : Number(row.last_used_at),
     revokedAt: row.revoked_at == null ? null : Number(row.revoked_at),
+  };
+}
+
+const optionalTime = (value: unknown): number | null => (value == null ? null : Number(value));
+
+export function toOauthClient(row: Row): OauthClientRecord {
+  let redirectUris: string[] = [];
+  try {
+    const parsed = JSON.parse(String(row.redirect_uris ?? "[]")) as unknown;
+    if (Array.isArray(parsed)) redirectUris = parsed.filter((v): v is string => typeof v === "string");
+  } catch { /* a corrupt row registers nowhere to redirect to, which fails closed */ }
+  return {
+    id: row.id as string,
+    secretHash: (row.secret_hash as string | null) ?? null,
+    name: row.name as string,
+    redirectUris,
+    tokenEndpointAuthMethod: row.token_endpoint_auth_method as OauthClientRecord["tokenEndpointAuthMethod"],
+    createdAt: Number(row.created_at),
+    lastUsedAt: optionalTime(row.last_used_at),
+  };
+}
+
+export function toOauthAuthorization(row: Row): OauthAuthorization {
+  return {
+    id: row.id as string,
+    clientId: row.client_id as string,
+    clientName: row.client_name as string,
+    redirectUri: row.redirect_uri as string,
+    scope: row.scope as string,
+    state: (row.state as string | null) ?? null,
+    codeChallenge: row.code_challenge as string,
+    resource: row.resource as string,
+    userId: row.user_id as string,
+    codeHash: (row.code_hash as string | null) ?? null,
+    grantId: (row.grant_id as string | null) ?? null,
+    createdAt: Number(row.created_at),
+    expiresAt: Number(row.expires_at),
+    approvedAt: optionalTime(row.approved_at),
+    consumedAt: optionalTime(row.consumed_at),
+  };
+}
+
+export function toOauthToken(row: Row): OauthToken {
+  return {
+    id: row.id as string,
+    kind: row.kind as OauthToken["kind"],
+    grantId: row.grant_id as string,
+    userId: row.user_id as string,
+    clientId: row.client_id as string,
+    clientName: row.client_name as string,
+    scope: row.scope as string,
+    resource: row.resource as string,
+    grantCreatedAt: Number(row.grant_created_at),
+    createdAt: Number(row.created_at),
+    expiresAt: Number(row.expires_at),
+    absoluteExpiresAt: Number(row.absolute_expires_at),
+    lastUsedAt: optionalTime(row.last_used_at),
+    revokedAt: optionalTime(row.revoked_at),
+  };
+}
+
+export function toOauthConnection(row: Row): OauthConnection {
+  return {
+    id: row.grant_id as string,
+    clientId: row.client_id as string,
+    clientName: row.client_name as string,
+    scope: row.scope as string,
+    connectedAt: Number(row.connected_at),
+    lastUsedAt: optionalTime(row.last_used_at),
   };
 }
 
@@ -431,6 +501,40 @@ export interface MetadataStore {
   listPublishTokens(userId: string): Promise<PublishToken[]>;
   /** Scoped to the owner so one user cannot revoke another's token by guessing ids. */
   revokePublishToken(id: string, userId: string): Promise<boolean>;
+  // OAuth for remote MCP clients (lib/oauth): registered clients, pending consents that become
+  // authorization codes, and the access + refresh tokens minted from them. Secrets are sha256 only.
+  insertOauthClient(c: OauthClientRecord): Promise<void>;
+  getOauthClient(id: string): Promise<OauthClientRecord | null>;
+  touchOauthClient(id: string, now: number): Promise<void>;
+  insertOauthAuthorization(a: OauthAuthorization): Promise<void>;
+  getOauthAuthorization(id: string): Promise<OauthAuthorization | null>;
+  /** pending → approved: records the code hash and grant id and restarts the clock for the code.
+   *  Only the account the request was made for, only once, only while unexpired. */
+  approveOauthAuthorization(id: string, userId: string, code: { codeHash: string; grantId: string; expiresAt: number }, now: number): Promise<boolean>;
+  /** Settle a request without a code (the person declined), so its id cannot be answered again. */
+  consumeOauthAuthorization(id: string, now: number): Promise<boolean>;
+  /** Consume an authorization code atomically. `reused` marks a code presented a second time —
+   *  the caller revokes the grant. Null: unknown, expired, or lost a concurrent redemption. */
+  redeemOauthCode(codeHash: string, now: number): Promise<{ authorization: OauthAuthorization; reused: boolean } | null>;
+  /** The access + refresh pair of one issuance, in one transaction. */
+  insertOauthTokens(tokens: OauthToken[]): Promise<void>;
+  getOauthToken(id: string): Promise<OauthToken | null>;
+  touchOauthToken(id: string, now: number): Promise<void>;
+  /** Retire a refresh token for rotation. `reused` marks one that was already retired — the
+   *  caller revokes the grant. Null: unknown or expired. */
+  consumeOauthRefreshToken(id: string, now: number): Promise<{ token: OauthToken; reused: boolean } | null>;
+  revokeOauthToken(id: string, now: number): Promise<boolean>;
+  /** Every live token of a grant; scoped to the owner when `userId` is given (the account page). */
+  revokeOauthGrant(grantId: string, now: number, userId?: string | null): Promise<number>;
+  /** Every live token of the user's OTHER grants for this client — a re-consent supersedes them. */
+  revokeOauthGrantsForClient(userId: string, clientId: string, now: number, exceptGrantId: string): Promise<number>;
+  /** One row per live grant: what the account page lists as connected applications. */
+  listOauthConnections(userId: string, now: number): Promise<OauthConnection[]>;
+  /** Every live OAuth token of a user, in one statement (disable / offboarding). */
+  revokeOauthTokensForUser(userId: string, now: number): Promise<number>;
+  /** Drop what can no longer matter: settled or expired requests, dead tokens past the window in
+   *  which a replay must still be recognised, and registered clients nobody has used in months. */
+  pruneOauth(now: number): Promise<number>;
   /** Attach ownership and its audit row atomically; authorization belongs to the caller. */
   claimSiteAudited(siteId: string, ownerId: string, audit: InsertAuditInput, adminLog?: AdminLogEntry): Promise<boolean>;
   insertUploadSession(u: UploadSessionRow): Promise<void>;
@@ -922,6 +1026,35 @@ export async function listPublishTokens(userId: string): Promise<PublishToken[]>
 export async function revokePublishToken(id: string, userId: string): Promise<boolean> {
   return (await getStore()).revokePublishToken(id, userId);
 }
+// OAuth (lib/oauth) — see the interface for the contract of each.
+export async function insertOauthClient(c: OauthClientRecord): Promise<void> { return (await getStore()).insertOauthClient(c); }
+export async function getOauthClient(id: string): Promise<OauthClientRecord | null> { return (await getStore()).getOauthClient(id); }
+export async function touchOauthClient(id: string, now: number = Date.now()): Promise<void> { return (await getStore()).touchOauthClient(id, now); }
+export async function insertOauthAuthorization(a: OauthAuthorization): Promise<void> { return (await getStore()).insertOauthAuthorization(a); }
+export async function getOauthAuthorization(id: string): Promise<OauthAuthorization | null> { return (await getStore()).getOauthAuthorization(id); }
+export async function approveOauthAuthorization(id: string, userId: string, code: { codeHash: string; grantId: string; expiresAt: number }, now: number = Date.now()): Promise<boolean> {
+  return (await getStore()).approveOauthAuthorization(id, userId, code, now);
+}
+export async function consumeOauthAuthorization(id: string, now: number = Date.now()): Promise<boolean> { return (await getStore()).consumeOauthAuthorization(id, now); }
+export async function redeemOauthCode(codeHash: string, now: number = Date.now()): Promise<{ authorization: OauthAuthorization; reused: boolean } | null> {
+  return (await getStore()).redeemOauthCode(codeHash, now);
+}
+export async function insertOauthTokens(tokens: OauthToken[]): Promise<void> { return (await getStore()).insertOauthTokens(tokens); }
+export async function getOauthToken(id: string): Promise<OauthToken | null> { return (await getStore()).getOauthToken(id); }
+export async function touchOauthToken(id: string, now: number = Date.now()): Promise<void> { return (await getStore()).touchOauthToken(id, now); }
+export async function consumeOauthRefreshToken(id: string, now: number = Date.now()): Promise<{ token: OauthToken; reused: boolean } | null> {
+  return (await getStore()).consumeOauthRefreshToken(id, now);
+}
+export async function revokeOauthToken(id: string, now: number = Date.now()): Promise<boolean> { return (await getStore()).revokeOauthToken(id, now); }
+export async function revokeOauthGrant(grantId: string, now: number = Date.now(), userId: string | null = null): Promise<number> {
+  return (await getStore()).revokeOauthGrant(grantId, now, userId);
+}
+export async function revokeOauthGrantsForClient(userId: string, clientId: string, now: number, exceptGrantId: string): Promise<number> {
+  return (await getStore()).revokeOauthGrantsForClient(userId, clientId, now, exceptGrantId);
+}
+export async function listOauthConnections(userId: string, now: number = Date.now()): Promise<OauthConnection[]> { return (await getStore()).listOauthConnections(userId, now); }
+export async function revokeOauthTokensForUser(userId: string, now: number = Date.now()): Promise<number> { return (await getStore()).revokeOauthTokensForUser(userId, now); }
+export async function pruneOauth(now: number = Date.now()): Promise<number> { return (await getStore()).pruneOauth(now); }
 export async function claimSiteAudited(siteId: string, ownerId: string, audit: InsertAuditInput, adminLog?: AdminLogEntry): Promise<boolean> {
   return (await getStore()).claimSiteAudited(siteId, ownerId, audit, adminLog);
 }

@@ -102,7 +102,7 @@ A deleted site is soft-deleted: its files stay `ARTIFACT_DELETED_RETENTION_DAYS`
 
 ## Quotas and anonymous sites
 
-The whole "who may do what" group — who can create, what an anonymous creator may do, the default visibility, the anonymous-site expiry and the quota caps — is editable from the console at `/admin/settings` and takes effect without a rebuild; a console value overrides the environment variable, and "Use environment" hands control back. The variables below still work and are what a Docker `.env` deployment uses.
+The whole "who may do what" group — who can create, what an anonymous creator may do, the default visibility, the anonymous-site expiry, the quota caps and the three MCP OAuth knobs — is editable from the console at `/admin/settings` and takes effect without a rebuild; a console value overrides the environment variable, and "Use environment" hands control back. The variables below still work and are what a Docker `.env` deployment uses.
 
 The simplest public posture is one switch: **Sites created without an account → Read-only until signed in**. Anyone can drop a file and get a link they can open; editing, sharing and deleting ask for a sign-in, after which the site belongs to that account (the browser's earlier sites move over automatically). Pair it with an expiry so unclaimed sites do not pile up.
 
@@ -166,8 +166,15 @@ responses. GET and DELETE return 405 because there is no persistent server-side 
 Requests are capped at 2 MiB; large files use 256 KiB decoded chunks through MCP tools.
 Upload drafts use the configured storage and database and expire after six hours.
 
-Every MCP request requires a valid personal or operator token, including discovery. Browser
-cookies do not authenticate MCP. Personal tokens are created in the Agent guide or My sites
+Every MCP request requires a valid Bearer token, including discovery: an OAuth access token the
+client obtained by signing in (ChatGPT, Claude and every client that implements MCP
+authorization — the app is its own authorization server, see [MCP.md](docs/MCP.md)), a
+personal token, or the operator token. Browser cookies do not authenticate MCP. For the OAuth
+path the reverse proxy must pass `/.well-known/*` and `/oauth/*` through untouched (no
+dot-file deny rule, no caching), and `ARTIFACT_PUBLIC_URL` must be the exact address clients
+use, because tokens are bound to it. OAuth requires OIDC sign-in; its three knobs (client host
+allow-list, dynamic registration, extra application schemes) live in the console next to the
+other policies. Personal tokens are created in the Agent guide or My sites
 and may be revoked immediately. Without OIDC, configure PUBLISH_API_TOKEN and supply it only
 to trusted operators; keep ARTIFACT_CREATE_POLICY=open explicit if anonymous browser creation
 should remain enabled. Operator tokens have no personal site list. Their new sites have no anonymous owner, so

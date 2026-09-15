@@ -94,6 +94,10 @@ export function describeRuntime(): RuntimeReport {
     lines.push(`quotas: per account ${cap(q.sitesPerUser, "")} sites / ${cap(q.bytesPerUser, "B")}; per anonymous browser ${cap(q.sitesPerAnon, "")} sites / ${cap(q.bytesPerAnon, "B")}; anonymous sites expire ${effective.anonSiteTtlMs ? `after ${Math.round(effective.anonSiteTtlMs / 86_400_000)} days without changes` : "never"}`);
   }
   lines.push(`oidc: ${config.oidcEnabled ? `on (${config.oidc.issuer}, callback ${config.oidcRedirectPath})` : "off"}`);
+  {
+    const o = effective.oauth;
+    lines.push(`mcp oauth: clients from ${o.clientHosts.size ? [...o.clientHosts].join(",") : "any public https host"}; dynamic registration ${o.dcrEnabled ? "on" : "off"}; extra app schemes ${o.appSchemes.size ? [...o.appSchemes].join(",") : "none"} (console-editable; see /admin/settings)`);
+  }
   lines.push(`document conversion: ${config.gotenbergUrl ? `gotenberg at ${config.gotenbergUrl}` : "off (office uploads become download cards)"}`);
 
   return { lines, errors, warnings };

@@ -10,6 +10,7 @@ import type {
   AuditEntry, EditPolicy, InsertShareInput, Session, Share, ShareGrant, SharePolicy, ShareRow, ShareView,
   Site, SiteCollaborator, SiteOpen, SiteSummary, SiteView, SiteViewStats, User, Version, Visibility,
   AdminAction, AdminLogEntry, AdminOverview, AdminSiteRow, AdminUserRow, SettingRow, SettingWrite,
+  OauthAuthorization, OauthClientRecord, OauthConnection, OauthToken,
 } from "@/lib/types";
 import {
   adminUserOrder,
@@ -48,6 +49,10 @@ import {
   toVersion,
   toPublishToken,
   toDeviceGrant,
+  toOauthAuthorization,
+  toOauthClient,
+  toOauthConnection,
+  toOauthToken,
   type InsertAuditInput,
   type InsertSiteInput,
   type InsertVersionInput,
@@ -400,6 +405,56 @@ const MIGRATIONS: readonly string[] = [
      updated_by TEXT,
      PRIMARY KEY (scope, key)
    )`,
+  // --- OAuth for remote MCP clients (lib/oauth): dynamically registered clients, authorization
+  //     requests (a pending consent that becomes a single-use code), and the access + refresh
+  //     tokens minted from them. Every secret column holds sha256 only, like sessions. ---
+  `CREATE TABLE IF NOT EXISTS oauth_clients (
+     id                         TEXT PRIMARY KEY,
+     secret_hash                TEXT,
+     name                       TEXT NOT NULL,
+     redirect_uris              TEXT NOT NULL,
+     token_endpoint_auth_method TEXT NOT NULL,
+     created_at                 BIGINT NOT NULL,
+     last_used_at               BIGINT
+   )`,
+  `CREATE TABLE IF NOT EXISTS oauth_authorizations (
+     id             TEXT PRIMARY KEY,
+     client_id      TEXT NOT NULL,
+     client_name    TEXT NOT NULL,
+     redirect_uri   TEXT NOT NULL,
+     scope          TEXT NOT NULL,
+     state          TEXT,
+     code_challenge TEXT NOT NULL,
+     resource       TEXT NOT NULL,
+     user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     code_hash      TEXT,
+     grant_id       TEXT,
+     created_at     BIGINT NOT NULL,
+     expires_at     BIGINT NOT NULL,
+     approved_at    BIGINT,
+     consumed_at    BIGINT
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS uq_oauth_authorizations_code ON oauth_authorizations (code_hash) WHERE code_hash IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_oauth_authorizations_expiry ON oauth_authorizations (expires_at)`,
+  `CREATE TABLE IF NOT EXISTS oauth_tokens (
+     id                  TEXT PRIMARY KEY,
+     kind                TEXT NOT NULL CHECK (kind IN ('access','refresh')),
+     grant_id            TEXT NOT NULL,
+     user_id             TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     client_id           TEXT NOT NULL,
+     client_name         TEXT NOT NULL,
+     scope               TEXT NOT NULL,
+     resource            TEXT NOT NULL,
+     grant_created_at    BIGINT NOT NULL,
+     created_at          BIGINT NOT NULL,
+     expires_at          BIGINT NOT NULL,
+     absolute_expires_at BIGINT NOT NULL,
+     last_used_at        BIGINT,
+     revoked_at          BIGINT
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_oauth_tokens_grant ON oauth_tokens (grant_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens (user_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_oauth_tokens_expiry ON oauth_tokens (expires_at)`,
   // The searchable text of each site's current version (lib/site-text). `tokens` is built from
   // the pre-tokenised strings the app hands over — the 'simple' configuration only lowercases,
   // and every token is ASCII by construction, so no locale or dictionary is involved.
@@ -1154,6 +1209,142 @@ export class PostgresStore implements MetadataStore {
     const res = await this.pool.query("UPDATE publish_tokens SET revoked_at=$1 WHERE id=$2 AND user_id=$3 AND revoked_at IS NULL",
       [Date.now(), id, userId]);
     return (res.rowCount ?? 0) > 0;
+  }
+
+  // --- OAuth (lib/oauth) -------------------------------------------------------------------
+
+  async insertOauthClient(c: OauthClientRecord): Promise<void> {
+    await this.pool.query(
+      "INSERT INTO oauth_clients (id, secret_hash, name, redirect_uris, token_endpoint_auth_method, created_at, last_used_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [c.id, c.secretHash, c.name, JSON.stringify(c.redirectUris), c.tokenEndpointAuthMethod, c.createdAt, c.lastUsedAt]);
+  }
+
+  async getOauthClient(id: string): Promise<OauthClientRecord | null> {
+    const row = await this.one("SELECT * FROM oauth_clients WHERE id=$1", [id]);
+    return row ? toOauthClient(row) : null;
+  }
+
+  async touchOauthClient(id: string, now: number): Promise<void> {
+    await this.pool.query("UPDATE oauth_clients SET last_used_at=$1 WHERE id=$2", [now, id]);
+  }
+
+  async insertOauthAuthorization(a: OauthAuthorization): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO oauth_authorizations (id, client_id, client_name, redirect_uri, scope, state, code_challenge, resource, user_id, code_hash, grant_id, created_at, expires_at, approved_at, consumed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [a.id, a.clientId, a.clientName, a.redirectUri, a.scope, a.state, a.codeChallenge, a.resource, a.userId, a.codeHash, a.grantId, a.createdAt, a.expiresAt, a.approvedAt, a.consumedAt]);
+  }
+
+  async getOauthAuthorization(id: string): Promise<OauthAuthorization | null> {
+    const row = await this.one("SELECT * FROM oauth_authorizations WHERE id=$1", [id]);
+    return row ? toOauthAuthorization(row) : null;
+  }
+
+  async approveOauthAuthorization(id: string, userId: string, code: { codeHash: string; grantId: string; expiresAt: number }, now: number): Promise<boolean> {
+    const res = await this.pool.query(
+      "UPDATE oauth_authorizations SET approved_at=$1, code_hash=$2, grant_id=$3, expires_at=$4 WHERE id=$5 AND user_id=$6 AND approved_at IS NULL AND consumed_at IS NULL AND expires_at > $1",
+      [now, code.codeHash, code.grantId, code.expiresAt, id, userId]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async consumeOauthAuthorization(id: string, now: number): Promise<boolean> {
+    const res = await this.pool.query("UPDATE oauth_authorizations SET consumed_at=$1 WHERE id=$2 AND consumed_at IS NULL", [now, id]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async redeemOauthCode(codeHash: string, now: number): Promise<{ authorization: OauthAuthorization; reused: boolean } | null> {
+    // Consume first, single UPDATE … RETURNING as for OIDC flows: two replicas racing the same
+    // code cannot both win. Only THEN look at what is there — reading before the attempt would
+    // let the loser of that race see "unconsumed" and report the replay as a plain miss.
+    const { rows } = await this.pool.query(
+      "UPDATE oauth_authorizations SET consumed_at=$1 WHERE code_hash=$2 AND consumed_at IS NULL AND expires_at > $1 RETURNING *", [now, codeHash]);
+    if (rows.length) return { authorization: toOauthAuthorization(rows[0] as Row), reused: false };
+    const seen = await this.one("SELECT * FROM oauth_authorizations WHERE code_hash=$1", [codeHash]);
+    return seen && seen.consumed_at != null ? { authorization: toOauthAuthorization(seen), reused: true } : null;
+  }
+
+  async insertOauthTokens(tokens: OauthToken[]): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const t of tokens) {
+        await client.query(
+          `INSERT INTO oauth_tokens (id, kind, grant_id, user_id, client_id, client_name, scope, resource, grant_created_at, created_at, expires_at, absolute_expires_at, last_used_at, revoked_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+          [t.id, t.kind, t.grantId, t.userId, t.clientId, t.clientName, t.scope, t.resource, t.grantCreatedAt, t.createdAt, t.expiresAt, t.absoluteExpiresAt, t.lastUsedAt, t.revokedAt]);
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getOauthToken(id: string): Promise<OauthToken | null> {
+    const row = await this.one("SELECT * FROM oauth_tokens WHERE id=$1", [id]);
+    return row ? toOauthToken(row) : null;
+  }
+
+  async touchOauthToken(id: string, now: number): Promise<void> {
+    await this.pool.query("UPDATE oauth_tokens SET last_used_at=$1 WHERE id=$2 AND revoked_at IS NULL", [now, id]);
+  }
+
+  async consumeOauthRefreshToken(id: string, now: number): Promise<{ token: OauthToken; reused: boolean } | null> {
+    // Same order as redeemOauthCode: retire first, then read, so a lost race reads as the replay it is.
+    const { rows } = await this.pool.query(
+      "UPDATE oauth_tokens SET revoked_at=$1 WHERE id=$2 AND kind='refresh' AND revoked_at IS NULL AND expires_at > $1 RETURNING *", [now, id]);
+    if (rows.length) return { token: toOauthToken(rows[0] as Row), reused: false };
+    const seen = await this.one("SELECT * FROM oauth_tokens WHERE id=$1 AND kind='refresh'", [id]);
+    return seen && seen.revoked_at != null ? { token: toOauthToken(seen), reused: true } : null;
+  }
+
+  async revokeOauthToken(id: string, now: number): Promise<boolean> {
+    const res = await this.pool.query("UPDATE oauth_tokens SET revoked_at=$1 WHERE id=$2 AND revoked_at IS NULL", [now, id]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async revokeOauthGrant(grantId: string, now: number, userId: string | null = null): Promise<number> {
+    const res = userId == null
+      ? await this.pool.query("UPDATE oauth_tokens SET revoked_at=$1 WHERE grant_id=$2 AND revoked_at IS NULL", [now, grantId])
+      : await this.pool.query("UPDATE oauth_tokens SET revoked_at=$1 WHERE grant_id=$2 AND user_id=$3 AND revoked_at IS NULL", [now, grantId, userId]);
+    return res.rowCount ?? 0;
+  }
+
+  async revokeOauthGrantsForClient(userId: string, clientId: string, now: number, exceptGrantId: string): Promise<number> {
+    const res = await this.pool.query(
+      "UPDATE oauth_tokens SET revoked_at=$1 WHERE user_id=$2 AND client_id=$3 AND grant_id<>$4 AND revoked_at IS NULL", [now, userId, clientId, exceptGrantId]);
+    return res.rowCount ?? 0;
+  }
+
+  async listOauthConnections(userId: string, now: number): Promise<OauthConnection[]> {
+    // One row per grant = its one live refresh token (rotation retires the previous pair). The
+    // access tokens only contribute "last used", which is theirs to know.
+    const { rows } = await this.pool.query(
+      `SELECT r.grant_id, r.client_id, r.client_name, r.scope, r.grant_created_at AS connected_at,
+              (SELECT MAX(t.last_used_at) FROM oauth_tokens t WHERE t.grant_id = r.grant_id) AS last_used_at
+       FROM oauth_tokens r WHERE r.user_id=$1 AND r.kind='refresh' AND r.revoked_at IS NULL AND r.expires_at > $2
+       ORDER BY r.grant_created_at DESC`, [userId, now]);
+    return rows.map((r) => toOauthConnection(r as Row));
+  }
+
+  async revokeOauthTokensForUser(userId: string, now: number): Promise<number> {
+    const res = await this.pool.query("UPDATE oauth_tokens SET revoked_at=$1 WHERE user_id=$2 AND revoked_at IS NULL", [now, userId]);
+    return res.rowCount ?? 0;
+  }
+
+  async pruneOauth(now: number): Promise<number> {
+    const day = 24 * 60 * 60 * 1000;
+    const requests = await this.pool.query("DELETE FROM oauth_authorizations WHERE expires_at < $1", [now - day]);
+    // A retired refresh token stays a week so a replay is still recognised as one (and ends the grant).
+    const tokens = await this.pool.query("DELETE FROM oauth_tokens WHERE expires_at < $1 OR (revoked_at IS NOT NULL AND revoked_at < $2)", [now - day, now - 7 * day]);
+    // Registration is unauthenticated: a client that never reached the consent page within a day
+    // is noise, and one nobody has used in months with no token left is done.
+    const clients = await this.pool.query(
+      "DELETE FROM oauth_clients WHERE (last_used_at IS NULL AND created_at < $1) OR (COALESCE(last_used_at, created_at) < $2 AND id NOT IN (SELECT client_id FROM oauth_tokens))",
+      [now - day, now - 90 * day]);
+    return (requests.rowCount ?? 0) + (tokens.rowCount ?? 0) + (clients.rowCount ?? 0);
   }
 
   async listFolders(userId: string): Promise<UserFolder[]> {

@@ -1,10 +1,11 @@
 import "server-only";
 
-// Policy an operator may change from the console, without a rebuild. Six settings, all of them
-// "who may do what": create policy, what anonymous creators may do, default visibility, the
-// anonymous-site clock, and the four quota caps. Everything that would need a restart or could
-// lock the operator out (database, storage, OIDC, the public address, the administrator list)
-// stays in the environment on purpose.
+// Policy an operator may change from the console, without a rebuild. All of it "who may do
+// what": create policy, what anonymous creators may do, default visibility, the anonymous-site
+// clock, the four quota caps, and the three MCP OAuth knobs (which hosts may connect, whether
+// clients may register themselves, which application schemes are admitted as return addresses).
+// Everything that would need a restart or could lock the operator out (database, storage, OIDC,
+// the public address, the administrator list) stays in the environment on purpose.
 //
 // Precedence, per key: console (the settings table) > environment variable > built-in default.
 // The environment keeps working exactly as before, so a Docker/.env deployment notices nothing;
@@ -39,10 +40,21 @@ export interface PolicySettings {
   quotaBytesPerUser: number;
   quotaSitesPerAnon: number;
   quotaBytesPerAnon: number;
+  /** MCP OAuth (lib/oauth-clients). Lists are canonical comma-separated strings; empty = no restriction / none. */
+  oauthClientHosts: string;
+  oauthDcr: "on" | "off";
+  oauthAppSchemes: string;
 }
 export type SettingKey = keyof PolicySettings;
 
-type Kind = { kind: "enum"; options: readonly string[] } | { kind: "int"; min: number; max: number };
+type Kind =
+  | { kind: "enum"; options: readonly string[] }
+  | { kind: "int"; min: number; max: number }
+  /** A comma-separated list of short tokens, stored canonical: lower-case, trimmed, deduplicated. */
+  | { kind: "list"; item: RegExp; itemName: string; maxItems: number };
+
+const HOSTNAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
+const URL_SCHEME = /^[a-z][a-z0-9+.-]{0,63}$/;
 
 /** The catalogue: how each key is validated, and what the environment says for it. */
 export const SETTINGS: { [K in SettingKey]: Kind & { env: string; fromEnv: () => PolicySettings[K] } } = {
@@ -54,6 +66,9 @@ export const SETTINGS: { [K in SettingKey]: Kind & { env: string; fromEnv: () =>
   quotaBytesPerUser: { kind: "int", min: 0, max: Number.MAX_SAFE_INTEGER, env: "ARTIFACT_QUOTA_BYTES_PER_USER", fromEnv: () => config.quota.bytesPerUser },
   quotaSitesPerAnon: { kind: "int", min: 0, max: 1_000_000, env: "ARTIFACT_QUOTA_SITES_PER_ANON", fromEnv: () => config.quota.sitesPerAnon },
   quotaBytesPerAnon: { kind: "int", min: 0, max: Number.MAX_SAFE_INTEGER, env: "ARTIFACT_QUOTA_BYTES_PER_ANON", fromEnv: () => config.quota.bytesPerAnon },
+  oauthClientHosts: { kind: "list", item: HOSTNAME, itemName: "hostname", maxItems: 50, env: "ARTIFACT_OAUTH_CLIENT_HOSTS", fromEnv: () => [...config.oauth.clientHosts].join(",") },
+  oauthDcr: { kind: "enum", options: ["on", "off"], env: "ARTIFACT_OAUTH_DCR", fromEnv: () => (config.oauth.dcrEnabled ? "on" : "off") },
+  oauthAppSchemes: { kind: "list", item: URL_SCHEME, itemName: "URL scheme", maxItems: 50, env: "ARTIFACT_OAUTH_APP_SCHEMES", fromEnv: () => [...config.oauth.appSchemes].join(",") },
 };
 export const SETTING_KEYS = Object.keys(SETTINGS) as SettingKey[];
 
@@ -101,6 +116,15 @@ function validate<K extends SettingKey>(key: K, value: unknown): PolicySettings[
     if (typeof value !== "string" || !def.options.includes(value)) throw new BadRequestError(`${key}: expected one of ${def.options.join(" / ")}`);
     return value as PolicySettings[K];
   }
+  if (def.kind === "list") {
+    const raw = Array.isArray(value) ? value.map(String).join(",") : typeof value === "string" ? value : null;
+    if (raw === null) throw new BadRequestError(`${key}: expected a comma-separated list`);
+    const items = [...new Set(raw.split(/[\s,]+/).map((s) => s.trim().toLowerCase()).filter(Boolean))];
+    if (items.length > def.maxItems) throw new BadRequestError(`${key}: at most ${def.maxItems} entries`);
+    const bad = items.find((s) => !def.item.test(s));
+    if (bad !== undefined) throw new BadRequestError(`${key}: "${bad}" is not a valid ${def.itemName}`);
+    return items.join(",") as PolicySettings[K];
+  }
   const n = typeof value === "number" ? value : typeof value === "string" && /^\d+$/.test(value.trim()) ? Number(value) : NaN;
   if (!Number.isInteger(n) || n < def.min || n > def.max) throw new BadRequestError(`${key}: expected a whole number between ${def.min} and ${def.max}`);
   return n as PolicySettings[K];
@@ -125,6 +149,11 @@ function policyView(refresh: boolean) {
     get anonSiteTtlMs(): number { return setting("anonSiteTtlDays", refresh) * 86_400_000; },
     get quota(): { sitesPerUser: number; bytesPerUser: number; sitesPerAnon: number; bytesPerAnon: number } {
       return { sitesPerUser: setting("quotaSitesPerUser", refresh), bytesPerUser: setting("quotaBytesPerUser", refresh), sitesPerAnon: setting("quotaSitesPerAnon", refresh), bytesPerAnon: setting("quotaBytesPerAnon", refresh) };
+    },
+    /** The MCP OAuth knobs (lib/oauth-clients): console, else ARTIFACT_OAUTH_*. */
+    get oauth(): { clientHosts: ReadonlySet<string>; dcrEnabled: boolean; appSchemes: ReadonlySet<string> } {
+      const list = (csv: string) => new Set(csv.split(",").filter(Boolean));
+      return { clientHosts: list(setting("oauthClientHosts", refresh)), dcrEnabled: setting("oauthDcr", refresh) === "on", appSchemes: list(setting("oauthAppSchemes", refresh)) };
     },
   };
 }

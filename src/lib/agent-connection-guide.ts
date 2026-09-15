@@ -12,5 +12,7 @@ export function guideCommands(base: string, token = "YOUR_TOKEN") {
     more: `artifact-site find --base ${address}\nartifact-site find "report" --base ${address}\nartifact-site read YOUR_SITE_SLUG --base ${address}\nartifact-site update YOUR_SITE_SLUG dist/ --base ${address}`,
     endpoint: `${base.replace(/\/$/, "")}/mcp`,
     cursor: JSON.stringify({ mcpServers: { "artifact-site": { url: `${base.replace(/\/$/, "")}/mcp`, headers: { Authorization: `Bearer ${token}` } } } }, null, 2),
+    /** No credential: a client with OAuth support discovers this server's sign-in from the address alone. */
+    cursorOauth: JSON.stringify({ mcpServers: { "artifact-site": { url: `${base.replace(/\/$/, "")}/mcp` } } }, null, 2),
   };
 }

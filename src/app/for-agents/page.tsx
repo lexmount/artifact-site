@@ -9,6 +9,7 @@ import AgentConnectionGuide from "@/components/agent-connection-guide";
 import { config } from "@/lib/config";
 import GuideLinks from "@/components/guide-links";
 import { parseSkill, resolvePublicBase } from "@/lib/publish-skill";
+import { policy } from "@/lib/settings";
 import { getT } from "@/lib/i18n-server";
 
 export const dynamic = "force-dynamic"; // the copy-me skill URL is derived from the request Host.
@@ -38,7 +39,7 @@ export default async function PublishGuide() {
       <div className="guide">
         <h1>{t("Let agents publish, find and update work")}</h1>
         <p className="intro">{t("Choose one way to connect the tools you already use.")}</p>
-        <AgentConnectionGuide base={base} oidcEnabled={config.oidcEnabled} />
+        <AgentConnectionGuide base={base} oidcEnabled={config.oidcEnabled} dcrEnabled={policy.oauth.dcrEnabled} />
         <GuideLinks
           links={[{ id: "connection-help", label: t("Authentication and troubleshooting ↓") }, { id: "full-guide", label: t("Full publishing guide ↓") }, { id: "file-limits", label: t("Supported files and limits ↓") }]}
           external={{ href: skillUrl, label: t("Machine-readable guide ↗") }}

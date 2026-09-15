@@ -27,10 +27,21 @@ model is: an uploader is hostile; a viewer must not be harmed by opening a link.
   directory. Zip declared sizes are checked before decompression (zip-bomb guard); per-version,
   per-file, and file-count limits apply to every upload route.
 - **Writes are authenticated and CSRF-guarded.** Cookie-authenticated mutations must carry an
-  `Origin` matching `ARTIFACT_PUBLIC_URL`; bearer tokens (publish tokens, the admin token) are
-  exempt because they are not ambient. Session cookies are `HttpOnly`, `SameSite=Lax`, and use
-  the `__Host-` prefix over HTTPS. The database stores only SHA-256 hashes of session and
-  publish-token secrets.
+  `Origin` matching `ARTIFACT_PUBLIC_URL`; bearer tokens (publish tokens, OAuth access tokens,
+  the admin token) are exempt because they are not ambient. Session cookies are `HttpOnly`,
+  `SameSite=Lax`, and use the `__Host-` prefix over HTTPS. The database stores only SHA-256
+  hashes of session, publish-token and OAuth token secrets.
+- **The OAuth authorization server fetches exactly one kind of URL a stranger chose** — a
+  client's metadata document — and only over https, from a public host that resolves to public
+  addresses, without following redirects, within a short deadline and a small size. A client's
+  redirect address is verified against its registration before any redirect happens; an
+  unverifiable request gets a page, never a redirect. A return address is https, a loopback
+  listener, or a native application's scheme in the reverse-domain shape (plus `cursor:` and
+  `vscode:`); every other scheme is refused, since registration is open and a redirect to a scheme
+  runs whatever handles it on the person's machine. The consent page names the client's host and
+  the return address, refuses to be framed, and a token session cannot answer it. Authorization codes are single
+  use (a replay revokes what it produced); refresh tokens rotate (a replay ends the grant); every
+  token is bound to the deployment address it was issued for.
 - **Write routes are rate limited** per client (first `X-Forwarded-For` hop). The app port must
   therefore only be reachable through the reverse proxy that sets that header.
 - **Referrer is suppressed** (`Referrer-Policy: no-referrer`) so an edit-token URL never leaks

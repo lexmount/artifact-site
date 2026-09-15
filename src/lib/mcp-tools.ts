@@ -16,3 +16,10 @@ export const mcpTools = [
   ["artifact_site_upload_write", "Write upload content"],
   ["artifact_site_upload_cancel", "Cancel an upload"],
 ] as const;
+
+/** The tools that only read. One list for two consumers: the `readOnlyHint` annotation the MCP
+ *  server publishes, and the OAuth scope gate (lib/oauth-shared) — a read-only grant may call
+ *  exactly these. Keeping them apart is how the two would drift. */
+export const readOnlyMcpTools: ReadonlySet<string> = new Set([
+  "artifact_site_connection", "artifact_site_find", "artifact_site_get_site", "artifact_site_read", "artifact_site_export",
+]);

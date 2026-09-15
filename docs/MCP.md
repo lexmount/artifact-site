@@ -5,8 +5,38 @@ the CLI and never reads a path on the server's filesystem supplied by a caller.
 
 ## Connect
 
-Open your deployment's `/for-agents#mcp` page. Sign in, create a named personal token, then copy
-the configuration. For clients that accept URL/header fields use:
+Two ways in; both end at the same 15 tools with the account's own permissions.
+
+### Sign in from the client (OAuth)
+
+For ChatGPT, Claude and every client that implements MCP authorization: give it the address
+`https://your-server/mcp` and choose OAuth. The client discovers this server's authorization
+server, opens the sign-in and a consent page in the browser, and receives an access token it
+presents on every request. Nothing to paste. Disconnect at any time from **My sites → Account
+tools → Connected applications**; the next request the client makes is refused.
+
+In ChatGPT: Settings → Connectors → Create. Server URL `https://your-server/mcp`; Authentication
+**OAuth** (not "mixed": every tool here needs an identity); under Client registration choose
+**Dynamic Client Registration** — ChatGPT connects to this server, so it works from any network.
+**Client ID Metadata Document** also works, but only when this server can reach `chatgpt.com`
+(servers in regions OpenAI does not serve get a 403; the consent page then says the client
+metadata document could not be fetched — switch to Dynamic Client Registration). A user-defined
+client is not needed. Leave the default scopes empty. Create, then approve the connection in the
+window ChatGPT opens. Claude, Cursor and other clients: add the server by address alone and
+approve the sign-in when prompted. A JSON-configured client needs only:
+
+```json
+{ "mcpServers": { "artifact-site": { "url": "https://your-server/mcp" } } }
+```
+
+Requires OIDC sign-in on the deployment (there is nobody to sign in otherwise) and
+`ARTIFACT_PUBLIC_URL` set to the exact address clients use: tokens are bound to it, and a
+mismatch fails every request with 401. The details are in [OAuth](#oauth) below.
+
+### Paste a token
+
+For clients that take a URL and headers, and for scripts: open `/for-agents#mcp`, sign in,
+create a named personal token, then copy the configuration.
 
 - URL: `https://your-server/mcp`
 - Transport: Streamable HTTP
@@ -26,11 +56,9 @@ Example user-level Cursor configuration (merge with existing `mcpServers`):
 ```
 
 The configuration contains a credential. Keep it in private user settings, not a repository or
-chat. For a local config file, restrict access with `chmod 600 ~/.cursor/mcp.json`. Your client
-must support Streamable HTTP with an Authorization header; this release does not implement
-MCP OAuth discovery. Token creation/list/revocation are browser-session-only. A token cannot
-mint another token. Existing device-login tokens also work, and new personal tokens work with
-CLI through `ARTIFACT_SITE_TOKEN`.
+chat. For a local config file, restrict access with `chmod 600 ~/.cursor/mcp.json`. Token
+creation/list/revocation are browser-session-only. A token cannot mint another token. Existing
+device-login tokens also work, and new personal tokens work with CLI through `ARTIFACT_SITE_TOKEN`.
 
 Every request validates the token. Cookies alone are rejected. Personal tokens inherit the
 user's site permissions. Operator tokens use the existing PUBLISH_API_TOKEN override and have
@@ -38,6 +66,64 @@ no personal site list. Operator-created sites have no anonymous owner and are no
 to anonymous-browser quotas or expiry. Their internal upload ownership key is never a cookie
 or a site access credential. Default anonymous deployments issue no credentials: configure OIDC or
 an operator token before connecting MCP. No token is embedded in a URL.
+
+## OAuth
+
+This server is its own OAuth 2.1 authorization server, colocated with the resource it protects.
+What it implements, and only that:
+
+- **Discovery.** `/mcp` answers an unauthenticated request with `401` and a `WWW-Authenticate`
+  challenge naming `/.well-known/oauth-protected-resource/mcp` (RFC 9728; also served at the root
+  path). That document points at the authorization server: `/.well-known/oauth-authorization-server`
+  (RFC 8414; the same document is served as `/.well-known/openid-configuration`).
+- **Clients.** A client identifies itself with a Client ID Metadata Document — its `client_id`
+  is an https URL, fetched and validated here; ChatGPT's preferred method — or registers
+  dynamically at `/oauth/register` (RFC 7591; `ARTIFACT_OAUTH_DCR=off` disables it). There is no
+  static preregistration: every ChatGPT connector has its own callback address, so an
+  administrator would be registering clients one person at a time. A client may be sent back to
+  an https address, to a listener on the loopback host — on whichever port it managed to open
+  (RFC 8252 §7.3) — or to a native application's own scheme: the reverse-domain shape RFC 8252
+  §7.1 asks for (`com.example.app:`), `cursor:`, `vscode:` and `vscode-insiders:`, or a scheme the
+  operator admits (`ARTIFACT_OAUTH_APP_SCHEMES`, say `windsurf,zed`); any other scheme is refused,
+  because a redirect to a scheme runs whatever handles it on the person's machine.
+  `ARTIFACT_OAUTH_CLIENT_HOSTS` restricts which hosts may identify themselves or be redirected to
+  (comma-separated hostnames, subdomains included); with it set, only https redirects to listed
+  hosts pass. All three knobs — hosts, dynamic registration, extra schemes — can also be set from
+  the administration console (`/admin/settings`) without a restart, console over environment.
+  Registrations that never reach the consent page are swept after a day.
+- **The flow.** Authorization code with PKCE (S256 only) at `/oauth/authorize`, which is the
+  consent page: it shows who is asking (name and host), what they get, as whom, and where the
+  browser will be sent back; it refuses to be framed. The redirect address is checked against the
+  client's registration before anything is redirected; refusals of a verified client go back to
+  it with `error` and `state`; an unverifiable client or address gets a page here, never a redirect. `resource`
+  (RFC 8707) must name this server. `/oauth/token` exchanges the code — single use; a replay
+  revokes everything it produced — for an access token and a refresh token, and `/oauth/revoke`
+  (RFC 7009) takes them back.
+- **Scopes.** `artifacts:read` (find, open, export) and `artifacts:write` (publish, update,
+  share, roll back, delete). The challenge asks for both; a client may ask for less, and a
+  read-only grant is refused every change with `403` and `insufficient_scope`. Unknown scopes
+  are ignored, and the token response says what was granted.
+- **Tokens.** Opaque and stored hashed, like sessions and personal tokens, so revocation is
+  immediate. Access tokens live an hour; refresh tokens thirty days, rotated on every use, under
+  a ninety-day ceiling fixed at consent. A refresh retires the previous access token as well, so
+  a narrowed scope takes effect at once; a retired refresh token presented again ends the grant —
+  unless it arrives within thirty seconds of the rotation under the same `client_id`, which is
+  what an honest client's parallel calls look like, and is merely refused (a public client's id
+  proves nothing, so that window is a matter of time, not of identity). Approving a dynamically
+  registered client again replaces its previous connection (its `client_id` is one install); a
+  metadata-document application is one document for every machine it runs on, so its connections
+  stay side by side. Tokens are bound to the deployment address they were issued for, and a
+  disabled account cannot redeem or refresh.
+- **The account page** lists connections (one per grant) with disconnect; disabling an account
+  revokes its OAuth tokens along with its sessions and personal tokens. Like a personal token,
+  an OAuth session cannot mint tokens, approve devices or answer a consent page.
+
+Troubleshooting: `401` on every request right after a successful sign-in means the address
+clients use differs from `ARTIFACT_PUBLIC_URL` (scheme, host or port). "Could not discover
+OAuth" or a `404` on `/.well-known/…` means the reverse proxy does not pass paths beginning with
+a dot, or `/oauth/*`. A `403 insufficient_scope` means the connection was made read-only:
+disconnect it and connect again. The consent page needs a browser sign-in; a token session
+cannot approve.
 
 ## Operations
 

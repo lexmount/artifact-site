@@ -64,8 +64,29 @@ it("installs the source CLI into the global prefix rather than the repository", 
   } finally { rmSync(root, { recursive: true, force: true }); }
 }, 25000);
 
+it("offers sign-in from the client first where OIDC exists, and only the token path without it", () => {
+  const render = (oidcEnabled: boolean) => renderToStaticMarkup(createElement(AgentConnectionGuide, { base: "https://sites.example", oidcEnabled }));
+  const withOidc = render(true);
+  expect(withOidc).toContain("Sign in from the client");
+  // ChatGPT is told to register dynamically — it works from any network — and when to fall back to the metadata document.
+  expect(withOidc).toContain("choose Dynamic Client Registration");
+  expect(withOidc).toContain("switch to Dynamic Client Registration");
+  const dcrOff = renderToStaticMarkup(createElement(AgentConnectionGuide, { base: "https://sites.example", oidcEnabled: true, dcrEnabled: false }));
+  expect(dcrOff).toContain("dynamic registration is turned off on this server");
+  expect(dcrOff).not.toContain("choose Dynamic Client Registration");
+  // Exactly one panel is rendered: no hidden twin of the token controls, no credential in the config.
+  expect(withOidc).not.toContain('id="mcp-access-token"');
+  expect(withOidc).not.toContain("Bearer YOUR_TOKEN");
+  expect(withOidc).toContain("sites.example/mcp");
+  const withoutOidc = render(false);
+  expect(withoutOidc).not.toContain("Sign in from the client");
+  expect(withoutOidc).toContain('id="mcp-access-token"');
+  expect(withoutOidc).toContain("Bearer YOUR_TOKEN");
+});
+
 it("shows an editable plaintext token with a separate disabled-until-filled copy action", () => {
-  const html = renderToStaticMarkup(createElement(AgentConnectionGuide, { base: "https://sites.example", oidcEnabled: true }));
+  // Without OIDC the token path is the only one, so it is what renders by default.
+  const html = renderToStaticMarkup(createElement(AgentConnectionGuide, { base: "https://sites.example", oidcEnabled: false }));
   expect(html).toMatch(/<input[^>]*id="mcp-access-token"[^>]*type="text"/);
   expect(html).toContain('for="mcp-access-token"');
   expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Copy token"/);

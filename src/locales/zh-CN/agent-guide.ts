@@ -1,6 +1,19 @@
 import type { Messages } from "@/lib/i18n";
 
 export const agentGuide: Messages = {
+  // ── Remote MCP: sign in from the client (OAuth) or paste a token ──
+  "Authorization method": "授权方式",
+  "Sign in from the client": "在客户端里登录",
+  "Clients with OAuth support — ChatGPT, Claude and others — need no token. Add the server address, choose OAuth, and the client opens this site's sign-in and a consent page; disconnect it at any time from My sites.": "支持 OAuth 的客户端（ChatGPT、Claude 等）不需要 Token：填入服务地址、选择 OAuth，客户端会打开本站的登录和授权页面；随时可以在「我的站点」里断开。",
+  "ChatGPT": "ChatGPT",
+  "Settings → Connectors → Create. Enter the server address and set Authentication to OAuth.": "设置 → 连接器 → 创建：填入服务地址，身份验证选 OAuth。",
+  "Under Client registration choose Dynamic Client Registration: ChatGPT connects to this server, so it works from any network. Client ID Metadata Document also works, but only if this server can reach chatgpt.com — if the consent page says the client metadata document could not be fetched, switch to Dynamic Client Registration.": "客户端注册方法选「动态客户端注册（DCR）」：由 ChatGPT 来连接本服务，任何网络环境都能用。「客户端标识元数据文档（CIMD）」也可以，但要求本服务器能访问 chatgpt.com——如果授权页提示无法获取客户端元数据文档，请改选动态客户端注册。",
+  "Under Client registration choose Client ID Metadata Document (dynamic registration is turned off on this server). This requires that this server can reach chatgpt.com.": "客户端注册方法选「客户端标识元数据文档（CIMD）」（本服务已关闭动态注册）。这要求本服务器能访问 chatgpt.com。",
+  "Leave the default scopes empty: this server asks for artifacts:read and artifacts:write itself. Create, then approve the connection in the window ChatGPT opens.": "默认作用域留空，本服务会自行请求 artifacts:read 和 artifacts:write。点创建后，在 ChatGPT 打开的窗口里确认授权。",
+  "Claude, Cursor and other clients": "Claude、Cursor 及其他客户端",
+  "Add a custom connector or remote MCP server with the address alone, without a token or header. When the client asks you to sign in, approve the connection in the browser window it opens.": "只用服务地址添加自定义连接器或远程 MCP 服务器，不需要 Token 或请求头。客户端提示登录时，在它打开的浏览器窗口里确认授权。",
+  "For clients configured with a JSON file. This entry holds no credential; the client starts the sign-in itself. ChatGPT needs no configuration file.": "用于通过 JSON 文件配置的客户端。这段配置不含任何凭据，登录由客户端自己发起。ChatGPT 不需要配置文件。",
+  "In ChatGPT, ask “What artifacts have I published?” in a new conversation; the first answer should already list your sites. Connected applications can be reviewed and disconnected in My sites.": "在 ChatGPT 里新开一段对话问「我发布过哪些作品」，第一次回答就应该列出你的站点。已连接的应用可以在「我的站点」里查看和断开。",
   "Copy token": "复制 Token",
   "Could not copy automatically. Select the token and copy it manually.": "自动复制失败，请选中 Token 手动复制。",
   "Connection information": "连接信息",

@@ -1,17 +1,24 @@
-<div align="center">
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/artifact-site-banner-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/artifact-site-banner.png">
+    <img src="docs/assets/artifact-site-banner.png" alt="artifact-site — A shared home for AI-generated pages and documents, on your own server. Open source, self-hosted, agent-ready." width="1000">
+  </picture>
+</p>
 
-# artifact-site
+<h1 align="center">artifact-site</h1>
 
-**A shared home for AI-generated pages and documents, on your own server.**
+<p align="center">
+  <strong>English</strong> |
+  <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-[![CI](https://github.com/lexmount/artifact-site/actions/workflows/ci.yml/badge.svg)](https://github.com/lexmount/artifact-site/actions/workflows/ci.yml)
-[![License: Apache-2.0 OR MIT](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](#license)
-[![Node 24](https://img.shields.io/badge/node-%E2%89%A5%2024-brightgreen.svg)](.nvmrc)
-[![Roadmap](https://img.shields.io/badge/roadmap-what's%20next-8a5a2b.svg)](ROADMAP.md)
-
-English · [简体中文](README.zh-CN.md)
-
-</div>
+<p align="center">
+  <a href="https://github.com/lexmount/artifact-site/actions/workflows/ci.yml"><img src="https://github.com/lexmount/artifact-site/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg" alt="License: Apache-2.0 OR MIT"></a>
+  <a href=".nvmrc"><img src="https://img.shields.io/badge/node-%E2%89%A5%2024-brightgreen.svg" alt="Node 24"></a>
+  <a href="ROADMAP.md"><img src="https://img.shields.io/badge/roadmap-what's%20next-8a5a2b.svg" alt="Roadmap"></a>
+</p>
 
 AI tools produce more finished work every day: interactive charts, analysis reports, web prototypes and slide decks. That work often ends up scattered across chat histories, local folders and different tools, with no shared place to browse, share or maintain it. Showing someone still means deploying it, sending files or taking a screenshot; finding the latest version later takes more work.
 
@@ -77,7 +84,7 @@ Drop `hello.html` onto the home page (or choose **Upload**). You should see “H
 
 ## Connect a coding agent
 
-Open **Agent guide** on your deployment to choose the prompt, CLI or MCP path. `/for-agents#cli` and `/for-agents#mcp` provide server-specific commands, authentication steps and client configuration. Remote MCP requires a valid token for every request. CLI publishing, updating, sharing and deleting require a token; publishing creates a public share by default. Use `--share none` (CLI) or `share: false` (MCP) to skip sharing.
+Open **Agent guide** on your deployment to choose the prompt, CLI or MCP path. `/for-agents#cli` and `/for-agents#mcp` provide server-specific commands, authentication steps and client configuration. Remote MCP authenticates every request: ChatGPT, Claude and other OAuth-capable clients sign in through the server's own consent page, other clients carry a personal token. CLI publishing, updating, sharing and deleting require a token; publishing creates a public share by default. Use `--share none` (CLI) or `share: false` (MCP) to skip sharing.
 
 <p align="center"><img src="docs/assets/agent.gif" alt="A coding agent publishes a build folder with the artifact-site CLI and hands back the share link" width="820"></p>
 <p align="center"><sub><b>Or let your coding agent do it.</b> With the agent guide (<code>/for-agents.md</code>), the CLI or the MCP server, "publish this and give me a link" is one instruction — and the site can be updated, searched and read the same way.</sub></p>
@@ -100,10 +107,12 @@ artifact-site read YOUR_SITE_SLUG                    # replace with a site slug 
 ```
 
 The login example requires OIDC. Remote MCP is a separate, complete entry point at
-`https://your-server/mcp`: no CLI installation is required. Open the deployment's
-`/for-agents#mcp` page to create a personal token and copy the authenticated configuration.
-It supports publishing, updating, search, read, sharing, versions, export and deletion,
-including binary files and directory uploads through MCP tools.
+`https://your-server/mcp`: no CLI installation is required. ChatGPT, Claude and any client that
+implements MCP authorization connect with the address alone and sign in through the server's
+OAuth consent page; for other clients, the deployment's `/for-agents#mcp` page creates a
+personal token and copies the authenticated configuration. It supports publishing, updating,
+search, read, sharing, versions, export and deletion, including binary files and directory
+uploads through MCP tools.
 
 See [CLI commands](cli/README.md) and [remote MCP setup and tools](docs/MCP.md).
 
