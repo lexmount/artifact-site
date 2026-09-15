@@ -28,6 +28,8 @@ AI tools produce more finished work every day: interactive charts, analysis repo
 
 **artifact-site brings that work onto your own server as links you can share, update and search.** Think of it as a self-hosted workspace for your team's artifacts, similar to Claude Artifacts or OpenAI Sites: your chosen AI tools or internal tools create the work, and artifact-site publishes and manages it. Upload HTML, static sites or documents so your team can view them online, control access and keep revisions. Coding agents can publish, update, search and read existing work too.
 
+> **Try it without installing anything:** [artifact-site.app.lexmount.com](https://artifact-site.app.lexmount.com/) runs this code as a hosted service. Drop a file to publish anonymously (anonymous sites there expire after a few days), or sign in to keep your work. It is a shared demo, so treat what you publish as public.
+
 <p align="center"><img src="docs/assets/demo.gif" alt="Dropping an HTML dashboard onto artifact-site: it becomes a link within seconds, renders in a sandboxed frame, and the sharing panel copies the link" width="820"></p>
 <p align="center"><sub><b>Drop a file, get a link, share it.</b> View your published work online and choose who can open it in the sharing settings.</sub></p>
 

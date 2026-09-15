@@ -30,6 +30,8 @@ Les outils d'IA produisent chaque jour davantage de travail fini : graphiques in
 
 **artifact-site rassemble ce travail sur votre propre serveur, sous forme de liens que vous pouvez partager, mettre à jour et rechercher.** Voyez-le comme un espace de travail auto-hébergé pour les artefacts de votre équipe, comparable à Claude Artifacts ou OpenAI Sites : vos outils d'IA ou vos outils internes créent le travail, artifact-site le publie et le gère. Téléversez du HTML, des sites statiques ou des documents pour que votre équipe puisse les consulter en ligne, en contrôler l'accès et en conserver les révisions. Les agents de codage peuvent eux aussi publier, mettre à jour, rechercher et lire le travail existant.
 
+> **Essayez sans rien installer :** [artifact-site.app.lexmount.com](https://artifact-site.app.lexmount.com/) fait tourner ce code comme service hébergé. Déposez un fichier pour publier anonymement (les sites anonymes y expirent après quelques jours), ou connectez-vous pour conserver votre travail. C'est une démo partagée : considérez ce que vous y publiez comme public.
+
 <p align="center"><img src="assets/demo.gif" alt="Un tableau de bord HTML déposé sur artifact-site : il devient un lien en quelques secondes, s'affiche dans un cadre isolé, et le panneau de partage copie le lien" width="820"></p>
 <p align="center"><sub><b>Déposez un fichier, obtenez un lien, partagez-le.</b> Consultez votre travail publié en ligne et choisissez qui peut l'ouvrir dans les réglages de partage.</sub></p>
 

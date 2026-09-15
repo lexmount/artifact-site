@@ -30,6 +30,8 @@ AI 越来越擅长生成东西：一张交互图表、一份分析报告、一�
 
 **artifact-site 把这些作品集中到你自己的服务器上，变成可分享、可更新、可检索的链接。** 可以把它理解成团队自托管的、类似 Claude Artifacts 或 OpenAI Sites 的作品空间：作品由你选择的 AI 工具或内部工具生成，artifact-site 负责发布和管理。上传 HTML、静态网站或文档后，团队可以在线查看、设置访问权限并保留版本；coding agent 也能发布、更新、搜索和读取已有作品。
 
+> **不装也能试：**[artifact-site.app.lexmount.com](https://artifact-site.app.lexmount.com/) 是用这套代码跑的托管服务。拖一个文件进去就能匿名发布（演示站上的匿名站点几天后过期），登录后作品才会保留。这是公共演示环境，请把发上去的内容当作公开的。
+
 <p align="center"><img src="assets/demo.zh-CN.gif" alt="把一个 HTML 仪表盘拖进 artifact-site：几秒后变成链接，在沙箱里渲染，分享面板一键复制链接" width="820"></p>
 <p align="center"><sub><b>拖进来，拿链接，分享出去。</b>在线查看刚发布的作品，通过分享设置决定谁能打开。</sub></p>
 

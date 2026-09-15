@@ -30,6 +30,8 @@ KI-Werkzeuge liefern jeden Tag mehr fertige Arbeit: interaktive Diagramme, Analy
 
 **artifact-site bringt diese Arbeit auf Ihren eigenen Server, als Links, die Sie teilen, aktualisieren und durchsuchen können.** Stellen Sie es sich als selbst gehosteten Arbeitsbereich für die Artefakte Ihres Teams vor, ähnlich wie Claude Artifacts oder OpenAI Sites: Ihre KI-Werkzeuge oder internen Tools erzeugen die Arbeit, artifact-site veröffentlicht und verwaltet sie. Laden Sie HTML, statische Websites oder Dokumente hoch, damit Ihr Team sie online ansehen, den Zugriff steuern und Revisionen behalten kann. Auch Coding-Agenten können vorhandene Arbeit veröffentlichen, aktualisieren, durchsuchen und lesen.
 
+> **Ohne Installation ausprobieren:** [artifact-site.app.lexmount.com](https://artifact-site.app.lexmount.com/) betreibt diesen Code als gehosteten Dienst. Legen Sie eine Datei ab, um anonym zu veröffentlichen (anonyme Sites dort laufen nach einigen Tagen ab), oder melden Sie sich an, um Ihre Arbeit zu behalten. Es ist eine gemeinsame Demo – behandeln Sie alles, was Sie dort veröffentlichen, als öffentlich.
+
 <p align="center"><img src="assets/demo.gif" alt="Ein HTML-Dashboard wird auf artifact-site gezogen: Innerhalb von Sekunden wird es zu einem Link, wird in einem Sandbox-Frame dargestellt, und das Freigabe-Panel kopiert den Link" width="820"></p>
 <p align="center"><sub><b>Datei ablegen, Link erhalten, teilen.</b> Sehen Sie Ihre veröffentlichte Arbeit online an und legen Sie in den Freigabeeinstellungen fest, wer sie öffnen darf.</sub></p>
 
