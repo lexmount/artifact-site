@@ -14,14 +14,14 @@ import { createPasscode, createShareToken, hashPasscode, hashToken } from "@/lib
 import { resolvePublicBase } from "@/lib/publish-skill";
 import type { User } from "@/lib/types";
 import { errorResponse, json } from "../../../_util";
-import { loadGrants, parseExpiry, parseLabel, parsePasscode, parsePolicy, shareUrl, summarize } from "./_shared";
+import { parseShareAuthorization, loadGrants, parseExpiry, parseLabel, parsePasscode, parsePolicy, shareUrl, summarize } from "./_shared";
 
 export async function GET(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
   try {
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    await requireCapability(request, view.site, "owner");
+    await requireCapability(request, view.site, "manage");
 
     // Revoked and expired rows included: the owner's question is "who did I give this to and is it
     // still open", and a list that quietly drops dead links cannot answer the first half.
@@ -49,7 +49,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    const { actor, viewer } = await requireActor(request, view.site, "owner");
+    const { actor, viewer } = await requireActor(request, view.site, "manage");
 
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // `login` is the default because the person minting this is, by definition, signed in: the
@@ -67,8 +67,10 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     }
     const passcode = policy === "passcode" ? supplied ?? createPasscode() : undefined;
 
+    const authorization = await parseShareAuthorization(body,view.site.id);
     const token = createShareToken();
     const share = await createShare({
+      ...authorization,
       id: createId("shr"),
       siteId: view.site.id,
       tokenHash: hashToken(token),

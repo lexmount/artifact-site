@@ -24,7 +24,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    await requireCapability(request, view.site, "owner");
+    await requireCapability(request, view.site, "manage");
     return json({ visibility: view.site.visibility, editPolicy: view.site.editPolicy }, 200);
   } catch (error) {
     return errorResponse(error);
@@ -37,9 +37,10 @@ export async function PUT(request: Request, context: { params: Promise<{ slug: s
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    const { actor } = await requireActor(request, view.site, "owner");
+    const { actor } = await requireActor(request, view.site, "manage");
 
     const body = (await request.json()) as { visibility?: unknown; editPolicy?: unknown };
+    if ((body as {editPolicy?: unknown}).editPolicy === "login") return json({error:"Use members or editable share links to grant editing"},400);
     const visibility = body.visibility as Visibility;
     const editPolicy = body.editPolicy as EditPolicy;
     if (!VISIBILITY.includes(visibility)) return json({ error: "Invalid visibility value" }, 400);

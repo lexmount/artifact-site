@@ -1,3 +1,4 @@
+import { canReadVersion } from "@/lib/share";
 // GET /api/sites/:slug/export — the CURRENT version's whole tree as one zip.
 //
 // The read half of the re-edit loop: an agent (the embedded assistant, or any tool holding the
@@ -19,8 +20,10 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
     await requireCapability(request, view.site, "content");
+    const requestedVersion = new URL(request.url).searchParams.get("version") || new URL(request.url).searchParams.get("v") || view.site.currentVersionId;
+    if(!(await canReadVersion(request,view.site,requestedVersion))) return json({error:"version not accessible"},404);
 
-    const exported = await exportSiteZip(slug);
+    const exported = await exportSiteZip(slug, requestedVersion);
     if (!exported) return json({ error: "site not found" }, 404);
     return new NextResponse(Buffer.from(exported.bytes), {
       status: 200,

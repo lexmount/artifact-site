@@ -1,3 +1,4 @@
+import { addCollaborator } from "./fixtures/legacy-identity";
 // Search and read for agents: the tokenizer (Chinese bigrams, ASCII-only tokens), the extractors
 // (html, pdf, office XML), the index following every version, the visibility scope of a search,
 // and the two routes. SQLite here; the CI integration job runs this file on Postgres too, which is
@@ -7,7 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zipSync } from "fflate";
-import { closeDbForTests, createEditToken, createId, getSiteBySlug, getSiteText, insertPublishToken, insertSiteWithVersion, setSiteTakenDown, updateSiteSharing, upsertUser, addCollaborator } from "@/lib/db";
+import { closeDbForTests, createEditToken, createId, getSiteBySlug, getSiteText, insertPublishToken, insertSiteWithVersion, setSiteTakenDown, updateSiteSharing, upsertUser} from "@/lib/db";
 import { hashTokenSecret } from "@/lib/publish-token";
 import { createSite, deleteSite, editSite, forkSite, renameSite, rollbackTo } from "@/lib/sites";
 import { setCurrentVersion, upsertSiteText } from "@/lib/db";

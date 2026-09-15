@@ -4,23 +4,20 @@
 // routes — rename, delete, edit, rollback — calling one identical assertCanEdit(request, site),
 // so any tier allowed to edit was also allowed to delete.
 //
-// Background: ARCHITECTURE.md, "Authorization".
+// Background: docs/RBAC.md.
 import { config } from "@/lib/config";
 import { policy } from "@/lib/settings";
 import { EditForbiddenError, editTokenFromRequest, isAdmin } from "@/lib/auth";
 import { safeEqual } from "@/lib/crypto";
-import { isCollaborator } from "@/lib/db";
+import { rbacQuery } from "@/lib/db";
+import { accountSiteRole, managementRole, tenantActive, recordRbacAudit } from "@/lib/rbac-access";
+import { roleAllows, type Permission } from "@/lib/rbac";
 import { forwardedProto } from "@/lib/http";
 import { resolveSession } from "@/lib/session";
 import { anonIdFromRequest } from "@/lib/anon";
 import type { Actor, Capability, Session, Site } from "@/lib/types";
 
-/**
- * A row that predates the identity migration. Every site created since carries a claim receipt at
- * birth, so a missing one is a durable marker — it stays true after the row is adopted, which is
- * what lets an adopted legacy site keep honouring the edit tokens its creator already handed out.
- * The owner ends that state deliberately, by rotating the link.
- */
+/** Only unowned pre-identity rows may use their legacy receipt under enforcement. */
 function isPreIdentity(site: Site): boolean {
   return !site.claimToken && !site.anonOwnerId;
 }
@@ -39,6 +36,7 @@ export function atLeast(actual: Capability, required: Capability): boolean {
 
 /** The three independent credentials a request may carry. All are optional and non-exclusive. */
 export interface Viewer {
+  request?: Request;
   /** Resolved browser login. Null for anonymous visitors. */
   session: Session | null;
   /** This browser's anonymous id, if it has one. */
@@ -50,7 +48,7 @@ export interface Viewer {
 }
 
 export function resolveViewer(request: Request, session: Session | null = null): Viewer {
-  return { session, anonId: anonIdFromRequest(request), isAdmin: isAdmin(request), editToken: editTokenFromRequest(request) };
+  return { request, session, anonId: anonIdFromRequest(request), isAdmin: isAdmin(request), editToken: editTokenFromRequest(request) };
 }
 
 /** Just the accessor `next/headers` exposes — typed structurally so this module keeps out of next/*. */
@@ -80,7 +78,7 @@ export function requestFromHeaders(bag: HeaderBag, path: string, editToken?: str
   // reason in the docblock above: this rebuilds what production (TLS) would have seen.
   const proto = forwardedProto(bag);
   const headers = new Headers();
-  for (const name of ["cookie", "authorization", "x-forwarded-proto"]) {
+  for (const name of ["cookie", "authorization", "x-forwarded-proto", "x-artifact-share", "x-management-reason"]) {
     const value = bag.get(name);
     if (value) headers.set(name, value);
   }
@@ -110,59 +108,25 @@ export function viewerRequestFromHeaders(bag: HeaderBag, path: string): Request 
   return new Request(base.url, { headers: merged });
 }
 
-/**
- * Resolve what this viewer may do to this site.
- *
- * Two regimes, selected by ARTIFACT_ENFORCE_OWNERSHIP, because a rolling upgrade briefly runs old
- * and new images side by side. While OFF we reproduce today's behaviour exactly, so a half-upgraded
- * fleet is self-consistent; flipping it ON is the second deploy, once every replica understands
- * ownership.
- */
+/** Resolve account roles, explicit management, link grants and anonymous creator rights. */
 export async function resolveCapability(viewer: Viewer, site: Site): Promise<Capability> {
+  if (!(await tenantActive(site.tenantId))) return "none";
   if (viewer.isAdmin) return "owner";
-
-  if (!config.enforceOwnership) {
-    // Legacy: whoever holds the site's edit token has full rights, which is what the product does
-    // today. Deliberately unchanged so Deploy 1 is a pure schema change.
-    return viewer.editToken && site.editToken && safeEqual(viewer.editToken, site.editToken) ? "owner" : "none";
+  const role = await accountSiteRole(site, viewer.session);
+  if (role === "owner") return "owner";
+  if (role === "site-admin") return "manage";
+  if (role === "editor") return "content";
+  if (viewer.request && await managementRole(viewer.request, site, viewer.session)) return "owner";
+  if (viewer.request && viewer.session) {
+    const { requestShareAccess } = await import("@/lib/share");
+    const share = await requestShareAccess(viewer.request, site, viewer.session);
+    if (share?.mode === "edit" && !share.versionId) return "content";
   }
-
-  if (!viewer.session) {
-    // An anonymous creator keeps full control of what they made, identified by the browser cookie
-    // they were given at creation. Without this, dropping a file in and immediately fixing a typo
-    // would demand a login — and the anonymous drop is the product's whole entry point.
-    if (site.ownerId == null && site.anonOwnerId && viewer.anonId && safeEqual(viewer.anonId, site.anonOwnerId)) {
-      // The console (or ARTIFACT_ANONYMOUS_SITES) may keep anonymous creators to reading: the site
-      // is theirs to look at, and every change asks for a sign-in — after which it is the account's.
-      return policy.anonymousSites === "read-only" ? "none" : "owner";
-    }
-    // Grandfather clause for rows that predate identity. Their edit token was, at the time, the
-    // only thing that meant anything — and it was handed out. Freezing them is a dead end (no
-    // receipt to claim, no anon id to adopt, no admin token on an open deployment), so the token
-    // keeps working. But how much it grants depends on whether anyone has taken responsibility:
-    //
-    //   unowned → owner:   nobody to protect, and this is exactly today's behaviour
-    //   owned   → content: the holders the creator already shared with keep editing, while
-    //                      renaming, deleting and sharing settle with the owner
-    //
-    // That second line is what makes adoption safe. Without it, the first token holder to sign in
-    // would lock out everyone the creator had deliberately shared with.
-    if (isPreIdentity(site) && viewer.editToken && site.editToken && safeEqual(viewer.editToken, site.editToken)) {
-      return site.ownerId == null ? "owner" : "content";
-    }
-    // Everyone else writing anonymously is refused: an edit nobody can attribute leaves
-    // versions.created_by empty and makes ownership, audit and revocation meaningless.
-    return "none";
+  if (!viewer.session && isAnonymousCreator(viewer, site)) {
+    return policy.anonymousSites === "read-only" ? "none" : "owner";
   }
-
-  if (site.ownerId && viewer.session.userId === site.ownerId) return "owner";
-  if (site.ownerId && (await isCollaborator(site.id, viewer.session.userId))) return "manage";
-
-  // The open tier grants content edits ONLY. Not rename, not rollback, and emphatically not
-  // delete — deleting removes the object-storage tree and is effectively irreversible, whereas an
-  // edit just appends another immutable version that can be rolled back.
-  if (site.editPolicy === "login") return "content";
-
+  // Legacy credentials remain restricted to pre-identity anonymous artifacts.
+  if (!site.ownerId && (!config.enforceOwnership || isPreIdentity(site)) && viewer.editToken && safeEqual(viewer.editToken, site.editToken)) return "owner";
   return "none";
 }
 
@@ -170,12 +134,12 @@ export async function resolveCapability(viewer: Viewer, site: Site): Promise<Cap
 function reasonFor(viewer: Viewer, site: Site, required: Capability): string {
   if (!config.enforceOwnership) return "You do not have edit access to this site (an editable link is required)";
   if (!viewer.session) {
-    if (isAnonymousCreator(viewer, site)) return "Sign in to edit and share this site; it becomes yours the moment you do";
+    if (isAnonymousCreator(viewer, site)) return "Sign in and explicitly claim this site in Workspaces";
     return "Please sign in first";
   }
   if (!site.ownerId) return "This site has no account owner; use the creating browser or ask an administrator to assign ownership";
   if (required === "owner") return "Only the site owner can do this";
-  if (required === "manage") return "Only the owner or a collaborator can do this";
+  if (required === "manage") return "Only the owner or a site administrator can do this";
   return "You do not have edit access to this site";
 }
 
@@ -225,6 +189,9 @@ export async function requireActor(
   // Taken down: the owner keeps reading (and may fork the content elsewhere) but nothing changes
   // under this address until an administrator restores it.
   if (site.takenDownAt && !viewer.isAdmin) throw new EditForbiddenError("This site has been taken down by an administrator");
+  if (await managementRole(request, site, viewer.session)) {
+    await recordRbacAudit(rbacQuery,site.tenantId,viewer.session?.userId ?? null,"site.management",site.id,request.headers.get("x-management-reason")!);
+  }
   return { capability: cap, actor: resolveActor(viewer), viewer };
 }
 
@@ -265,8 +232,8 @@ export async function describePermissions(
     canEditContent: atLeast(cap, "content"),
     canRename: atLeast(cap, "manage"),
     canRollback: atLeast(cap, "manage"),
-    canManageSharing: atLeast(cap, "owner"),
-    canManageCollaborators: atLeast(cap, "owner"),
+    canManageSharing: atLeast(cap, "manage"),
+    canManageCollaborators: atLeast(cap, "manage"),
     canDelete: atLeast(cap, "owner"),
     reason: cap === "none" ? reasonFor(viewer, site, "content") : null,
     // Only offer a login when one can actually succeed — enforceOwnership already implies a
@@ -275,4 +242,23 @@ export async function describePermissions(
     enforced: config.enforceOwnership,
     legacyGrandfathered: config.enforceOwnership && isPreIdentity(site) && cap !== "none",
   };
+}
+
+/** Explicit action gate; compatibility capabilities remain an implementation detail. */
+export async function requirePermission(request: Request, site: Site, permission: Permission, session?: Session | null) {
+  const capabilities: Partial<Record<Permission, Capability>> = {
+    "site.delete": "owner", "site.owner.transfer": "owner", "site.admins.manage": "owner",
+    "site.rename": "manage", "site.version.rollback": "manage", "site.sharing.manage": "manage",
+    "site.members.manage": "manage", "site.audit.read": "manage",
+    "site.content.edit": "content", "site.history.read": "content", "site.source.export": "content",
+  };
+  const required = capabilities[permission];
+  if (!required) throw new EditForbiddenError("Unsupported permission gate");
+  return requireActor(request,site,required,session);
+}
+/** Reserved policy for future comment routes. Caller must first authorize the exact site/share/version. */
+export function commentPermission(role: Parameters<typeof roleAllows>[0], action: Permission, own: boolean): boolean {
+  if (!action.startsWith("comment.")) return false;
+  if ((action.endsWith("Own")) && !own) return false;
+  return roleAllows(role,action);
 }

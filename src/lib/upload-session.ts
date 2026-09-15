@@ -49,8 +49,9 @@ export async function ownerKeyFor(request: Request, anonId?: string | null): Pro
   return anon ? `a:${anon}` : null;
 }
 
-export async function createUploadSession(input: { siteId?: string; targetSlug?: string; title?: string; ownerKey: string }): Promise<UploadSession> {
+export async function createUploadSession(input: { tenantId?: string; siteId?: string; targetSlug?: string; title?: string; ownerKey: string }): Promise<UploadSession> {
   const session: UploadSession = {
+    tenantId: input.tenantId,
     versionId: createId("ver"),
     siteId: input.siteId ?? createId("site"),
     files: [],

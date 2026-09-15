@@ -198,3 +198,9 @@ For operator scripts, POST `/api/admin/sites/<slug>/owner` with
 This admin endpoint accepts operator tokens without Origin; browser administrators must send
 a same-origin request. The separate owner-to-owner `/api/sites/<slug>/ownership` endpoint
 still requires a same-origin Origin header, including when called by an operator script.
+
+### Preview credentials
+
+Preview credentials work without additional configuration. On first use, the server creates a random key in the shared database; every replica adopts the same key and restarts retain it. `PREVIEW_SIGNING_SECRET` is an optional initial seed only: once a key is stored, the database takes precedence over the environment.
+
+Platform administrators can rotate the key in **Administration → Settings → Preview access key**. The console displays the last generation time, never the secret. Rotation is audited and immediately invalidates old preview credentials across all replicas; viewers refresh to obtain new credentials. Share links and login sessions remain valid. Public current-version previews use stable credential-free asset URLs. Include the database in normal backups; restoring an old database also restores its preview key.

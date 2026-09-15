@@ -3,12 +3,21 @@ import type { Messages } from "@/lib/i18n";
 /** The administration console (/admin, src/components/admin) and the take-down surfaces it adds
  *  to the site page, the share page and the site cards. Keys are the English source strings. */
 export const admin: Messages = {
+  "Preview access key": "预览访问密钥",
+  "Generated automatically and shared by all instances. The secret is never displayed.": "自动生成并由所有实例共享，密钥内容不会显示。",
+  "Last generated": "上次生成时间",
+  "Rotation immediately invalidates existing preview credentials. Viewers can refresh to continue; share links and login sessions stay valid.": "轮换后已有预览凭据立即失效，访问者刷新即可继续查看；分享链接和登录状态不受影响。",
+  "Confirm rotation": "确认轮换",
+  "Rotate preview key": "轮换预览密钥",
+  "Preview key rotated. All instances now use the new key.": "预览密钥已轮换，所有实例均已使用新密钥。",
+
   "Assign owner": "分配所有者",
   "Assigned site owner": "已分配站点所有者",
   "Assign owner for “{title}”": "为“{title}”分配所有者",
   "Recipient email": "接收账号邮箱",
   "Enter the verified email of an existing account. This gives that account full control of this unowned site and records the assignment in the audit log.": "输入已有账号的已验证邮箱。该账号将获得此无主站点的完整管理权限，分配操作会记入审计日志。",
   // Shell and navigation
+  "Admin": "管理",
   "Administration": "管理",
   "Administration — artifact-site": "管理 — artifact-site",
   "Administration views": "管理视图",

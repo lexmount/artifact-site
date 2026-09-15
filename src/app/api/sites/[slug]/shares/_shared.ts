@@ -141,6 +141,8 @@ export async function loadGrants(shareId: string, cache?: Map<string, User | nul
 export type ShareStatus = "live" | "revoked" | "expired";
 
 export interface ShareSummary {
+  mode: Share["mode"];
+  versionId: string | null;
   id: string;
   policy: SharePolicy;
   label: string | null;
@@ -166,6 +168,8 @@ export interface ShareSummary {
 export function summarize(share: Share, grants: GrantView[], now: number = Date.now()): ShareSummary {
   const live = isLive(share, now);
   return {
+    mode: share.mode,
+    versionId: share.versionId,
     id: share.id,
     policy: share.policy,
     label: share.label,
@@ -205,8 +209,23 @@ export type OwnedShare =
 export async function resolveOwnedShare(request: Request, slug: string, shareId: string): Promise<OwnedShare> {
   const view = await getSiteView(slug);
   if (!view) return { ok: false, response: json({ error: "site not found" }, 404) };
-  const { actor } = await requireActor(request, view.site, "owner");
+  const { actor } = await requireActor(request, view.site, "manage");
   const share = await getShare(shareId);
   if (!share || share.siteId !== view.site.id) return { ok: false, response: json({ error: "share not found" }, 404) };
   return { ok: true, site: view.site, share, actor };
+}
+
+/** Fixed links are read/comment only; a foreign version is never a fallback to current. */
+export async function parseShareAuthorization(body: Record<string, unknown>, siteId: string, previous?: Share): Promise<{mode: Share["mode"]; versionId: string | null}> {
+  const mode = body.mode === undefined ? previous?.mode ?? "view" : body.mode;
+  if (mode !== "view" && mode !== "comment" && mode !== "edit") throw new ShareInputError("mode must be view, comment or edit");
+  const versionId = body.versionId === undefined ? previous?.versionId ?? null : body.versionId;
+  if (versionId !== null && (typeof versionId !== "string" || !versionId)) throw new ShareInputError("versionId must be a version id or null");
+  if (versionId) {
+    const { getVersion } = await import("@/lib/db");
+    const version = await getVersion(versionId);
+    if (!version || version.siteId !== siteId) throw new ShareInputError("Version does not belong to this site");
+    if (mode === "edit") throw new ShareInputError("Fixed-version links cannot grant editing");
+  }
+  return { mode, versionId };
 }

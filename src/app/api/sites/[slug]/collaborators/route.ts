@@ -1,71 +1,154 @@
-// Named collaborators — the "specific people may edit" tier. Owner-only for the same reason as
-// sharing settings, and more sharply: if an edit-tier caller could add themselves here, revoking
-// the open tier afterwards would not remove them. A coarse, revocable share would have become a
-// permanent ACL entry, and their capability would rise from content to manage in the process.
 import type { NextResponse } from "next/server";
-import { addCollaborator, getUser, getUserByVerifiedEmail, listCollaborators, removeCollaborator } from "@/lib/db";
+import { toSite, getUserByVerifiedEmail, rbacQuery, rbacTransaction } from "@/lib/db";
 import { getSiteView } from "@/lib/sites";
-import { requireCapability } from "@/lib/authz";
+import { requirePermission, resolveCapability, resolveViewer, atLeast } from "@/lib/authz";
+import { memberRole, recordRbacAudit } from "@/lib/rbac-access";
 import { csrfSafe, resolveSession } from "@/lib/session";
-import { AuthError } from "@/lib/auth";
+import { AuthError, EditForbiddenError } from "@/lib/auth";
 import { errorResponse, json } from "../../../_util";
 
-export async function GET(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
+type Context = { params: Promise<{ slug: string }> };
+export async function GET(
+  request: Request,
+  context: Context,
+): Promise<NextResponse> {
   try {
-    const { slug } = await context.params;
-    const view = await getSiteView(slug);
+    const view = await getSiteView((await context.params).slug);
     if (!view) return json({ error: "site not found" }, 404);
-    await requireCapability(request, view.site, "owner");
-
-    const rows = await listCollaborators(view.site.id);
-    const people = await Promise.all(rows.map(async (row) => {
-      const user = await getUser(row.userId);
-      return { userId: row.userId, email: user?.email ?? null, displayName: user?.displayName ?? null, grantedAt: row.grantedAt };
-    }));
-    return json({ collaborators: people }, 200);
-  } catch (error) {
-    return errorResponse(error);
+    await requirePermission(request, view.site, "site.members.manage");
+    const rows = await rbacQuery(
+      "SELECT m.user_id,m.role,m.granted_at,u.email,u.display_name FROM site_members m JOIN users u ON u.id=m.user_id WHERE m.site_id=$1 ORDER BY m.granted_at",
+      [view.site.id],
+    );
+    return json({
+      collaborators: rows.map((r) => ({
+        userId: r.user_id,
+        role: r.role,
+        email: r.email,
+        displayName: r.display_name,
+        grantedAt: Number(r.granted_at),
+      })),
+    });
+  } catch (e) {
+    return errorResponse(e);
   }
 }
-
-export async function POST(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
+export async function POST(
+  request: Request,
+  context: Context,
+): Promise<NextResponse> {
   try {
     if (!csrfSafe(request)) throw new AuthError("Cross-site request rejected");
-    const { slug } = await context.params;
-    const view = await getSiteView(slug);
+    const view = await getSiteView((await context.params).slug);
     if (!view) return json({ error: "site not found" }, 404);
-    await requireCapability(request, view.site, "owner");
-
-    const body = (await request.json()) as { email?: unknown };
-    const email = typeof body.email === "string" ? body.email.trim() : "";
-    if (!email) return json({ error: "email is required" }, 400);
-
-    // Verified addresses only: matching an unverified one would let someone register a victim's
-    // mailbox and collect grants meant for them. `role` is never read from the request.
-    const user = await getUserByVerifiedEmail(email);
-    if (!user) return json({ error: "No user with this email has signed in here, or the email is unverified", code: "user_not_found" }, 404);
-
     const session = await resolveSession(request);
-    await addCollaborator(view.site.id, user.id, session?.userId ?? null);
-    return json({ userId: user.id, email: user.email, displayName: user.displayName }, 200);
-  } catch (error) {
-    return errorResponse(error);
+    // Reject unauthorized callers before resolving the target email; the transaction rechecks roles.
+    if (!atLeast(await resolveCapability(resolveViewer(request, session), view.site), "manage"))
+      throw new EditForbiddenError("Site management access required");
+    const body = await request.json();
+    const role = body.role ?? "editor";
+    if (role !== "admin" && role !== "editor")
+      return json({ error: "role must be admin or editor" }, 400);
+    const user =
+      typeof body.email === "string"
+        ? await getUserByVerifiedEmail(body.email.trim())
+        : null;
+    if (!user || user.disabledAt)
+      return json(
+        {
+          error: "An active account with a verified email is required",
+          code: "user_not_found",
+        },
+        404,
+      );
+    await rbacTransaction(async (q) => {
+      const [row] = await q("SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL", [view.site.id]);
+      if (!row) throw new EditForbiddenError("Site no longer exists");
+      const site = toSite(row);
+      const [old] = await q(
+        "SELECT role FROM site_members WHERE site_id=$1 AND user_id=$2",
+        [view.site.id, user.id],
+      );
+      const { actor } = await requirePermission(
+        request,
+        site,
+        role === "admin" || old?.role === "admin"
+          ? "site.admins.manage"
+          : "site.members.manage",
+        session,
+      );
+      if (user.id === site.ownerId)
+        throw new EditForbiddenError(
+          "The owner's role is changed through ownership transfer",
+        );
+      if (!(await memberRole(site.tenantId, user.id)))
+        throw new EditForbiddenError(
+          "Site members must belong to the site's tenant; use a share link for external collaborators",
+        );
+      await q(
+        "INSERT INTO site_members(site_id,user_id,role,granted_by,granted_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(site_id,user_id) DO UPDATE SET role=excluded.role,granted_by=excluded.granted_by",
+        [view.site.id, user.id, role, actor.userId, Date.now()],
+      );
+      await recordRbacAudit(
+        q,
+        site.tenantId,
+        actor.userId,
+        "site.member.change",
+        view.site.id,
+        JSON.stringify({userId:user.id,role}),
+      );
+    });
+    return json({
+      userId: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      role,
+    });
+  } catch (e) {
+    return errorResponse(e);
   }
 }
-
-export async function DELETE(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
+export async function DELETE(
+  request: Request,
+  context: Context,
+): Promise<NextResponse> {
   try {
     if (!csrfSafe(request)) throw new AuthError("Cross-site request rejected");
-    const { slug } = await context.params;
-    const view = await getSiteView(slug);
+    const view = await getSiteView((await context.params).slug);
     if (!view) return json({ error: "site not found" }, 404);
-    await requireCapability(request, view.site, "owner");
-
-    const userId = new URL(request.url).searchParams.get("userId") ?? "";
+    const session = await resolveSession(request);
+    const userId = new URL(request.url).searchParams.get("userId") || "";
     if (!userId) return json({ error: "userId is required" }, 400);
-    await removeCollaborator(view.site.id, userId);
-    return json({ ok: true }, 200);
-  } catch (error) {
-    return errorResponse(error);
+    await rbacTransaction(async (q) => {
+      const [row] = await q("SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL", [view.site.id]);
+      if (!row) throw new EditForbiddenError("Site no longer exists");
+      const site = toSite(row);
+      const [old] = await q(
+        "SELECT role FROM site_members WHERE site_id=$1 AND user_id=$2",
+        [view.site.id, userId],
+      );
+      const { actor } = await requirePermission(
+        request,
+        site,
+        old?.role === "admin" ? "site.admins.manage" : "site.members.manage",
+        session,
+      );
+      if (!old) return;
+      await q("DELETE FROM site_members WHERE site_id=$1 AND user_id=$2", [
+        view.site.id,
+        userId,
+      ]);
+      await recordRbacAudit(
+        q,
+        site.tenantId,
+        actor.userId,
+        "site.member.remove",
+        view.site.id,
+        JSON.stringify({userId}),
+      );
+    });
+    return json({ ok: true });
+  } catch (e) {
+    return errorResponse(e);
   }
 }

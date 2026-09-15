@@ -11,7 +11,7 @@ import { config } from "@/lib/config";
 import { safeEqual, sha256hex } from "@/lib/crypto";
 import { createSession, getPublishToken, getSession, revokeSession, touchPublishToken, touchSession } from "@/lib/db";
 import { isSecureRequest, readCookie } from "@/lib/http";
-import { InsufficientScopeError } from "@/lib/auth";
+import { InsufficientScopeError, isAdmin } from "@/lib/auth";
 import { resolveOauthAccessToken } from "@/lib/oauth";
 import { issuerFor, parseScopeList, SCOPE_WRITE } from "@/lib/oauth-shared";
 import { hashTokenSecret, oauthAccessTokenFromRequest, publishTokenFromRequest } from "@/lib/publish-token";
@@ -173,7 +173,7 @@ export async function endSession(request: Request): Promise<void> {
  * cookie-authenticated.
  */
 export function csrfSafe(request: Request): boolean {
-  return Boolean(publishTokenFromRequest(request)) || Boolean(oauthAccessTokenFromRequest(request)) || isSameOrigin(request);
+  return isAdmin(request) || Boolean(publishTokenFromRequest(request)) || Boolean(oauthAccessTokenFromRequest(request)) || isSameOrigin(request);
 }
 
 export function isSameOrigin(request: Request): boolean {

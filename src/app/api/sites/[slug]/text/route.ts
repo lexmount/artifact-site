@@ -8,7 +8,7 @@
 import type { NextResponse } from "next/server";
 import { BadRequestError } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/ratelimit";
-import { canReadSite } from "@/lib/share";
+import { canReadVersion, canReadSite } from "@/lib/share";
 import { cutText, MAX_TEXT_CHARS, siteTextOf } from "@/lib/site-text";
 import { getSiteView, siteUrl } from "@/lib/sites";
 import { getStorage } from "@/lib/storage";
@@ -28,6 +28,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
       if (view.site.takenDownAt) return json({ error: "This site has been taken down by an administrator", code: "taken_down" }, 410);
       return json({ error: "site not found" }, 404);
     }
+    if(!(await canReadVersion(request,view.site,view.version.id)))return json({error:"version not accessible"},404);
     const params = new URL(request.url).searchParams;
     const maxRaw = params.get("max_chars");
     const maxChars = maxRaw === null ? DEFAULT_MAX_CHARS : Number(maxRaw);

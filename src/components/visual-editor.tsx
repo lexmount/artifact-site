@@ -1,4 +1,5 @@
 "use client";
+import { siteFetch as fetch } from "@/lib/share-context";
 
 // Pure visual editing: double-click text in the live preview to rewrite it directly, with no source code and no
 // file list in sight. The edit frame comes from /api/sites/:slug/edit-frame — fetched with fetch (the edit

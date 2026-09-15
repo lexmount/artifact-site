@@ -1,10 +1,11 @@
+import { setSiteOwnerIfUnowned } from "./fixtures/legacy-identity";
 // Account-level folders (issue #35): the store, the merge policy, and the routes — driven through
 // the real handlers with real session cookies, so what is asserted is what a browser gets.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { closeDbForTests, deleteFolder, getSiteBySlug, insertFolder, listFolderAssignments, listFolders, setFolderAssignment, setSiteOwnerIfUnowned, softDeleteSite, upsertUser } from "@/lib/db";
+import { closeDbForTests, deleteFolder, getSiteBySlug, insertFolder, listFolderAssignments, listFolders, setFolderAssignment, softDeleteSite, upsertUser } from "@/lib/db";
 import { MAX_FOLDERS } from "@/lib/folders";
 import { mintSession } from "@/lib/session";
 import { createSite } from "@/lib/sites";

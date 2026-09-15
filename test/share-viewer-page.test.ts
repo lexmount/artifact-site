@@ -236,7 +236,7 @@ describe("/v/<token> rendering", () => {
 
     const frames = hostTags(tree, "iframe");
     expect(frames).toHaveLength(1);
-    expect(frames[0].src).toBe(`/api/preview/${site.slug}/`);
+    expect(frames[0].src).toBe(`/api/preview/${site.slug}?share=${token}`);
     // The sandbox is identical to the owner's page — in particular, no allow-same-origin.
     expect(frames[0].sandbox).toBe("allow-forms allow-modals allow-scripts allow-popups allow-downloads");
 

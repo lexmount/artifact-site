@@ -1,3 +1,5 @@
+import { authorizePreview } from "@/lib/preview-access";
+import { canReadVersion } from "@/lib/share";
 // GET /api/sites/:slug/edit-frame — the site's page with the visual-editor script injected, for
 // the editor to fetch into a srcDoc iframe.
 //
@@ -23,10 +25,18 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
 
-    await requireCapability(request, view.site, "content"); // no edit access → 403 (and no script)
+    await requireCapability(request, view.site, "content");
+    const requestedVersion = new URL(request.url).searchParams.get("version") || new URL(request.url).searchParams.get("v") || view.site.currentVersionId;
+    if(!(await canReadVersion(request,view.site,requestedVersion))) return json({error:"version not accessible"},404); // no edit access → 403 (and no script)
 
-    const requestedVersion = new URL(request.url).searchParams.get("version");
-    const frame = await buildEditFrame(view, slug, requestedVersion);
+    // Saving historical entry HTML copies the current resource tree (see buildEditFrame).
+    // Normalize both version parameter spellings to that same resource snapshot.
+    const resourceUrl = new URL(request.url);
+    resourceUrl.searchParams.set("v", view.site.currentVersionId);
+    const resourceRequest = new Request(resourceUrl, request);
+    const access = await authorizePreview(resourceRequest, view.site, null);
+    if (!access) return json({ error: "version not accessible" }, 404);
+    const frame = await buildEditFrame(view, slug, requestedVersion, access.key);
     if (!frame.ok) {
       const { status, ...body } = frame;
       return json(body.code ? { error: body.error, code: body.code } : { error: body.error }, status);

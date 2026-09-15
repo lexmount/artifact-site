@@ -1,3 +1,5 @@
+import { memberRole } from "@/lib/rbac-access";
+import { ANONYMOUS_TENANT, INIT_TENANT } from "@/lib/rbac";
 import { z } from "zod";
 import { requireAdminWrite } from "@/lib/admin";
 import { createId, getSiteBySlug, getUserByVerifiedEmail } from "@/lib/db";
@@ -18,6 +20,8 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     if (site.ownerId) return json({ error: "This site already has an owner", code: "already_owned" }, 409);
     const user = await getUserByVerifiedEmail(email);
     if (!user || user.disabledAt) return json({ error: "An active account with this verified email must sign in first", code: "user_not_found" }, 404);
+    const tenantId = site.tenantId === ANONYMOUS_TENANT ? INIT_TENANT : site.tenantId;
+    if (!(await memberRole(tenantId,user.id))) return json({ error: "The new owner must be an active member of the destination tenant" },403);
     const won = await claimSiteRecorded(site.id, user.id, apiAuditContext(request, { kind: "admin", userId: admin.userId, anonId: null }), {
       id: createId("adm"), actorKind: admin.kind, actorUserId: admin.userId, action: "site.assign_owner",
       targetKind: "site", targetId: site.id, reason: `Assigned owner: ${user.id}`, ip: auditRequestMeta(request).ip, createdAt: Date.now(),

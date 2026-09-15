@@ -35,7 +35,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const actor: Actor = isAdmin(request) ? { kind: "admin", userId: null, anonId: null } : session
       ? { kind: "user", userId: session.userId, anonId }
       : { kind: "anon", userId: null, anonId };
-    const { site } = await createSite(input, session ? { ownerId: session.userId } : { anonOwnerId: anonId }, apiAuditContext(request, actor));
+    const { site } = await createSite(input, session ? { ownerId: session.userId, tenantId: request.headers.get("x-artifact-tenant") || undefined } : { anonOwnerId: anonId }, apiAuditContext(request, actor));
 
     // Both secrets go ONLY to the creator, here, once. The client stashes them in localStorage.
     // claimToken is the ownership receipt: it must never be rendered into a shareable link, which

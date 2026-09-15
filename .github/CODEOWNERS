@@ -1,0 +1,4 @@
+# Reviewers requested automatically on every pull request. Approval rules live in the
+# repository's branch ruleset (Settings → Rules): one approval from someone with write access,
+# CI and DCO green, review threads resolved.
+* @xiongxz

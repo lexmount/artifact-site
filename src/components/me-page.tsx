@@ -114,6 +114,7 @@ export default function MePage({ allSites }: { allSites: SiteSummary[] }) {
             <span className="work-tabs-tools">
               {tab === "recent" && shelf.items.length > 0 && <button type="button" className="quiet" onClick={clearHistory}>{t("Clear history")}</button>}
               {/* Publish tokens are kept in the account tools menu. */}
+              <Link href="/tenants" className="quiet">{t("Workspaces")}</Link>
               <MoreMenu label={t("Account tools")} buttonClassName="quiet" buttonContent={<>{t("Account tools")} ⌄</>}>
                 <button type="button" role="menuitem" className="menu-item" data-active={tab === "tokens"} onClick={() => setPicked("tokens")}>{t("Publish tokens")}</button>
                 <button type="button" role="menuitem" className="menu-item" data-active={tab === "connections"} onClick={() => setPicked("connections")}>{t("Connected applications")}</button>

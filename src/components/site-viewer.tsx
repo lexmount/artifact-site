@@ -489,7 +489,7 @@ export default function SiteViewer(props: {
                 {replacing ? <Loader2 size={14} className="spin" /> : <FileUp size={14} aria-hidden="true" />} {t("Upload new version")}
               </button>
             )}
-            {permissions.canManageSharing && <SharePanel slug={slug} onOpenChange={onSharingOpen} />}
+            {permissions.canManageSharing && <SharePanel slug={slug} onOpenChange={onSharingOpen} canManageAdmins={permissions.canDelete} />}
             {!permissions.canManageSharing && permissions.needsLogin && (
               <LockedAction label={t("Sharing settings")} icon={<Share2 size={14} />} hint={t("Sign in required")} onOpen={() => openGate("share")} />
             )}

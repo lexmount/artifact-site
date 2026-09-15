@@ -10,7 +10,8 @@
 // shape the API returns (`{shares:[…]}` or a bare array, `url` or `token`). A share link is shown
 // once; one parse failure loses it forever, so we would rather accept a few extra shapes.
 import type { Share, ShareGrant, SharePolicy, SiteOpen, Visibility } from "@/lib/types";
-import { formatDate, type Locale, type Translator } from "@/lib/i18n";
+import { type Locale, type Translator } from "@/lib/i18n";
+import { relTime as baseRelTime } from "@/lib/rel-time";
 
 // User-visible strings below are English source keys: components wrap them in `t(...)`, and
 // helpers that build a sentence take the caller's `t` (hooks cannot run outside a component).
@@ -307,15 +308,7 @@ export function readViewsSummary(body: unknown): ViewsSummary | null {
 // ── Time ─────────────────────────────────────────────────────────────────────
 
 export function relTime(ts: number, now: number, t: Translator, locale: Locale = "en"): string {
-  const s = Math.max(0, Math.round((now - ts) / 1000));
-  if (s < 60) return t("Just now");
-  const m = Math.round(s / 60);
-  if (m < 60) return t("{n} minutes ago", { n: m });
-  const h = Math.round(m / 60);
-  if (h < 24) return t("{n} hours ago", { n: h });
-  const d = Math.round(h / 24);
-  if (d < 30) return t("{n} days ago", { n: d });
-  return formatDate(ts, locale);
+  return baseRelTime(ts, t, locale, now);
 }
 
 // ── API envelopes: lenient on input ──────────────────────────────────────────
@@ -346,6 +339,8 @@ function pickArray(body: unknown, ...keys: string[]): unknown[] {
  * is no `GET …/grants` route, nor any need for one).
  */
 export interface ShareListItem {
+  mode?: "view" | "comment" | "edit";
+  versionId?: string | null;
   id: string;
   policy: SharePolicy;
   label: string | null;

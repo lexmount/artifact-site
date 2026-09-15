@@ -17,10 +17,13 @@ import { createHmac } from "node:crypto";
 import { closeDbForTests, updateSiteSharing } from "@/lib/db";
 import { createSite } from "@/lib/sites";
 import {
-  PREVIEW_KEY_SEP, PREVIEW_KEY_TTL_MS, mintPreviewKey, previewBaseHref, splitSlugKey, verifyPreviewKey,
+  PREVIEW_KEY_SEP, PREVIEW_KEY_TTL_MS, mintScopedPreviewKey, readScopedPreviewKey, previewBaseHref, splitSlugKey,
 } from "@/lib/preview-key";
 import { GET as previewGET } from "@/app/api/preview/[slug]/[[...path]]/route";
 import type { Site } from "@/lib/types";
+
+const mintPreviewKey = (site: Site, now = Date.now()) => mintScopedPreviewKey(site, {versionId:site.currentVersionId,shareId:null,userId:null,anonOwnerHash:null,fingerprint:"",legacy:true},now);
+const verifyPreviewKey = async (key: string, site: Site) => (await readScopedPreviewKey(key,site)) !== null;
 
 const ORIGIN = "https://x";
 let dir: string;
@@ -72,7 +75,7 @@ describe("a private site's sub-resources: the opaque frame gets in via the crede
   it("carrying a credential issued by this site in the URL fetches it", async () => {
     const site = await made();
     await updateSiteSharing(site.id, "private", "owner");
-    expect((await get(keyed(site.slug, mintPreviewKey(site)), ["a.png"])).status).toBe(200);
+    expect((await get(keyed(site.slug, await mintPreviewKey(site)), ["a.png"])).status).toBe(200);
   });
 
   it("[KEY] a credential issued by another site does not open this one", async () => {
@@ -80,20 +83,20 @@ describe("a private site's sub-resources: the opaque frame gets in via the crede
     const other = await made();
     await updateSiteSharing(mine.id, "private", "owner");
     // The signature binds the siteId and the secret is derived per site — both layers mismatch.
-    expect((await get(keyed(mine.slug, mintPreviewKey(other)), ["a.png"])).status).toBe(404);
+    expect((await get(keyed(mine.slug, await mintPreviewKey(other)), ["a.png"])).status).toBe(404);
   });
 
   it("an expired credential does not count", async () => {
     const site = await made();
     await updateSiteSharing(site.id, "private", "owner");
-    const stale = mintPreviewKey(site, Date.now() - PREVIEW_KEY_TTL_MS - 1000);
+    const stale = await mintPreviewKey(site, Date.now() - PREVIEW_KEY_TTL_MS - 1000);
     expect((await get(keyed(site.slug, stale), ["a.png"])).status).toBe(404);
   });
 
   it("changing a single byte is rejected — the expiry is covered by the signature and cannot be pushed", async () => {
     const site = await made();
-    const [exp, sig] = mintPreviewKey(site).split(".");
-    expect(verifyPreviewKey(`${Number(exp) + 86_400_000}.${sig}`, site)).toBe(false);
+    const [exp, sig] = (await mintPreviewKey(site)).split(".");
+    expect(await verifyPreviewKey(`${Number(exp) + 86_400_000}.${sig}`, site)).toBe(false);
   });
 
   it("a garbage credential segment neither derails the request nor gets treated as a new site", async () => {
@@ -119,10 +122,10 @@ describe("the credential is written into the artifact's <base>", () => {
     // Dig the credential out of <base>; it must actually work — this pins "what was injected" and
     // "what verifies" together.
     const minted = base.slice(`/api/preview/${site.slug}${PREVIEW_KEY_SEP}`.length, -1);
-    expect(verifyPreviewKey(minted, site)).toBe(true);
+    expect(await verifyPreviewKey(minted, site)).toBe(true);
   });
 
-  it("a public site's <base> carries no credential — it does not need one, and the link should not get uglier", async () => {
+  it("a public current-version site keeps stable cacheable asset URLs", async () => {
     const site = await made();
     const html = await (await get(site.slug, [])).text();
     expect(html).toContain(`<base href="/api/preview/${site.slug}/">`);
@@ -137,7 +140,7 @@ describe("revocation must actually take effect: a credential cannot extend its o
   it("fetching the entry by credential leaves the original credential in <base>, not a fresh one", async () => {
     const site = await made();
     await updateSiteSharing(site.id, "private", "owner");
-    const key = mintPreviewKey(site);
+    const key = await mintPreviewKey(site);
 
     const html = await (await get(keyed(site.slug, key), [])).text();
     expect(html).toContain(`<base href="/api/preview/${site.slug}${PREVIEW_KEY_SEP}${key}/">`);
@@ -146,9 +149,9 @@ describe("revocation must actually take effect: a credential cannot extend its o
   it("a fresh credential is minted only when entering through the real gate", async () => {
     const site = await made();
     await updateSiteSharing(site.id, "private", "owner");
-    const old = mintPreviewKey(site, Date.now() - 60_000); // minted earlier, so the signature differs
+    const old = await mintPreviewKey(site, Date.now() - 60_000); // minted earlier, so the signature differs
 
-    const html = await (await get(keyed(site.slug, old), [], site.editToken)).text();
+    const html = await (await get(site.slug, [], site.editToken)).text();
     expect(html).not.toContain(old);
   });
 });
@@ -196,17 +199,17 @@ describe("signing secret: in enforced mode it must not be something the client c
     // The editToken is handed to the caller in the create-site response, and in enforced mode its
     // authority has been reduced to none. A credential signed with it must be rejected — otherwise
     // a retired token is promoted back to "can read every byte of the site".
-    expect(verifyPreviewKey(forgeWith(site.editToken, site), site)).toBe(false);
+    expect(await verifyPreviewKey(forgeWith(site.editToken, site), site)).toBe(false);
   });
 
   it("a credential the server minted itself is still accepted", async () => {
     const site = await made();
     enforce();
-    expect(verifyPreviewKey(mintPreviewKey(site), site)).toBe(true);
+    expect(await verifyPreviewKey(await mintPreviewKey(site), site)).toBe(true);
   });
 
-  it("a non-enforced deployment falls back to the editToken — there it already equals full owner authority, so nothing is escalated", async () => {
+  it("a non-enforced deployment also refuses client-forged credentials", async () => {
     const site = await made();
-    expect(verifyPreviewKey(forgeWith(site.editToken, site), site)).toBe(true);
+    expect(await verifyPreviewKey(forgeWith(site.editToken, site), site)).toBe(false);
   });
 });

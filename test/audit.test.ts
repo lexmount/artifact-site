@@ -1,3 +1,4 @@
+import { adoptAnonymousSites, setSiteOwnerIfUnowned } from "./fixtures/legacy-identity";
 // The audit spine: every content edit records who/when/what/how, in the version's own transaction,
 // and the row is never rewritten — not even when the site is later claimed.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,9 +6,7 @@ import { committed } from "./helpers";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  adoptAnonymousSites, attributeUnattributedVersions, closeDbForTests, insertAudit, listAudit,
-  setSiteOwnerIfUnowned, upsertUser,
+import { attributeUnattributedVersions, closeDbForTests, insertAudit, listAudit, upsertUser,
 } from "@/lib/db";
 import { resolveActor } from "@/lib/authz";
 import { createSite, editSite, forkSite, rollbackTo } from "@/lib/sites";

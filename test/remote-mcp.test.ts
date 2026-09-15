@@ -57,7 +57,7 @@ it("runs publication, ownership, versions, edit, share, fork, export and delete 
   expect((await call(ca, "update", { slug, html: "stale", expected_version: version })).error).toBe(true);
   expect((await call(ca, "rollback", { slug, version_id: version })).error).toBe(false);
   expect((await call(ca, "share", { slug, policy: "public" })).error).toBe(false);
-  expect((await call(cb, "read", { slug })).error).toBe(false);
+  expect((await call(cb, "read", { slug })).error).toBe(true); // A link must be supplied explicitly.
   const fork = await call(ca, "fork", { slug }); expect(fork.error).toBe(false);
   expect((await call(ca, "delete", { slug: fork.data.slug })).error).toBe(false);
   expect((await call(ca, "delete", { slug })).error).toBe(false);
@@ -304,7 +304,7 @@ it("updates only the title explicitly and keeps optional detail permissions sepa
   expect((await call(c, "edit", { slug, path: "wrong.html", content: "wrong", expected_version: before })).error).toBe(true);
   const detail = await call(c, "get_site", { slug, include: ["versions", "shares"] });
   expect(detail.error).toBe(false); expect(detail.data.versions).toHaveLength(1); expect(detail.data.shares).toHaveLength(1);
-  expect((await call(other, "get_site", { slug })).error).toBe(false);
+  expect((await call(other, "get_site", { slug })).error).toBe(true);
   expect((await call(other, "get_site", { slug, include: ["shares"] })).error).toBe(true);
 });
 

@@ -1,3 +1,5 @@
+import { tenantActive, accountSiteRole, managementRole, recordRbacAudit } from "@/lib/rbac-access";
+import { rbacQuery, getSite, getVersion } from "@/lib/db";
 // Read access control: who may SEE a site's content.
 //
 // Kept apart from lib/authz, which grades WRITE permission (none < content < manage < owner).
@@ -11,7 +13,7 @@
 import { randomBytes } from "node:crypto";
 import { safeEqual, sha256hex } from "@/lib/crypto";
 import { isSecureRequest } from "@/lib/http";
-import { getShareByTokenHash, getUser, hasRecentShareView, hasRecentSiteView, listLiveShares, recordShareView, recordSiteView, shareAdmits } from "@/lib/db";
+import { getShareByTokenHash, getUser, hasRecentShareView, hasRecentSiteView, recordShareView, recordSiteView, shareAdmits } from "@/lib/db";
 import { resolveSession } from "@/lib/session";
 import { recordAdminRead, resolveAdmin } from "@/lib/admin";
 import { resolveViewer, resolveCapability, atLeast, isAnonymousCreator } from "@/lib/authz";
@@ -72,6 +74,8 @@ export async function resolveShareAccess(
 ): Promise<ShareAccess> {
   const share = await getShareByTokenHash(hashToken(token));
   if (!share || !isLive(share)) return { ok: false, reason: "notFound" };
+  const site = await getSite(share.siteId);
+  if (!site || site.deletedAt || site.takenDownAt || !(await tenantActive(site.tenantId))) return { ok: false, reason: "notFound" };
 
   switch (share.policy) {
     case "public":
@@ -149,17 +153,6 @@ export function hasPasscodeCookie(request: Request, share: ShareRow): boolean {
 // --- the site-level read gate -------------------------------------------------
 
 /**
- * May this request read this site's content at all?
- *
- * Ordered cheapest-first, and deliberately generous in the first two arms: a site nobody has
- * restricted must keep behaving exactly as it does today. Existing links do not break — that is a
- * hard requirement, not a nicety.
- *
- *   1. visibility public/unlisted  → open, as always
- *   2. manage capability           → the owner and collaborators always get in
- *   3. any live share admits them  → the reader arrived through a link that says yes
- */
-/**
  * Forking is not reading, and must not ride on a read grant. A fork is a NEW site owned by whoever
  * pressed the button: they can flip it public, share it onward, and keep it long after the original
  * share is revoked. So a "Signed-in users" share — meant to say "anyone signed in may look" — would
@@ -168,7 +161,8 @@ export function hasPasscodeCookie(request: Request, share: ShareRow): boolean {
  * unlisted sites are untouched, which is every site that exists today.
  */
 export async function canForkSite(request: Request, site: Site, session?: Session | null): Promise<boolean> {
-  if (site.visibility !== "private") return true;
+  if (site.deletedAt || !(await tenantActive(site.tenantId))) return false;
+  if (site.visibility !== "private" && !site.takenDownAt) return true;
   const resolved = session === undefined ? await resolveSession(request) : session;
   const viewer = resolveViewer(request, resolved);
   return atLeast(await resolveCapability(viewer, site), "manage");
@@ -182,59 +176,62 @@ export async function canForkSite(request: Request, site: Site, session?: Sessio
  */
 export type ReadAccess = "public" | "capability" | "share" | "admin";
 
-export async function readAccess(request: Request, site: Site, session?: Session | null): Promise<ReadAccess | null> {
-  // Taken down: served to its owner, collaborators and administrators only, whatever the
-  // visibility and whatever share links exist — a takedown must beat a public link.
-  if (site.takenDownAt) {
-    const resolved = session === undefined ? await resolveSession(request) : session;
-    if (atLeast(await resolveCapability(resolveViewer(request, resolved), site), "manage")) return "capability";
-    return adminRead(request, resolved, site);
-  }
-  if (site.visibility !== "private") return "public";
-
+export async function readAccess(request: Request, site: Site, session?: Session | null, audit = true): Promise<ReadAccess | null> {
+  if (!(await tenantActive(site.tenantId)) || site.deletedAt) return null;
   const resolved = session === undefined ? await resolveSession(request) : session;
-  const viewer = resolveViewer(request, resolved);
-  if (atLeast(await resolveCapability(viewer, site), "manage")) return "capability";
-  // A read-only anonymous creator has no capability, but what they made is still theirs to look at.
-  if (isAnonymousCreator(viewer, site)) return "capability";
-
-  // A private site is reachable only through a share. Ask every live one: if the reader satisfies
-  // any of them they are in, which is what makes "one artifact, several audiences" work.
-  for (const share of await listLiveShares(site.id)) {
-    if (await admitsViewer(request, share, resolved)) return "share";
+  const role = await accountSiteRole(site,resolved);
+  const manager = await managementRole(request,site,resolved);
+  if (manager) {
+    if (audit) await recordRbacAudit(rbacQuery,site.tenantId,resolved?.userId ?? null,"site.read",site.id,request.headers.get("x-management-reason")!);
+    return "admin";
   }
-  // An administrator may open anything the console lists — judging a take-down needs the
-  // content — but reading only: writes still go through the site's own capability chain.
-  return adminRead(request, resolved, site);
+  if (role) return "capability";
+  if (!shareTokenFromRequest(request) && await resolveCapability(resolveViewer(request,resolved),site) === "owner") return "capability";
+  if (isAnonymousCreator(resolveViewer(request,resolved),site)) return "capability";
+  if (site.takenDownAt) return adminRead(request,resolved,site,audit);
+  if (site.visibility !== "private") return "public";
+  if (await requestShareAccess(request,site,resolved)) return "share";
+  return adminRead(request,resolved,site,audit);
 }
 
 /** The administrator's door, and the log row that comes with it (see recordAdminRead). */
-async function adminRead(request: Request, session: Session | null, site: Site): Promise<ReadAccess | null> {
+async function adminRead(request: Request, session: Session | null, site: Site, audit = true): Promise<ReadAccess | null> {
   const actor = await resolveAdmin(request, session);
   if (!actor) return null;
-  await recordAdminRead(request, actor, site);
+  if (audit) await recordAdminRead(request, actor, site);
   return "admin";
 }
 
-export async function canReadSite(request: Request, site: Site, session?: Session | null): Promise<boolean> {
-  return (await readAccess(request, site, session)) != null;
+export async function canReadSite(request: Request, site: Site, session?: Session | null, audit = true): Promise<boolean> {
+  return (await readAccess(request, site, session, audit)) != null;
 }
 
-/** Does one share admit this request? Same rules as resolveShareAccess, minus the token lookup. */
-async function admitsViewer(request: Request, share: ShareRow, session: Session | null): Promise<boolean> {
-  switch (share.policy) {
-    case "public":
-      return true;
-    case "login":
-      return session != null;
-    case "people": {
-      if (!session) return false;
-      const user = await getUser(session.userId);
-      return shareAdmits(share.id, session.userId, user?.emailVerified ? user.email : null);
-    }
-    case "passcode":
-      return hasPasscodeCookie(request, share);
-  }
+/** The link is an explicit credential, never inferred from another share's guest list. */
+export function shareTokenFromRequest(request: Request): string | null {
+  return request.headers.get("x-artifact-share") || new URL(request.url).searchParams.get("share");
+}
+export async function requestShareAccess(request: Request, site: Site, session?: Session | null): Promise<ShareRow | null> {
+  const token = shareTokenFromRequest(request);
+  if (!token) return null;
+  const access = await resolveShareAccess(request,token,{session});
+  return access.ok && access.share.siteId === site.id ? access.share : null;
+}
+/** A share grants exactly its fixed snapshot or the current version, never all history. */
+export async function canReadVersion(request: Request, site: Site, versionId: string, session?: Session | null): Promise<boolean> {
+  const version = await getVersion(versionId);
+  if (site.deletedAt || !version || version.siteId !== site.id || !(await tenantActive(site.tenantId))) return false;
+  return (await readableVersionFilter(request, site, session))(versionId);
+}
+/** Resolve one request's standing once, then filter this site's version rows in memory. */
+export async function readableVersionFilter(request: Request, site: Site, session?: Session | null): Promise<(id: string) => boolean> {
+  if (site.deletedAt || !(await tenantActive(site.tenantId))) return () => false;
+  const resolved = session === undefined ? await resolveSession(request) : session;
+  if (await accountSiteRole(site,resolved) || await managementRole(request,site,resolved) || isAnonymousCreator(resolveViewer(request,resolved),site)) return () => true;
+  if (!shareTokenFromRequest(request) && await resolveCapability(resolveViewer(request,resolved),site) === "owner") return () => true;
+  const share = await requestShareAccess(request,site,resolved);
+  if (share) return (id) => id === (share.versionId ?? site.currentVersionId);
+  const readable = await canReadSite(request,site,resolved,false);
+  return (id) => readable && id === site.currentVersionId;
 }
 
 // --- view log -----------------------------------------------------------------

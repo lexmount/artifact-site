@@ -27,12 +27,13 @@ export async function GET(request: Request): Promise<NextResponse> {
     // bucket (burst 20) would start answering 429 in the middle of someone typing a name. What
     // bounds it instead is the shape of the query — signed in, prefix-only, two characters minimum,
     // ten rows out.
-    if (!(await resolveSession(request))) throw new AuthError("Please sign in first");
+    const session = await resolveSession(request);
+    if (!session) throw new AuthError("Please sign in first");
 
     const q = (new URL(request.url).searchParams.get("q") ?? "").trim();
     if (q.length < MIN_QUERY_LENGTH) return json({ error: `The search term must be at least ${MIN_QUERY_LENGTH} characters`, users: [] }, 400);
 
-    const rows = await searchUsers(q, MAX_RESULTS);
+    const rows = await searchUsers(q, session.userId, MAX_RESULTS);
     // Three fields, and no more. The row also carries the provider subject, the avatar, timestamps
     // and the verified flag — none of which a picker needs, and the join key to the IdP is not
     // something to hand to every signed-in user for the sake of a dropdown.

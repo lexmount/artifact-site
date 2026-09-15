@@ -52,7 +52,7 @@ async function sqliteSchema(): Promise<Map<string, Set<string>>> {
  * `sites` and `versions` predate that array and are created inline in init().
  */
 function postgresSchema(): Map<string, Set<string>> {
-  const source = readFileSync(join(process.cwd(), "src/lib/db-postgres.ts"), "utf8");
+  const source = ["src/lib/db-postgres.ts", "src/lib/rbac-store.ts"].map(path => readFileSync(join(process.cwd(), path), "utf8")).join("\n");
   const out = new Map<string, Set<string>>();
 
   // Stop the body at the line that closes the paren, so a `REFERENCES users(id)` inside a column

@@ -78,6 +78,9 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate }: {
   // The create form. Defaults to "Signed-in users" — the most common intent, and tighter than public.
   const [creating, setCreating] = useState(false);
   const [policy, setPolicy] = useState<SharePolicy>("login");
+  const [mode,setMode] = useState<"view"|"comment"|"edit">("view");
+  const [versionId,setVersionId] = useState("");
+  const [versions,setVersions] = useState<{id:string;createdAt:number}[]>([]);
   const [label, setLabel] = useState("");
   const [expiry, setExpiry] = useState<ExpiryChoice>("never");
   const [draftPeople, setDraftPeople] = useState<PickedPerson[]>([]);
@@ -89,6 +92,8 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate }: {
       if (!res.ok) throw new Error(errorText(body, t("Failed to load share links")));
       const list = readShares(body);
       setShares(list);
+      const versionResponse = await fetch(`/api/sites/${slug}/versions`, {cache:"no-store"});
+      if (versionResponse.ok) setVersions((await versionResponse.json()).versions);
       // The people list comes with the list response (every "people" share carries its grants); there is no separate GET to pull.
       setGrants(Object.fromEntries(list.map((s) => [s.id, readListedGrants(s)])));
       setAsOf(Date.now());
@@ -113,7 +118,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate }: {
         method: "POST",
         headers: writeHeaders(),
         // expiresInDays, not a timestamp — with the wrong field name the API does not complain, it just treats the expiry as unset.
-        body: JSON.stringify({ policy, label: label.trim() || null, expiresInDays: expiryDaysFor(expiry) }),
+        body: JSON.stringify({ mode, versionId: versionId.trim() || null, policy, label: label.trim() || null, expiresInDays: expiryDaysFor(expiry) }),
       });
       const body: unknown = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(errorText(body, t("Failed to create")));
@@ -264,7 +269,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate }: {
             return (
               <li key={s.id} className={`share-link is-${state}`}>
                 <div className="share-link-head">
-                  <span className="kind-chip">{t(POLICY_SHORT[s.policy])}</span>
+                  <span className="kind-chip">{t(POLICY_SHORT[s.policy])} · {t(s.mode === "edit" ? "Can edit" : s.mode === "comment" ? "Can comment (coming next)" : "View only")}</span>
                   <span className={`share-link-state is-${state}`}>{t(SHARE_STATE_LABEL[state])}</span>
                   <b>{s.label?.trim() || t("Untitled")}</b>
                 </div>
@@ -298,6 +303,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate }: {
                   <div className="share-link-controls">
                     <label>
                       <span className="micro">{t("Who can open")}</span>
+                      <select aria-label={t("Link permissions")} value={s.mode ?? "view"} onChange={e=>void patchShare(s,{mode:e.target.value})}><option value="view">{t("View only")}</option><option value="comment">{t("Can comment (coming next)")}</option><option value="edit" disabled={!!s.versionId}>{t("Can edit")}</option></select>
                       <select value={s.policy} onChange={(e) => void patchShare(s, { policy: e.target.value as SharePolicy })}>
                         {SHARE_POLICY_MENU.map((p) => <option key={p} value={p}>{t(POLICY_LABEL[p])}</option>)}
                       </select>
@@ -351,6 +357,10 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate }: {
       {creating ? (
         <div className="share-new">
           <div className="field">
+            <label htmlFor="share-mode">{t("Link permissions")}</label>
+            <select id="share-mode" value={mode} onChange={e=>{setMode(e.target.value as typeof mode);if(e.target.value === "edit")setVersionId("");}}><option value="view">{t("View only")}</option><option value="comment">{t("Can comment (coming next)")}</option><option value="edit">{t("Can edit")}</option></select>
+            <p className="share-hint">{t("Editable links change this site for everyone following its latest version.")}</p>
+            <label htmlFor="share-version">{t("Shared version")}</label><select id="share-version" value={versionId} disabled={mode === "edit"} onChange={e=>setVersionId(e.target.value)}><option value="">{t("Follow latest version")}</option>{versions.map((v,i)=><option key={v.id} value={v.id}>{t("Version {n}",{n:versions.length-i})} · {new Date(v.createdAt).toLocaleString(locale)}</option>)}</select>
             <label htmlFor="share-new-policy">{t("Who can open this link")}</label>
             <select id="share-new-policy" value={policy} onChange={(e) => setPolicy(e.target.value as SharePolicy)}>
               {SHARE_POLICY_MENU.map((p) => <option key={p} value={p}>{t(POLICY_LABEL[p])}</option>)}

@@ -24,14 +24,17 @@ docker run --rm --entrypoint node "$image" -e '
   }
 '
 docker network create "$network" >/dev/null
-docker run -d --rm --name "$pg" --network "$network" \
+docker run -d --rm --name "$pg" --network "$network" -p 127.0.0.1::5432 \
   -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=test postgres:18-alpine >/dev/null
 for i in {1..60}; do
   if docker exec "$pg" pg_isready -U test -d test >/dev/null 2>&1; then break; fi
   if [ "$i" = 60 ]; then echo "Test Postgres did not become ready" >&2; exit 1; fi
   sleep 1
 done
-docker run -d --name "$app" --network "$network" -p 127.0.0.1::4300 \
+port="$(node -e 'const s=require("node:net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
+base="http://127.0.0.1:$port"
+docker run -d --name "$app" --network "$network" -p "127.0.0.1:$port:4300" \
+  -e "ARTIFACT_PUBLIC_URL=$base" \
   -e "ARTIFACT_DATABASE_URL=postgres://test:test@$pg:5432/test?sslmode=disable" \
   -e ARTIFACT_CREATE_POLICY=open -e ARTIFACT_DEFAULT_VISIBILITY=public \
   -e ARTIFACT_RATE_LIMIT=off -e PUBLISH_API_TOKEN=image-mcp-acceptance-token "$image" >/dev/null
@@ -50,3 +53,7 @@ code=$(head -c 26000000 /dev/zero | curl --http1.1 --max-time 30 -sS -o /dev/nul
 npm --prefix cli ci
 npm --prefix cli run build
 VIEWER_E2E_URL="$base" MCP_E2E_URL="$base" MCP_E2E_TOKEN=image-mcp-acceptance-token npx vitest run test/document-viewer.e2e.test.ts test/agent-guide.e2e.test.ts test/remote-mcp.integration.test.ts
+
+# Seed identities only in this disposable database, then exercise real role-aware browser pages.
+pg_port="$(docker port "$pg" 5432/tcp | awk -F: '{print $NF}')"
+RBAC_E2E_ADMIN_TOKEN=image-mcp-acceptance-token RBAC_E2E_URL="$base" ARTIFACT_DB_DRIVER=postgres ARTIFACT_DATABASE_URL="postgres://test:test@127.0.0.1:$pg_port/test?sslmode=disable" npx vitest run test/rbac.e2e.test.ts

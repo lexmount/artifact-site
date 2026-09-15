@@ -42,7 +42,7 @@ export default function AppShell({ children, section }: { children: ReactNode; s
     { href: "/me", label: t("My sites"), active: path.startsWith("/me") },
     { href: "/for-agents", label: t("Agent guide"), active: path.startsWith("/for-agents") },
   ];
-  if (isAdmin && section !== "admin") nav.push({ href: "/admin", label: t("Administration"), active: false });
+  if (isAdmin && section !== "admin") nav.push({ href: "/admin", label: t("Admin"), active: false });
 
   return (
     <>

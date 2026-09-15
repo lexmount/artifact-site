@@ -14,17 +14,18 @@ The deployment's `/for-agents#cli` and `/for-agents#mcp` pages provide copyable 
 ## Install
 
 ```bash
-# from the repository until the npm package is published (Node 24+)
-npm --prefix cli ci && npm --prefix cli run build && (cd cli && npm link)
+npm install -g @artifact-site/cli        # Node 24+
 artifact-site login --base https://your-artifact-site.example
 ```
 
-If `npm link` fails with `EACCES`, use a user-writable prefix instead (from the repository root):
+If the global install fails with `EACCES`, use a user-writable prefix instead:
 
 ```bash
-(cd cli && npm_config_prefix="$HOME/.local" npm link)
+npm_config_prefix="$HOME/.local" npm install -g @artifact-site/cli
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+To run the CLI from a checkout of this repository instead: `npm --prefix cli ci && npm --prefix cli run build && (cd cli && npm link)`.
 
 Keep that PATH entry in your shell startup file and restart your terminal or coding agent.
 Remote MCP uses the server URL, plus either the client's OAuth sign-in or an Authorization

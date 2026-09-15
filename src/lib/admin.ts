@@ -13,7 +13,7 @@ import { config } from "@/lib/config";
 import { policy } from "@/lib/settings";
 import { BadRequestError } from "@/lib/errors";
 import {
-  createId, expireAnonymousSites, getSite, getSiteBySlug, getUser, hasRecentAdminLog, insertAdminLog, listDeletedSitesBefore, restoreDeletedSite,
+  rbacTransaction, createId, expireAnonymousSites, getSite, getSiteBySlug, getUser, hasRecentAdminLog, insertAdminLog, listDeletedSitesBefore, restoreDeletedSite,
   revokeOauthTokensForUser, revokePublishTokensForUser, revokeUserSessions, setSitePurged, setSiteTakenDown, setUserDisabled, softDeleteSite,
 } from "@/lib/db";
 import { auditRequestMeta } from "@/lib/audit";
@@ -89,7 +89,12 @@ export async function disableUser(request: Request, actor: AdminActor, userId: s
   if (actor.kind === "user" && actor.userId === userId) throw new BadRequestError("You cannot disable your own account");
   if (isAdminUser(user)) throw new BadRequestError("Remove the address from ARTIFACT_ADMIN_EMAILS before disabling an administrator");
   const why = cleanReason(reason, true);
-  if (!(await setUserDisabled(userId, Date.now(), why))) throw new BadRequestError("The account is already disabled");
+  await rbacTransaction(async q => {
+    const stranded = await q("SELECT m.tenant_id FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.role='admin' AND t.disabled_at IS NULL AND NOT EXISTS (SELECT 1 FROM tenant_members other JOIN users u ON u.id=other.user_id WHERE other.tenant_id=m.tenant_id AND other.role='admin' AND other.user_id<>$1 AND u.disabled_at IS NULL)", [userId]);
+    if (stranded.length) throw new BadRequestError("Assign another active tenant administrator before disabling this account");
+    const changed = await q("UPDATE users SET disabled_at=$1,disabled_reason=$2 WHERE id=$3 AND disabled_at IS NULL RETURNING id", [Date.now(),why,userId]);
+    if (!changed.length) throw new BadRequestError("The account is already disabled");
+  });
   await revokeUserSessions(userId);
   await revokePublishTokensForUser(userId);
   await revokeOauthTokensForUser(userId);

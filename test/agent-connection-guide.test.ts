@@ -1,9 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import AgentConnectionGuide from "@/components/agent-connection-guide";
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { guideCommands } from "@/lib/agent-connection-guide";
 import { execFileSync } from "node:child_process";
@@ -48,21 +46,9 @@ it("encodes a supplied token only in the remote authorization header", () => {
   expect(config.command).toBeUndefined();
 });
 
-it("installs the source CLI into the global prefix rather than the repository", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "guide-install-"));
-  try {
-    const cli = path.join(root, "cli");
-    const prefix = path.join(root, "global");
-    mkdirSync(cli);
-    const pkg = { name: "guide-install-probe", version: "1.0.0", bin: { "artifact-site": "probe.js" }, scripts: { build: "node -e \"process.exit(0)\"" } };
-    writeFileSync(path.join(cli, "package.json"), JSON.stringify(pkg));
-    writeFileSync(path.join(cli, "package-lock.json"), JSON.stringify({ name: pkg.name, version: pkg.version, lockfileVersion: 3, packages: { "": pkg } }));
-    writeFileSync(path.join(cli, "probe.js"), "#!/usr/bin/env node\nconsole.log('guide-install-ok')\n", { mode: 0o755 });
-    const env = { ...process.env, npm_config_prefix: prefix, npm_config_audit: "false", npm_config_fund: "false", PATH: `${prefix}/bin:${process.env.PATH}` };
-    const output = execFileSync("bash", ["-ec", `${guideCommands("https://sites.example").install}\nartifact-site`], { cwd: root, env, encoding: "utf8", timeout: 20000 });
-    expect(output).toContain("guide-install-ok");
-  } finally { rmSync(root, { recursive: true, force: true }); }
-}, 25000);
+it("installs the published package, not a checkout", () => {
+  expect(guideCommands("https://sites.example").install).toBe("npm install -g @artifact-site/cli");
+});
 
 it("offers sign-in from the client first where OIDC exists, and only the token path without it", () => {
   const render = (oidcEnabled: boolean) => renderToStaticMarkup(createElement(AgentConnectionGuide, { base: "https://sites.example", oidcEnabled }));

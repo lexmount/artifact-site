@@ -22,7 +22,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     // row is theirs until it is purged; the capability gate below still decides who may ask.
     const site = await getSiteBySlug(slug);
     if (!site) return json({ error: "site not found" }, 404);
-    await requireCapability(request, site, "owner");
+    await requireCapability(request, site, "manage");
     // One more than the page so the response can say whether older rows exist.
     const rows = await listAdminLog({ targetId: site.id, limit: LIMIT + 1 });
     const entries = rows.slice(0, LIMIT).map((e) => ({ id: e.id, action: e.action, at: e.createdAt, reason: e.reason }));

@@ -1,3 +1,4 @@
+import { setSiteOwnerIfUnowned } from "./fixtures/legacy-identity";
 // Console settings: precedence (console > environment > default), validation, the cache, the
 // API and its log row — and the one behaviour they exist for: anonymous creators kept to reading
 // until they sign in. SQLite here; the CI integration job runs this file on Postgres too.
@@ -5,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDbForTests, getSite, listAdminLog, setSiteOwnerIfUnowned, upsertUser } from "@/lib/db";
+import { closeDbForTests, getSite, listAdminLog, upsertUser } from "@/lib/db";
 import { describePermissions } from "@/lib/authz";
 import { mintSession } from "@/lib/session";
 import { createSite } from "@/lib/sites";
@@ -122,7 +123,7 @@ describe("anonymous creators kept to reading", () => {
     const siteRow = ((await own.json()) as { site: { id: string } }).site;
     const perms = await describePermissions(req(`/s/${slug}`, { headers: creator }), (await getSite(siteRow.id))!);
     expect(perms).toMatchObject({ canEditContent: false, canManageSharing: false, canDelete: false, needsLogin: true });
-    expect(perms.reason).toMatch(/Sign in to edit and share/);
+    expect(perms.reason).toMatch(/Sign in and explicitly claim/);
 
     expect((await EDIT(req(`/api/sites/${slug}/edit`, { method: "POST", headers: creator, body: { content: "<title>x</title>" } }), params({ slug }))).status).toBe(403);
     expect((await SHARES(req(`/api/sites/${slug}/shares`, { method: "POST", headers: creator, body: { policy: "public" } }), params({ slug }))).status).toBe(403);

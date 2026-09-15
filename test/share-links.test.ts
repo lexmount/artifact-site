@@ -299,7 +299,9 @@ describe("whom each policy admits and whom it refuses", () => {
 
     expect(await canReadSite(reader(), priv, null)).toBe(false);
     const grant = cookiePair(await unlockJson(share.token, share.passcode!));
-    expect(await canReadSite(reader(grant), priv, null)).toBe(true);
+    expect(await canReadSite(reader(grant), priv, null)).toBe(false);
+    const scoped = reader(grant); scoped.headers.set("x-artifact-share", share.token);
+    expect(await canReadSite(scoped, priv, null)).toBe(true);
   });
 });
 
@@ -596,9 +598,10 @@ describe("fork does not ride along on read permission", () => {
     const stranger = await signIn("Stranger");
     const site = await siteOwnedBy(owner);
     await updateSiteSharing(site.id, "private", "owner");
-    await mint(site, owner, { policy: "login" });
+    const share = await mint(site, owner, { policy: "login" });
 
     const asStranger = reader(stranger.cookie);
+    asStranger.headers.set("x-artifact-share", share.token);
     expect(await canReadSite(asStranger, (await getSiteView(site.slug))!.site)).toBe(true);
 
     const res = await forkPOST(write(`/api/sites/${site.slug}/fork`, stranger.cookie, "POST"), params({ slug: site.slug }));

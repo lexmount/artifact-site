@@ -248,8 +248,8 @@ function jsonResponse(status: number, payload: Record<string, unknown>): Preview
  * (SPA-friendly), while a missing real asset (has an extension) is a 404.
  *
  * `versionId` optionally pins the read to an earlier version of THIS site (read-only history preview).
- * A value that is missing, unknown, or belongs to another site is ignored and the current version is
- * served — so a plain cache-buster like `?v=3` keeps working. All path guards + CSP stay identical.
+ * Missing selects the current version. Unknown, foreign, or unauthorized ids return 404.
+ * `v` is reserved for version ids; use `r` for cache busting. All path guards + CSP stay identical.
  */
 /** Audio/video: honour Range, and **the first request without a Range also gets only a slice** -- browser media stacks handle a 206 first chunk well. */
 const MEDIA_TYPES = new Set([".mp4", ".webm", ".mp3", ".wav", ".ogg", ".mov", ".m4a"]);
@@ -309,7 +309,8 @@ export async function servePreviewFile(
   let version = await getCurrentVersion(slug);
   if (versionId) {
     const pinned = await getVersion(versionId);
-    if (pinned && pinned.siteId === site.id) version = pinned;
+    if (!pinned || pinned.siteId !== site.id) return jsonResponse(404, { error: "version not found" });
+    version = pinned;
   }
   if (!version) return jsonResponse(404, { error: "site has no current version" });
   const storage = getStorage();

@@ -73,7 +73,7 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
           {/* Only administrators see the entry; /admin itself answers 404 to anyone else. */}
           {isAdmin && (
             <Link className="auth-menu-item" role="menuitem" href="/admin" onClick={() => setOpen(false)}>
-              <ShieldCheck size={14} /> {t("Administration")}
+              <ShieldCheck size={14} /> {t("Admin")}
             </Link>
           )}
           <hr className="hairline" />

@@ -30,6 +30,10 @@ Les outils d'IA produisent chaque jour davantage de travail fini : graphiques in
 
 **artifact-site rassemble ce travail sur votre propre serveur, sous forme de liens que vous pouvez partager, mettre à jour et rechercher.** Voyez-le comme un espace de travail auto-hébergé pour les artefacts de votre équipe, comparable à Claude Artifacts ou OpenAI Sites : vos outils d'IA ou vos outils internes créent le travail, artifact-site le publie et le gère. Téléversez du HTML, des sites statiques ou des documents pour que votre équipe puisse les consulter en ligne, en contrôler l'accès et en conserver les révisions. Les agents de codage peuvent eux aussi publier, mettre à jour, rechercher et lire le travail existant.
 
+> **[Essayer la démo en ligne](https://artifact-site.app.lexmount.com/)** — aucune installation requise. Glissez-déposez un fichier pour le publier et obtenir un lien de partage, sans vous connecter.
+>
+> Les envois anonymes expirent après quelques jours. Il s'agit d'une démo publique : merci de ne pas y déposer d'informations sensibles.
+
 <p align="center"><img src="assets/demo.gif" alt="Un tableau de bord HTML déposé sur artifact-site : il devient un lien en quelques secondes, s'affiche dans un cadre isolé, et le panneau de partage copie le lien" width="820"></p>
 <p align="center"><sub><b>Déposez un fichier, obtenez un lien, partagez-le.</b> Consultez votre travail publié en ligne et choisissez qui peut l'ouvrir dans les réglages de partage.</sub></p>
 
@@ -103,7 +107,7 @@ Publie la sortie de ce projet sur artifact-site. Guide de publication : https://
 
 Les déploiements d'équipe avec OIDC prennent en charge l'approbation de connexion d'appareil ; l'installation locale anonyme ci-dessus n'en a pas besoin. L'agent suit le guide et la politique de publication du serveur pour choisir l'authentification. Un agent dans le cloud ne peut pas atteindre directement `127.0.0.1` sur votre ordinateur.
 
-La CLI requiert Node 24+. En attendant la publication du paquet npm, suivez les [instructions d'installation de la CLI](../cli/README.md) pour la compiler et l'installer depuis la source, puis exécutez :
+La CLI requiert Node 24+. Installez-la avec `npm install -g @artifact-site/cli` (détails et configuration MCP : [cli/README.md](../cli/README.md)), puis exécutez :
 
 ```bash
 artifact-site login --base https://your-server        # connexion d'appareil, une seule fois

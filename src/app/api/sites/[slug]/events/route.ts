@@ -13,7 +13,7 @@
 //   request.signal          Next aborts it when the reader leaves; everything unsubscribes there.
 import { listVersions } from "@/lib/db";
 import { getSiteView } from "@/lib/sites";
-import { canReadSite } from "@/lib/share";
+import { requestShareAccess, canReadSite } from "@/lib/share";
 import { checkRateLimit, clientKey } from "@/lib/ratelimit";
 import { rateLimit as rateLimitCfg } from "@/lib/config";
 import { subscribeSiteVersion } from "@/lib/site-events";
@@ -77,6 +77,8 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     if (!view) return json({ error: "site not found" }, 404);
     if (!(await canReadSite(request, view.site))) return json({ error: "site not found" }, 404);
 
+    const share = await requestShareAccess(request,view.site);
+    if(share?.versionId) return json({error:"Fixed-version links do not expose current-version events"},403);
     const encoder = new TextEncoder();
     const siteId = view.site.id;
     let unsubscribe: (() => void) | null = null;
@@ -98,13 +100,19 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
         // falls back to polling if it never lands. `retry` also sets the browser's reconnect gap.
         send(`retry: 5000\nevent: hello\ndata: ${JSON.stringify({ slug })}\n\n`);
 
+        const authorized = async () => {
+          const fresh=await getSiteView(slug);
+          return !!fresh && await canReadSite(request,fresh.site,undefined,false) && !(await requestShareAccess(request,fresh.site))?.versionId;
+        };
+        const close=()=>{if(keepalive)clearInterval(keepalive);unsubscribe?.();try{controller.close();}catch{ /* already closed */ }};
         unsubscribe = subscribeSiteVersion(siteId, (event) => {
-          // versionNumber is a courtesy for the toast («Artifact updated to v5»); the id is the truth.
-          void versionOrdinal(siteId, event.versionId)
-            .then((n) => send(`event: version\ndata: ${JSON.stringify({ slug, versionId: event.versionId, versionNumber: n })}\n\n`))
-            .catch(() => send(`event: version\ndata: ${JSON.stringify({ slug, versionId: event.versionId })}\n\n`));
+          void authorized().then(async ok=>{
+            if(!ok){close();return;}
+            const n=await versionOrdinal(siteId,event.versionId);
+            send(`event: version\ndata: ${JSON.stringify({slug,versionId:event.versionId,versionNumber:n})}\n\n`);
+          }).catch(close);
         });
-        keepalive = setInterval(() => send(": keepalive\n\n"), KEEPALIVE_MS);
+        keepalive = setInterval(()=>{void authorized().then(ok=>ok?send(": keepalive\n\n"):close()).catch(close);}, KEEPALIVE_MS);
 
         request.signal.addEventListener("abort", () => {
           if (keepalive) clearInterval(keepalive);

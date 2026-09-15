@@ -1,3 +1,4 @@
+import { setSiteOwnerIfUnowned } from "./fixtures/legacy-identity";
 // Per-owner caps and the anonymous-site clock. Caps are checked at every path that adds a site
 // or a version — one test per path, so a new write route cannot slip past them unnoticed — and
 // against stored usage, so deleted sites stop counting as sites but their versions still count
@@ -6,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDbForTests, getSiteBySlug, ownerUsage, restoreDeletedSite, setSiteOwnerIfUnowned, upsertUser, listAdminLog } from "@/lib/db";
+import { closeDbForTests, getSiteBySlug, ownerUsage, restoreDeletedSite, upsertUser, listAdminLog } from "@/lib/db";
 import { createSite, deleteSite, editSite, forkSite, getSiteView, replaceSiteContent, rollbackTo } from "@/lib/sites";
 import { anonymousExpiresAt, assertQuotaRoom } from "@/lib/quota";
 import { expireAnonymousSitesJob, purgeDeletedSites } from "@/lib/admin";

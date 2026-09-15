@@ -1,6 +1,8 @@
-# Tag `vX.Y.Z` → multi-arch image on GHCR. `make pull` with ARTIFACT_IMAGE=ghcr.io/<owner>/artifact-site:X.Y.Z
-# then runs it without a local build.
-name: Release image
+# Tag `vX.Y.Z` → multi-arch image on GHCR (`make pull` with ARTIFACT_IMAGE=ghcr.io/<owner>/artifact-site:X.Y.Z
+# then runs it without a local build) and, when cli/package.json carries a version npm does not have yet,
+# `@artifact-site/cli` on npm — via npm's trusted publishing (this repository + this workflow file are
+# registered as the package's publisher on npmjs.com), so no token is stored here.
+name: Release
 
 on:
   push:
@@ -11,7 +13,8 @@ permissions:
   packages: write
 
 jobs:
-  publish:
+  image:
+    name: image on GHCR
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,3 +42,23 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  npm:
+    name: "@artifact-site/cli on npm"
+    # Tags are pushed in the public repository; a matching tag here must not attempt a publish.
+    if: github.repository == 'lexmount/artifact-site'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # trusted publishing: npm verifies the OIDC token from this workflow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11 # trusted publishing needs npm 11.5+; stay on the tested major
+      - run: npm --prefix cli ci
+      - run: npm --prefix cli test
+      - name: Publish, unless this version is already on npm (prereleases go to the `next` tag)
+        run: scripts/publish-cli.sh
