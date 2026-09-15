@@ -2,10 +2,9 @@
 // is actually advertised to the IdP is config.oidcRedirectPath; the handler itself is identical on
 // all of them, so an alias can never be a weaker door than the canonical one.
 import { NextResponse } from "next/server";
-import { adoptAnonymousSites, upsertUser } from "@/lib/db";
+import { upsertUser } from "@/lib/db";
 import { clearFlowCookie, completeLogin, OidcError } from "@/lib/oidc";
 import { mintSession } from "@/lib/session";
-import { anonIdFromRequest } from "@/lib/anon";
 import { config } from "@/lib/config";
 
 export async function handleOidcCallback(request: Request): Promise<NextResponse> {
@@ -28,10 +27,8 @@ export async function handleOidcCallback(request: Request): Promise<NextResponse
     throw new OidcError(`This account has been disabled by an administrator${user.disabledReason ? `: ${user.disabledReason}` : ""}.`, 403);
   }
 
-  // Everything this browser made anonymously now belongs to the account. One statement, and it
-  // only touches rows still unowned — a site already claimed by someone is never pulled away.
-  const anonId = anonIdFromRequest(request);
-  const adopted = anonId ? await adoptAnonymousSites(anonId, user.id) : 0;
+  // Claiming now requires an explicit destination tenant on the account page.
+  const adopted = 0;
 
   const { cookie } = await mintSession(request, user.id, {
     oidcSid: claims.sid,

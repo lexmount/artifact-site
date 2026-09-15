@@ -426,7 +426,7 @@ describe("private is now a real option", () => {
   });
 
   it("with private selected, 'anyone signed in can edit' is disabled — the server answers 400 for this combination", () => {
-    expect(panel).toContain('disabled={visibility === "private"}');
+    expect(panel).not.toContain('<option value="login"');
     expect(EDIT_POLICY_LOCK_NOTICE).toContain("deadlock");
   });
 });

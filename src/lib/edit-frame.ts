@@ -19,7 +19,7 @@
 import { config } from "@/lib/config";
 import { createId, getVersion } from "@/lib/db";
 import { injectVisualEditor, withConnectSrcMeta } from "@/lib/preview";
-import { mintPreviewKey, previewBaseHref } from "@/lib/preview-key";
+import { previewBaseHref } from "@/lib/preview-key";
 import { getStorage } from "@/lib/storage";
 import { markEditableText, scriptPrecedesHead } from "@/lib/text-writeback";
 import type { Site, Version } from "@/lib/types";
@@ -54,6 +54,7 @@ export async function buildEditFrame(
   view: { site: Site; version: Version },
   slug: string,
   requestedVersion: string | null,
+  resourceKey: string | null = null,
 ): Promise<EditFrameResult> {
   // A document site's entry is a generated wrapper page; editing it visually is meaningless (the
   // next upload would overwrite it) and the original is binary. Same boundary as editSite:
@@ -113,7 +114,7 @@ export async function buildEditFrame(
     // through the path — the same mechanism as the main preview (lib/preview-key).
     injectVisualEditor(
       markEditableText(html),
-      previewBaseHref(slug, view.site.visibility === "private" ? mintPreviewKey(view.site) : null),
+      previewBaseHref(slug, resourceKey),
       nonce,
     ),
     config.cspConnectSrc,

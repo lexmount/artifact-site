@@ -13,7 +13,7 @@ import { AuthError } from "@/lib/auth";
 import { requireActor } from "@/lib/authz";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { csrfSafe } from "@/lib/session";
-import { canReadSite } from "@/lib/share";
+import { readableVersionFilter, canReadSite } from "@/lib/share";
 import { getSiteView, listVersions, replaceDocument, replaceSiteContent, siteUrl } from "@/lib/sites";
 import { auditRequestMeta, type AuditContext } from "@/lib/audit";
 import { errorResponse, json, parseExpectedVersion, parseUploadInput, versionConflictResponse } from "../../../_util";
@@ -39,7 +39,9 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const versions = await listVersions(slug);
     if (!versions) return json({ error: "site not found" }, 404);
     const currentVersionId = versions.find((v) => v.current)?.id ?? null;
-    return json({ versions, currentVersionId });
+    const allows = await readableVersionFilter(request, view.site);
+    const readable = versions.filter(v => allows(v.id));
+    return json({ versions: readable, currentVersionId: readable.some(v=>v.id===currentVersionId)?currentVersionId:null });
   } catch (error) {
     return errorResponse(error);
   }

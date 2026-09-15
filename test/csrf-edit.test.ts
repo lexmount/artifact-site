@@ -1,3 +1,4 @@
+import { setSiteOwnerIfUnowned } from "./fixtures/legacy-identity";
 // CSRF on the edit route is scoped to AMBIENT credentials — a cookie the browser attaches on its
 // own. A signed-in session must therefore be same-origin. A per-site token or the admin Bearer is
 // set deliberately by the caller (an attacker's page cannot add either header), so it is CSRF-immune
@@ -8,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDbForTests, setSiteOwnerIfUnowned, upsertUser } from "@/lib/db";
+import { closeDbForTests, upsertUser } from "@/lib/db";
 import { mintSession } from "@/lib/session";
 import { createSite } from "@/lib/sites";
 import { POST as editPOST } from "@/app/api/sites/[slug]/edit/route";

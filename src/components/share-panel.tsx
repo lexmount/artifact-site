@@ -23,15 +23,16 @@ import ShareLinks from "@/components/share-links";
 import { EDIT_POLICY_LABEL, EDIT_POLICY_LOCK_NOTICE, VISIBILITY_LABEL, reconcileSharing } from "@/components/share-model";
 import type { EditPolicy, Visibility } from "@/lib/types";
 
-interface Collaborator { userId: string; email: string | null; displayName: string | null }
+interface Collaborator { role?: "admin" | "editor"; userId: string; email: string | null; displayName: string | null }
 
 /** Writes are cookie-authenticated, so the server checks Origin exactly on each one. */
 const writeHeaders = () => ({ "content-type": "application/json", origin: window.location.origin });
 
-export default function SharePanel({ slug, onOpenChange }: {
+export default function SharePanel({ slug, onOpenChange, canManageAdmins = false }: {
   slug: string;
   /** While the drawer is open the parent must stop auto-collapsing the action bar — see the drawerHost comment in version-history. */
   onOpenChange?: (open: boolean) => void;
+  canManageAdmins?: boolean;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -46,6 +47,7 @@ export default function SharePanel({ slug, onOpenChange }: {
   const [editPolicy, setEditPolicy] = useState<EditPolicy>("owner");
   const [people, setPeople] = useState<Collaborator[]>([]);
   const [email, setEmail] = useState("");
+  const [memberRole, setMemberRole] = useState<"admin" | "editor">("editor");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
@@ -114,7 +116,7 @@ export default function SharePanel({ slug, onOpenChange }: {
     if (!value) return;
     setError(null);
     const res = await fetch(`/api/sites/${slug}/collaborators`, {
-      method: "POST", headers: writeHeaders(), body: JSON.stringify({ email: value }),
+      method: "POST", headers: writeHeaders(), body: JSON.stringify({ email: value, role: memberRole }),
     });
     const body = await res.json();
     if (!res.ok) {
@@ -122,14 +124,15 @@ export default function SharePanel({ slug, onOpenChange }: {
       setError(body.code === "user_not_found" ? t("This email has not signed in here yet. Ask them to sign in once first.") : (body.error ?? t("Failed to add")));
       return;
     }
-    setPeople((p) => [...p, body]);
+    setPeople((p) => [...p.filter(x => x.userId !== body.userId), body]);
     setEmail("");
   }
 
   async function removePerson(userId: string) {
-    await fetch(`/api/sites/${slug}/collaborators?userId=${encodeURIComponent(userId)}`, {
+    const res = await fetch(`/api/sites/${slug}/collaborators?userId=${encodeURIComponent(userId)}`, {
       method: "DELETE", headers: writeHeaders(),
     });
+    if (!res.ok) { setError((await res.json()).error ?? t("Request failed")); return; }
     setPeople((p) => p.filter((x) => x.userId !== userId));
   }
 
@@ -183,14 +186,15 @@ export default function SharePanel({ slug, onOpenChange }: {
                         onChange={(e) => setEmail(e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter") void addPerson(); }}
                       />
+                      {canManageAdmins && <select aria-label={t("Site role")} value={memberRole} onChange={e=>setMemberRole(e.target.value as "admin" | "editor")}><option value="editor">{t("Collaborator")}</option><option value="admin">{t("Site administrator")}</option></select>}
                       <button className="btn" onClick={() => void addPerson()} aria-label={t("Add collaborator")}><UserPlus size={14} /></button>
                     </div>
                     {people.length > 0 && (
                       <ul className="share-people">
                         {people.map((p) => (
                           <li key={p.userId}>
-                            <span>{p.displayName || p.email || p.userId}</span>
-                            <button className="btn" aria-label={t("Remove")} onClick={() => void removePerson(p.userId)}>
+                            <span>{p.displayName || p.email || p.userId} · {t(p.role === "admin" ? "Site administrator" : "Collaborator")}</span>
+                            <button className="btn" disabled={p.role === "admin" && !canManageAdmins} aria-label={t("Remove")} onClick={() => void removePerson(p.userId)}>
                               <Trash2 size={14} />
                             </button>
                           </li>
@@ -229,15 +233,14 @@ export default function SharePanel({ slug, onOpenChange }: {
                       <span className="share-row-icon" aria-hidden="true"><Pencil size={16} /></span>
                       <div className="share-row-text">
                         <label htmlFor="share-policy">{t("Who can edit")}</label>
-                        <p>{t("Even when open to signed-in users, they can only change the content; renaming, rollback, deletion and sharing stay yours alone.")}</p>
+                        <p>{t("Members and editable share links grant editing. Signing in alone does not.")}</p>
                       </div>
                       <select
                         id="share-policy" value={editPolicy}
                         onChange={(e) => void save({ visibility, editPolicy: e.target.value as EditPolicy })}
                       >
                         <option value="owner">{t(EDIT_POLICY_LABEL.owner)}</option>
-                        {/* Private × all signed-in users may edit = can change but cannot see; the server rejects it outright. Greyed out rather than letting the user run into a 400. */}
-                        <option value="login" disabled={visibility === "private"}>{t(EDIT_POLICY_LABEL.login)}</option>
+
                       </select>
                     </div>
                   </section>

@@ -88,6 +88,7 @@ export function __resetWarnedForTests(): void {
 }
 
 export const config = {
+  get previewSigningSecret(): string { return process.env.PREVIEW_SIGNING_SECRET?.trim() || ""; },
   /** Root of all on-disk state: sites/<siteId>/<versionId>/… (and the test suite's sqlite file). */
   get dataDir(): string {
     return absoluteFromProject(process.env.ARTIFACT_DATA_DIR || ".data");

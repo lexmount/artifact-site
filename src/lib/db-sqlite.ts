@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { searchTenantUsers, migrateRbac, initializeUserTenant, type RbacQuery } from "@/lib/rbac-store";
 import { isDeepStrictEqual } from "node:util";
 // SQLite metadata backend (node:sqlite). Node-local, single-writer — the default. Methods are
 // async to satisfy the MetadataStore interface, but the underlying calls are synchronous.
@@ -105,7 +107,41 @@ function toShareGrantRow(row: Row): ShareGrant {
 }
 
 export class SqliteStore implements MetadataStore {
+  private operationContext = new AsyncLocalStorage<{ active: boolean }>();
+  private operationQueue: Promise<unknown> = Promise.resolve();
+  constructor() {
+    // SQLite has one connection. An async transaction owns it across every await;
+    // unrelated reads and writes must wait, while nested store calls may re-enter.
+    for (const name of [...Object.getOwnPropertyNames(SqliteStore.prototype), "rbacQuery"]) {
+      if (name === "constructor") continue;
+      const method = Reflect.get(this, name);
+      if (typeof method !== "function" || method.constructor.name !== "AsyncFunction") continue;
+      Reflect.set(this, name, (...args: unknown[]) => {
+        if (this.operationContext.getStore()?.active) return method.apply(this, args);
+        const run = this.operationQueue.then(() => {
+          const context = { active: true };
+          return this.operationContext.run(context, async () => {
+            try { return await method.apply(this, args); }
+            finally { context.active = false; }
+          });
+        });
+        this.operationQueue = run.catch(() => undefined);
+        return run;
+      });
+    }
+  }
   private db!: DatabaseSync;
+  rbacQuery: RbacQuery = async (sql, params = []) => {
+    const values: (string | number | null)[] = [];
+    const query = sql.replace(/\$(\d+)/g, (_, n: string) => { values.push(params[Number(n) - 1]); return "?"; });
+    return this.db.prepare(query).all(...values) as Row[];
+  };
+  /** Never await network/request I/O inside work: it owns the entire connection. */
+  async rbacTransaction<T>(work: (q: RbacQuery) => Promise<T>): Promise<T> {
+    this.db.exec("BEGIN IMMEDIATE");
+    try { const value = await work(this.rbacQuery); this.db.exec("COMMIT"); return value; }
+    catch (e) { this.db.exec("ROLLBACK"); throw e; }
+  }
 
   async init(): Promise<void> {
     const dbFile = dataPath("sites.sqlite");
@@ -455,6 +491,11 @@ export class SqliteStore implements MetadataStore {
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_sites_owner ON sites(owner_id, updated_at DESC) WHERE deleted_at IS NULL");
     this.db.exec("DROP INDEX IF EXISTS idx_sessions_active");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_sites_anon_owner ON sites(anon_owner_id) WHERE anon_owner_id IS NOT NULL AND deleted_at IS NULL");
+    this.addColumnIfMissing("sites", "tenant_id", "TEXT NOT NULL DEFAULT 'anonymous'");
+    this.addColumnIfMissing("site_shares", "mode", "TEXT NOT NULL DEFAULT 'view' CHECK (mode IN ('view','comment','edit'))");
+    this.addColumnIfMissing("site_shares", "version_id", "TEXT REFERENCES versions(id)");
+    this.addColumnIfMissing("upload_sessions", "tenant_id", "TEXT");
+    await this.rbacTransaction(migrateRbac);
     await this.backfillEditTokens();
   }
 
@@ -482,8 +523,8 @@ export class SqliteStore implements MetadataStore {
     const now = Date.now();
     this.db.exec("BEGIN");
     try {
-      this.db.prepare("INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, claim_token, anon_owner_id, owner_id, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)")
-        .run(site.id, site.slug, site.title, site.kind, version.id, now, now, site.editToken, site.claimToken ?? null, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility);
+      this.db.prepare("INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, claim_token, anon_owner_id, owner_id, visibility, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)")
+        .run(site.id, site.slug, site.title, site.kind, version.id, now, now, site.editToken, site.claimToken ?? null, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, site.tenantId ?? (site.ownerId ? "init" : "anonymous"));
       this.db.prepare("INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now);
       if (audit) this.writeAuditRow(audit, now);
@@ -615,12 +656,12 @@ export class SqliteStore implements MetadataStore {
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
-      WHERE s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
         AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL)
-             OR s.owner_id = ?
+             OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = ?)
-             OR EXISTS (SELECT 1 FROM site_collaborators c
-                         WHERE c.site_id = s.id AND c.user_id = ?))
+             OR EXISTS (SELECT 1 FROM site_members c
+                         WHERE c.site_id = s.id AND c.user_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
       ORDER BY s.updated_at DESC
     `).all(viewer?.userId ?? null, viewer?.anonId ?? null, viewer?.userId ?? null) as Row[];
     return rows.map(toSummary);
@@ -666,7 +707,8 @@ export class SqliteStore implements MetadataStore {
           input.emailVerified ? 1 : 0, input.displayName ?? null, input.avatarUrl ?? null, now, now, now);
     const row = this.db.prepare("SELECT * FROM users WHERE auth_provider=? AND provider_subject=?")
       .get(input.authProvider, input.providerSubject) as Row;
-    return toUser(row);
+    await this.rbacTransaction((q) => initializeUserTenant(q, row.id as string));
+    return (await this.getUser(row.id as string))!;
   }
 
   async getUser(id: string): Promise<User | null> {
@@ -679,28 +721,12 @@ export class SqliteStore implements MetadataStore {
     return row ? toUser(row) : null;
   }
 
-  async searchUsers(q: string, limit: number): Promise<User[]> {
-    // `%` and `_` are LIKE wildcards, so an unescaped query is not a prefix search: a lone `%`
-    // would return the whole account list. ESCAPE is spelled out rather than left to the default
-    // because SQLite has none — without it the backslashes below would be matched literally.
-    const pattern = `${q.replace(/[\\%_]/g, "\\$&")}%`;
-    const rows = this.db.prepare(
-      `SELECT * FROM users
-        WHERE lower(display_name) LIKE lower(?) ESCAPE '\\'
-           OR (email_verified = 1 AND lower(email) LIKE lower(?) ESCAPE '\\')
-        ORDER BY COALESCE(last_login_at, 0) DESC, id
-        LIMIT ?`,
-    ).all(pattern, pattern, limit) as Row[];
-    return rows.map(toUser);
-  }
-
-  async addCollaborator(siteId: string, userId: string, grantedBy: string | null): Promise<void> {
-    this.db.prepare("INSERT OR IGNORE INTO site_collaborators (site_id, user_id, role, granted_by, granted_at) VALUES (?,?,'editor',?,?)")
-      .run(siteId, userId, grantedBy, Date.now());
+  async searchUsers(q: string, viewerId: string, limit: number): Promise<User[]> {
+    return (await searchTenantUsers(this.rbacQuery, q, viewerId, limit)).map(toUser);
   }
 
   async removeCollaborator(siteId: string, userId: string): Promise<void> {
-    this.db.prepare("DELETE FROM site_collaborators WHERE site_id=? AND user_id=?").run(siteId, userId);
+    this.db.prepare("DELETE FROM site_members WHERE site_id=? AND user_id=?").run(siteId, userId);
   }
 
   async updateSiteSharing(siteId: string, visibility: Visibility, editPolicy: EditPolicy): Promise<void> {
@@ -709,7 +735,7 @@ export class SqliteStore implements MetadataStore {
   }
 
   async listCollaborators(siteId: string): Promise<SiteCollaborator[]> {
-    return (this.db.prepare("SELECT * FROM site_collaborators WHERE site_id=? ORDER BY granted_at").all(siteId) as Row[]).map(toCollaborator);
+    return (this.db.prepare("SELECT * FROM site_members WHERE site_id=? ORDER BY granted_at").all(siteId) as Row[]).map(toCollaborator);
   }
 
   // --- share links -------------------------------------------------------------
@@ -720,10 +746,10 @@ export class SqliteStore implements MetadataStore {
   async createShare(input: InsertShareInput): Promise<Share> {
     const now = Date.now();
     this.db.prepare(
-      `INSERT INTO site_shares (id, site_id, token_hash, policy, passcode_hash, label, created_by, created_anon, created_at, expires_at, revoked_at, allow_ai)
-       VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?)`,
+      `INSERT INTO site_shares (id, site_id, token_hash, policy, passcode_hash, label, created_by, created_anon, created_at, expires_at, revoked_at, allow_ai, mode, version_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?,?)`,
     ).run(input.id, input.siteId, input.tokenHash, input.policy, input.passcodeHash ?? null, input.label ?? null,
-          input.createdBy ?? null, input.createdAnonId ?? null, now, input.expiresAt ?? null, input.allowAi ? 1 : 0);
+          input.createdBy ?? null, input.createdAnonId ?? null, now, input.expiresAt ?? null, input.allowAi ? 1 : 0, input.mode ?? "view", input.versionId ?? null);
     // Read back rather than reconstruct, so the returned object is the stored row (the Postgres side
     // gets this from RETURNING *). toShare, never toShareRow: the two hashes stay in the store.
     const row = this.db.prepare("SELECT * FROM site_shares WHERE id=?").get(input.id) as Row;
@@ -918,18 +944,12 @@ export class SqliteStore implements MetadataStore {
     return Number(r.changes ?? 0);
   }
 
-  async setSiteOwnerIfUnowned(siteId: string, ownerId: string): Promise<boolean> {
-    const r = this.db.prepare("UPDATE sites SET owner_id=?, updated_at=? WHERE id=? AND owner_id IS NULL AND deleted_at IS NULL")
-      .run(ownerId, Date.now(), siteId);
-    return Number(r.changes ?? 0) > 0;
-  }
-
   async claimSiteAudited(siteId: string, ownerId: string, audit: InsertAuditInput, adminLog?: AdminLogEntry): Promise<boolean> {
     const now = Date.now();
     this.db.exec("BEGIN");
     try {
-      const r = this.db.prepare("UPDATE sites SET owner_id=?, updated_at=? WHERE id=? AND owner_id IS NULL AND deleted_at IS NULL")
-        .run(ownerId, now, siteId);
+      const r = this.db.prepare("UPDATE sites SET owner_id=?, tenant_id=CASE WHEN tenant_id='anonymous' THEN 'init' ELSE tenant_id END, updated_at=? WHERE id=? AND owner_id IS NULL AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members tm JOIN users u ON u.id=tm.user_id JOIN tenants t ON t.id=tm.tenant_id WHERE tm.user_id=? AND tm.tenant_id=CASE WHEN sites.tenant_id='anonymous' THEN 'init' ELSE sites.tenant_id END AND u.disabled_at IS NULL AND t.disabled_at IS NULL)")
+        .run(ownerId, now, siteId, ownerId);
       if (Number(r.changes ?? 0) === 0) {
         this.db.exec("ROLLBACK");
         return false;
@@ -953,12 +973,6 @@ export class SqliteStore implements MetadataStore {
     return Number(r.changes ?? 0);
   }
 
-  async adoptAnonymousSites(anonOwnerId: string, userId: string): Promise<number> {
-    const r = this.db.prepare("UPDATE sites SET owner_id=?, anon_owner_id=NULL, updated_at=? WHERE anon_owner_id=? AND owner_id IS NULL AND deleted_at IS NULL")
-      .run(userId, Date.now(), anonOwnerId);
-    return Number(r.changes ?? 0);
-  }
-
   async clearSiteOwner(siteId: string): Promise<void> {
   // Reset edit_policy alongside the owner. Leaving 'login' on an unowned site would keep it
   // writable by every authenticated user with nobody left who can change that back — the owner
@@ -966,16 +980,12 @@ export class SqliteStore implements MetadataStore {
     this.db.prepare("UPDATE sites SET owner_id=NULL, edit_policy='owner', updated_at=? WHERE id=?").run(Date.now(), siteId);
   }
 
-  async transferSiteOwner(siteId: string, toUserId: string): Promise<void> {
-    this.db.prepare("UPDATE sites SET owner_id=?, updated_at=? WHERE id=? AND deleted_at IS NULL").run(toUserId, Date.now(), siteId);
-  }
-
   async listSitesByOwner(ownerId: string): Promise<SiteSummary[]> {
     return (this.db.prepare(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at,
              v.entry AS entry,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
-      WHERE s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = ?
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members m WHERE m.tenant_id=s.tenant_id AND m.user_id=s.owner_id)
       ORDER BY s.updated_at DESC`).all(ownerId) as Row[]).map(toSummary);
   }
 
@@ -984,8 +994,8 @@ export class SqliteStore implements MetadataStore {
              v.entry AS entry,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
-      JOIN site_collaborators c ON c.site_id = s.id AND c.user_id = ?
-      WHERE s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
+      JOIN site_members c ON c.site_id = s.id AND c.user_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
       ORDER BY s.updated_at DESC`).all(userId) as Row[]).map(toSummary);
   }
 
@@ -1200,8 +1210,8 @@ export class SqliteStore implements MetadataStore {
   }
 
   async insertUploadSession(u: UploadSessionRow): Promise<void> {
-    this.db.prepare("INSERT INTO upload_sessions (version_id, site_id, target_slug, title, owner_key, files, created_at) VALUES (?,?,?,?,?,?,?)")
-      .run(u.versionId, u.siteId, u.targetSlug ?? null, u.title ?? null, u.ownerKey, JSON.stringify(u.files), u.createdAt);
+    this.db.prepare("INSERT INTO upload_sessions (version_id, site_id, target_slug, title, owner_key, files, created_at, tenant_id) VALUES (?,?,?,?,?,?,?,?)")
+      .run(u.versionId, u.siteId, u.targetSlug ?? null, u.title ?? null, u.ownerKey, JSON.stringify(u.files), u.createdAt, u.tenantId ?? null);
   }
   async getUploadSession(versionId: string): Promise<UploadSessionRow | null> {
     const row = this.db.prepare("SELECT * FROM upload_sessions WHERE version_id=?").get(versionId) as Row | undefined;
@@ -1311,12 +1321,6 @@ export class SqliteStore implements MetadataStore {
              returnTo: row.return_to as string, expiresAt: Number(row.expires_at) };
   }
 
-  async isCollaborator(siteId: string, userId: string): Promise<boolean> {
-    const row = this.db.prepare("SELECT 1 AS ok FROM site_collaborators WHERE site_id=? AND user_id=?").get(siteId, userId);
-    return row != null;
-  }
-
-
   // --- administration -----------------------------------------------------------
 
   async setUserDisabled(id: string, at: number | null, reason: string | null): Promise<boolean> {
@@ -1420,9 +1424,9 @@ export class SqliteStore implements MetadataStore {
       JOIN sites s ON s.id = t.site_id AND s.current_version_id = t.version_id
       WHERE site_texts_fts MATCH ? AND s.deleted_at IS NULL
         AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL)
-             OR s.owner_id = ?
+             OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = ?)
-             OR EXISTS (SELECT 1 FROM site_collaborators c WHERE c.site_id = s.id AND c.user_id = ?))
+             OR EXISTS (SELECT 1 FROM site_members c WHERE c.site_id = s.id AND c.user_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
       ORDER BY bm25(site_texts_fts, 0, 10.0, 1.0) ASC, s.updated_at DESC
       LIMIT ?`).all(match, viewer?.userId ?? null, viewer?.anonId ?? null, viewer?.userId ?? null, limit) as Row[];
     return rows.map(toSearchHit);
@@ -1432,7 +1436,7 @@ export class SqliteStore implements MetadataStore {
     const rows = this.db.prepare(`
       SELECT s.id, s.current_version_id FROM sites s
       LEFT JOIN site_texts t ON t.site_id = s.id
-      WHERE s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
         AND (t.site_id IS NULL OR t.version_id <> s.current_version_id OR t.extractor_version < ?)
       ORDER BY s.updated_at DESC LIMIT ?`).all(SITE_TEXT_EXTRACTOR_VERSION, limit) as Row[];
     return rows.map((r) => ({ siteId: String(r.id), versionId: String(r.current_version_id) }));
@@ -1494,7 +1498,7 @@ export class SqliteStore implements MetadataStore {
              (SELECT COALESCE(SUM(v.byte_size), 0) FROM versions v WHERE v.site_id = s.id) AS byte_total
       FROM sites s LEFT JOIN users u ON u.id = s.owner_id
       WHERE (? = '' OR lower(s.title) LIKE ? ESCAPE '\\' OR lower(s.slug) LIKE ? ESCAPE '\\' OR lower(COALESCE(u.email, '')) LIKE ? ESCAPE '\\')
-        AND (? IS NULL OR s.owner_id = ?)
+        AND (? IS NULL OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)))
         AND (? = 0 OR s.owner_id IS NULL)
         AND CASE ? WHEN 'deleted' THEN (s.deleted_at IS NOT NULL AND s.purged_at IS NULL)
                     WHEN 'taken_down' THEN (s.deleted_at IS NULL AND s.taken_down_at IS NOT NULL)
@@ -1504,7 +1508,6 @@ export class SqliteStore implements MetadataStore {
       .all(opts.q, like, like, like, opts.ownerId, opts.ownerId, opts.anonymousOnly ? 1 : 0, opts.state, opts.limit, opts.offset) as Row[];
     return { rows: rows.map(toAdminSiteRow), total: Number(rows[0]?.total ?? 0) };
   }
-
 
   // --- quotas and expiry --------------------------------------------------------
 

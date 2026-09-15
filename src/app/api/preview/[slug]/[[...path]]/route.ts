@@ -19,8 +19,8 @@
 import { NextResponse } from "next/server";
 import { servePreviewFile } from "@/lib/preview";
 import { getSiteView } from "@/lib/sites";
-import { canReadSite } from "@/lib/share";
-import { mintPreviewKey, previewBaseHref, splitSlugKey, verifyPreviewKey } from "@/lib/preview-key";
+import { authorizePreview } from "@/lib/preview-access";
+import { previewBaseHref, splitSlugKey } from "@/lib/preview-key";
 
 export async function GET(request: Request, context: { params: Promise<{ slug: string; path?: string[] }> }): Promise<NextResponse> {
   try {
@@ -38,37 +38,17 @@ async function serve(request: Request, context: { params: Promise<{ slug: string
   const { slug: segment, path } = await context.params;
   const { slug, key } = splitSlugKey(segment);
 
-  // One extra lookup per request, and only on private sites does it cost a share query — a public
-  // or unlisted site short-circuits inside canReadSite before touching the shares table.
   const view = await getSiteView(slug);
-  // Only someone who fails both checks is a stranger: either they can read the site themselves (the
-  // requests that can carry cookies), or the URL they hold carries an unexpired credential issued by
-  // this site (the sub-requests from the opaque frame take this path).
-  const canRead = view ? await canReadSite(request, view.site) : false;
-  const keyed = view ? verifyPreviewKey(key, view.site) : false;
-  if (view && !canRead && !keyed) {
-    // A takedown is not a secret the way a private site is: the link was public, people hold it,
-    // and "gone" is the honest answer. Everything else stays 404 (see the header comment).
-    if (view.site.takenDownAt) return new NextResponse("gone", { status: 410 });
-    return new NextResponse("not found", { status: 404 });
+  const access = view ? await authorizePreview(request,view.site,key) : null;
+  if (!access) return new NextResponse("not found", {status:view?.site.takenDownAt ? 410 : 404});
+  const baseHref=previewBaseHref(slug,access.key);
+  // A hosted document can read its own location. Exchange the share credential for a
+  // read-only resource key before serving any untrusted bytes.
+  if (!key && new URL(request.url).searchParams.has("share")) {
+    const location = baseHref + (path ?? []).map(encodeURIComponent).join("/");
+    return new NextResponse(null, {status:307,headers:{location,"cache-control":"private, no-store"}});
   }
-
-  // The `<base>` injected into the artifact. Only private sites need a credential; public/unlisted
-  // sites are let through on canReadSite's first line, and an extra credential segment in the URL
-  // would only make the link uglier.
-  //
-  // Minting happens ONLY when the **real gate** passes. A request that came in on a credential keeps
-  // the one it holds and never gets a fresh one: otherwise someone whose share was revoked could keep
-  // rolling the credential forward for as long as the page stays open and keeps fetching resources,
-  // and revocation would mean nothing. Kept apart, revocation takes effect within one TTL at most.
-  let baseHref: string | undefined;
-  if (view && view.site.visibility === "private") {
-    baseHref = previewBaseHref(slug, canRead ? mintPreviewKey(view.site) : key);
-  }
-
-  // ?v pins the read to an earlier version (history preview); unknown/foreign values fall back to current.
-  const versionId = new URL(request.url).searchParams.get("v") || undefined;
-  // Range is handed downstream as-is: only media types use it; every other type is returned whole as before.
+  const versionId=access.versionId;
   const result = await servePreviewFile(slug, path, versionId, baseHref, request.headers.get("range"));
-  return new NextResponse(result.body as BodyInit, { status: result.status, headers: result.headers });
+  return new NextResponse(result.body as BodyInit, { status: result.status, headers: { ...result.headers, "cache-control": access.key ? "private, no-store" : result.headers["cache-control"] ?? "no-store" } });
 }

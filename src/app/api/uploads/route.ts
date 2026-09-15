@@ -1,3 +1,4 @@
+import { creationTenant } from "@/lib/rbac-access";
 // POST /api/uploads — open a chunked upload session.
 //
 // Each file then goes through PUT /api/uploads/<versionId>/files/<relpath> (streamed, never held in
@@ -45,7 +46,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       session = await createUploadSession({ siteId: view.site.id, targetSlug: body.slug, title: body.title, ownerKey });
     } else {
       await assertCanCreate(request);
-      session = await createUploadSession({ title: body.title, ownerKey });
+      session = await createUploadSession({ tenantId: await creationTenant((await resolveSession(request))?.userId ?? null,request.headers.get("x-artifact-tenant") || undefined), title: body.title, ownerKey });
     }
     const res = json({ versionId: session.versionId }, 201);
     if (cookie) res.headers.append("set-cookie", cookie);

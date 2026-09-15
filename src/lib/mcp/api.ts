@@ -20,7 +20,7 @@ export function apiRequest(source: Request, route: string, method = "GET", body?
   const url = new URL(route, source.url);
   const authorization = source.headers.get("authorization")!;
   const headers = new Headers({ authorization, origin: url.origin });
-  for (const name of ["x-real-ip", "x-forwarded-for"]) { const value = source.headers.get(name); if (value) headers.set(name, value); }
+  for (const name of ["x-real-ip", "x-forwarded-for", "x-artifact-share", "x-artifact-tenant"]) { const value = source.headers.get(name); if (value) headers.set(name, value); }
   if (typeof body === "string") headers.set("content-type", "application/json");
   return new Request(url, { method, headers, body, signal: source.signal, ...(body instanceof ReadableStream ? { duplex: "half" } : {}) });
 }

@@ -113,7 +113,7 @@ describe("rollback — forward-only restore, history preserved", () => {
 });
 
 describe("preview ?v — read-only version preview", () => {
-  it("serves the pinned version; a non-matching value falls back to current (cache-buster stays valid)", async () => {
+  it("serves the pinned version; a non-matching value is refused", async () => {
     const created = await createSite({ mode: "paste", html: "<title>P</title><body>old</body>" });
     const oldId = created.version.id;
     await editSite(created.site.slug, { content: "<title>P</title><body>new</body>" }, testAudit());
@@ -127,8 +127,7 @@ describe("preview ?v — read-only version preview", () => {
 
     // A plain cache-buster (or a foreign id) is ignored → current is served, not a 404.
     const fallback = await servePreviewFile(created.site.slug, undefined, "3");
-    expect(fallback.status).toBe(200);
-    expect(String(fallback.body)).toContain("new");
+    expect(fallback.status).toBe(404);
   });
 });
 

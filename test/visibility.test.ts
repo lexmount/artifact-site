@@ -1,3 +1,4 @@
+import { addCollaborator, setSiteOwnerIfUnowned } from "./fixtures/legacy-identity";
 // Unlisted — the read side of the `visibility` column.
 //
 // The column had a writer (PUT /api/sites/:slug/sharing) and no reader at all: a site set to
@@ -17,11 +18,9 @@ import { GET as listGET } from "@/app/api/sites/route";
 import { GET as itemGET } from "@/app/api/sites/[slug]/route";
 import { GET as previewGET } from "@/app/api/preview/[slug]/[[...path]]/route";
 import {
-  addCollaborator,
   closeDbForTests,
   listSitesByOwner,
   listSitesForCollaborator,
-  setSiteOwnerIfUnowned,
   updateSiteSharing,
   upsertUser,
 } from "@/lib/db";

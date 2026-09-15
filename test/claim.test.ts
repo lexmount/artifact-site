@@ -1,3 +1,4 @@
+import { adoptAnonymousSites, setSiteOwnerIfUnowned, transferSiteOwner } from "./fixtures/legacy-identity";
 // Claiming is the one irreversible identity change in the product, so the guarantees it rests on
 // get their own tests: it must be atomic, it must be a one-shot, and it must leave no gap in the
 // version history.
@@ -6,8 +7,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  insertAdminLog, adoptAnonymousSites, attributeUnattributedVersions, claimSiteAudited, clearSiteOwner, closeDbForTests, createId,
-  getSite, insertAudit, insertSiteWithVersion, listSitesByOwner, setSiteOwnerIfUnowned, transferSiteOwner,
+  insertAdminLog, attributeUnattributedVersions, claimSiteAudited, clearSiteOwner, closeDbForTests, createId,
+  getSite, insertAudit, insertSiteWithVersion, listSitesByOwner,
   updateSiteSharing, upsertUser, type InsertAuditInput,
 } from "@/lib/db";
 import { mintSession } from "@/lib/session";
@@ -165,7 +166,7 @@ describe("token-based adoption defers to recorded browser provenance", () => {
       },
       body: JSON.stringify({ sites: [{ slug, editToken: token }] }),
     }));
-    return ((await res.json()) as { adopted: number }).adopted;
+    return res.status;
   }
 
   it("refuses a site that recorded its creating browser, so a shared token cannot take it", async () => {
@@ -177,7 +178,7 @@ describe("token-based adoption defers to recorded browser provenance", () => {
     const recipient = await upsertUser({ authProvider: "t", providerSubject: "recipient" });
 
     // The recipient holds a valid token for an unowned site — everything the old check asked for.
-    expect(await adoptViaRoute("has-anon", "et", recipient.id)).toBe(0);
+    expect(await adoptViaRoute("has-anon", "et", recipient.id)).toBe(400);
     expect((await getSite(id))!.ownerId).toBeNull();
 
     // And the creator still gets it, through the cookie route that actually knows who they are.
@@ -186,15 +187,15 @@ describe("token-based adoption defers to recorded browser provenance", () => {
     expect((await getSite(id))!.ownerId).toBe(creator.id);
   });
 
-  it("still settles a pre-identity site, which has no browser on record", async () => {
+  it("refuses token-only automatic adoption of pre-identity sites", async () => {
     const id = createId("site");
     await insertSiteWithVersion(
       { id, slug: "legacy", title: "t", kind: "single", editToken: "et", claimToken: "ct", visibility: "public" },
       { id: createId("ver"), siteId: id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" },
     );
     const author = await upsertUser({ authProvider: "t", providerSubject: "legacy-author" });
-    expect(await adoptViaRoute("legacy", "et", author.id)).toBe(1);
-    expect((await getSite(id))!.ownerId).toBe(author.id);
+    expect(await adoptViaRoute("legacy", "et", author.id)).toBe(400);
+    expect((await getSite(id))!.ownerId).toBeNull();
   });
 
   it("still rejects a wrong token on a pre-identity site", async () => {
@@ -204,7 +205,7 @@ describe("token-based adoption defers to recorded browser provenance", () => {
       { id: createId("ver"), siteId: id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" },
     );
     const stranger = await upsertUser({ authProvider: "t", providerSubject: "stranger" });
-    expect(await adoptViaRoute("legacy2", "guessed", stranger.id)).toBe(0);
+    expect(await adoptViaRoute("legacy2", "guessed", stranger.id)).toBe(400);
     expect((await getSite(id))!.ownerId).toBeNull();
   });
 });

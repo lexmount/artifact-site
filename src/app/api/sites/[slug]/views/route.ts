@@ -24,7 +24,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    await requireCapability(request, view.site, "owner");
+    await requireCapability(request, view.site, "manage");
 
     const raw = Number(new URL(request.url).searchParams.get("limit"));
     const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), MAX_LIMIT) : DEFAULT_LIMIT;

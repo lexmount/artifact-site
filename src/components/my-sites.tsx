@@ -220,7 +220,7 @@ export default function MySites({ sites, serverOwned, onMutated, manage = true, 
           </div>
           <div className="folder-heading">
             <h2>{activeFolder ? activeFolder.name : active === FILTER_UNFILED ? t("Unfiled") : t("All sites")}</h2>
-            <span aria-live="polite">{countText(t, shown.length, "{n} site", "{n} sites")}</span>
+            <span aria-live="polite">· {shown.length}</span>
           </div>
           {hint && <p className="folder-note" role="status">{hint}</p>}
 

@@ -91,8 +91,10 @@ The in-browser editor (`src/components/editor.tsx`, `visual-editor.tsx`) and the
 loop are the same protocol.
 
 **Authorization.** `src/lib/authz.ts` computes a viewer's capabilities for a site once per
-request (`requireCapability` / `requireActor`): owner, collaborator, anonymous creator, edit
-token, admin token. Share links grant reading only (`src/lib/share.ts`). Every route that changes
+request (`requireCapability` / `requireActor`): tenant-scoped owner, site administrator, editor,
+anonymous creator and explicit administrative access. Share links grant independent view, comment
+(reserved) or signed-in editing rights, scoped to one version or the latest version.
+See [RBAC](docs/RBAC.md) for the role matrix, tenant migration and revocation contract. Every route that changes
 an existing site goes through it; creating a site, forking, administrator assignment and the per-account routes
 (`/api/me/*`, `/api/device/*`) have their own gates, described at the top of each route file.
 Cookie-authenticated mutations must also carry an `Origin` matching `ARTIFACT_PUBLIC_URL`

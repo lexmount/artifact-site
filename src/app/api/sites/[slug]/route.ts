@@ -18,7 +18,7 @@ import { z } from "zod";
 import { requireActor } from "@/lib/authz";
 import { AuthError } from "@/lib/auth";
 import { csrfSafe } from "@/lib/session";
-import { canReadSite } from "@/lib/share";
+import { canReadVersion, canReadSite } from "@/lib/share";
 import { deleteSite, getSiteView, publicSite, renameSite, siteUrl } from "@/lib/sites";
 import { apiAuditContext, recordSiteAudit } from "@/lib/audit";
 import { getStorage } from "@/lib/storage";
@@ -34,7 +34,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     // This response carries the entry file's full source, so it is a content outlet like
     // /api/preview and needs the same gate. 404 rather than 403: a private site does not confirm
     // its own existence to someone who cannot read it.
-    if (!(await canReadSite(request, view.site))) {
+    if (!(await canReadSite(request, view.site)) || !(await canReadVersion(request,view.site,view.version.id))) {
       // A taken-down site answers "gone" rather than hiding: the link was public and people hold it.
       if (view.site.takenDownAt) return json({ error: "This site has been taken down by an administrator", code: "taken_down" }, 410);
       return json({ error: "site not found" }, 404);

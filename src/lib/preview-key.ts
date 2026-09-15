@@ -34,23 +34,8 @@
 // never contains `~`. So `<slug>~<key>` splits back unambiguously and cannot collide with any real
 // slug.
 //
-// [Signing key: why editToken cannot be used]
-// We need something that is "consistent across replicas AND unobtainable by the client" to sign
-// with. editToken satisfies the first half but **not** the second: it is handed to the caller in
-// the site-creation response. And once ownership enforcement is on, editToken's permission is
-// deliberately lowered to `none` (see lib/authz) -- using it as the signing key would re-promote an
-// already-revoked credential to "can read every byte of this site". Deriving a layer
-// (HMAC(editToken, some constant)) does not help: the derivation formula is public.
-//
-// So the root key is chosen by deployment shape:
-//   enforced mode      -> the OIDC client secret. Server-only, consistent across replicas, and
-//                         **guaranteed to exist**: config.enforceOwnership silently degrades when
-//                         no IdP is configured (see config.ts).
-//   non-enforced mode  -> fall back to editToken. There editToken already equals full owner
-//                         authority (authz's legacy branch), so signing with it grants nothing new.
-import { createHmac } from "node:crypto";
-import { config } from "@/lib/config";
-import { safeEqual } from "@/lib/crypto";
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
+import { previewSecret } from "@/lib/preview-secret";
 import type { Site } from "@/lib/types";
 
 /** Credential lifetime. Long enough to read a long document, short enough that a leak expires quickly. */
@@ -59,43 +44,17 @@ export const PREVIEW_KEY_TTL_MS = 30 * 60 * 1000;
 /** Separator between slug and credential. Absent from the slug's base64url alphabet, so splitting is unambiguous. */
 export const PREVIEW_KEY_SEP = "~";
 
-function signingRoot(site: Site): string {
-  const serverOnly = config.oidc.clientSecret;
-  if (config.enforceOwnership && serverOnly) return serverOnly;
-  return site.editToken;
-}
-
-function sign(site: Site, expiry: number): string {
-  return createHmac("sha256", signingRoot(site))
-    .update(`preview-key|${site.id}|${expiry}`)
-    .digest("base64url");
-}
-
-/** `<expiry timestamp>.<signature>`. The expiry is in plaintext so the server can reject expired keys without a DB lookup. */
-export function mintPreviewKey(site: Site, now: number = Date.now()): string {
-  const expiry = now + PREVIEW_KEY_TTL_MS;
-  return `${expiry}.${sign(site, expiry)}`;
-}
-
-/** Was this credential signed for this site, and is it still valid? */
-export function verifyPreviewKey(key: string | null, site: Site, now: number = Date.now()): boolean {
-  if (!key) return false;
-  const at = key.indexOf(".");
-  if (at < 0) return false;
-  const expiry = Number(key.slice(0, at));
-  // Check expiry first: NaN and expired keys both drop out here, saving an HMAC.
-  if (!Number.isFinite(expiry) || expiry <= now) return false;
-  return safeEqual(key.slice(at + 1), sign(site, expiry));
-}
-
 /**
  * Split the first path segment the route received into slug and credential.
  *
- * Only the **first** separator counts: the credential is `<digits>.<base64url>` and contains no `~`,
+ * Only the **first** separator counts: the credential is `v3.<base64url>` and contains no `~`,
  * and neither does the slug, so the first one is the only one. When there is nothing to split, the
  * whole segment is the slug (the vast majority of requests today).
  */
-export function splitSlugKey(segment: string): { slug: string; key: string | null } {
+export function splitSlugKey(segment: string): {
+  slug: string;
+  key: string | null;
+} {
   const at = segment.indexOf(PREVIEW_KEY_SEP);
   if (at < 0) return { slug: segment, key: null };
   return { slug: segment.slice(0, at), key: segment.slice(at + 1) || null };
@@ -109,6 +68,64 @@ export function splitSlugKey(segment: string): { slug: string; key: string | nul
  * `<base>`; the credential is in the path, so it comes along. In a query string it would be dropped.
  */
 export function previewBaseHref(slug: string, key: string | null): string {
-  const head = key ? `${encodeURIComponent(slug)}${PREVIEW_KEY_SEP}${key}` : encodeURIComponent(slug);
+  const head = key
+    ? `${encodeURIComponent(slug)}${PREVIEW_KEY_SEP}${key}`
+    : encodeURIComponent(slug);
   return `/api/preview/${head}/`;
+}
+
+/** Version-scoped resource credential. Never accepted by write or comment APIs. */
+export interface PreviewGrant {
+  versionId: string;
+  shareId: string | null;
+  userId: string | null;
+  anonOwnerHash: string | null;
+  fingerprint: string;
+  management?: "platform-admin" | "tenant-admin";
+  legacy?: boolean;
+  operator?: string;
+}
+export async function mintScopedPreviewKey(
+  site: Site,
+  grant: PreviewGrant,
+  now = Date.now(),
+): Promise<string> {
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", await encryptionKey(), nonce);
+  cipher.setAAD(Buffer.from(`preview-v3|${site.id}|${site.tenantId}`));
+  const payload = Buffer.concat([
+    cipher.update(JSON.stringify({ ...grant, expiresAt: now + PREVIEW_KEY_TTL_MS })),
+    cipher.final(),
+  ]);
+  return `v3.${Buffer.concat([nonce, cipher.getAuthTag(), payload]).toString("base64url")}`;
+}
+async function encryptionKey(): Promise<Buffer> {
+  return Buffer.from(hkdfSync("sha256", (await previewSecret()).secret, "artifact-hub", "preview-v3", 32));
+}
+export async function readScopedPreviewKey(
+  key: string | null,
+  site: Site,
+  now = Date.now(),
+): Promise<PreviewGrant | null> {
+  if (!key) return null;
+  const [tag, payload, ...extra] = key.split(".");
+  if (tag !== "v3" || !payload || extra.length) return null;
+  try {
+    const bytes = Buffer.from(payload, "base64url");
+    if (bytes.length < 29) return null;
+    const decipher = createDecipheriv("aes-256-gcm", await encryptionKey(), bytes.subarray(0, 12));
+    decipher.setAAD(Buffer.from(`preview-v3|${site.id}|${site.tenantId}`));
+    decipher.setAuthTag(bytes.subarray(12, 28));
+    const data = JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString());
+    if (
+      typeof data.expiresAt !== "number" ||
+      data.expiresAt <= now ||
+      typeof data.versionId !== "string" ||
+      typeof data.fingerprint !== "string"
+    )
+      return null;
+    return data as PreviewGrant;
+  } catch {
+    return null;
+  }
 }

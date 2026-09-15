@@ -1,3 +1,4 @@
+import { addCollaborator } from "./fixtures/legacy-identity";
 // Pins the capability matrix. The bug this guards against is subtle and was shipped in an earlier
 // draft: four routes (rename / delete / edit / rollback) all called one identical boolean gate, so
 // every tier allowed to edit was silently allowed to DELETE. The "login" tier below is the one that
@@ -7,13 +8,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { atLeast, resolveCapability, resolveViewer } from "@/lib/authz";
-import { addCollaborator, closeDbForTests, createId, insertSiteWithVersion, upsertUser } from "@/lib/db";
+import { closeDbForTests, createId, insertSiteWithVersion, upsertUser } from "@/lib/db";
 import type { Session, Site } from "@/lib/types";
 
 const dirs: string[] = [];
 
 function site(over: Partial<Site> = {}): Site {
   return {
+    tenantId: "init",
     id: "site_1", slug: "s1", title: "t", kind: "single", currentVersionId: "ver_1",
     createdAt: 1, updatedAt: 1, deletedAt: null, purgedAt: null, takenDownAt: null, takenDownReason: null,
     editToken: "legacy-token", claimToken: "claim-token",
@@ -90,8 +92,9 @@ describe("enforced mode", () => {
   });
 
   it("gives the owner full control", async () => {
-    const s = site({ ownerId: "usr_a" });
-    expect(await resolveCapability(resolveViewer(req(), session("usr_a")), s)).toBe("owner");
+    const user = await upsertUser({ authProvider: "test", providerSubject: "owner" });
+    const s = site({ ownerId: user.id });
+    expect(await resolveCapability(resolveViewer(req(), session(user.id)), s)).toBe("owner");
   });
 
   it("stops a non-owner on an owner-only site", async () => {
@@ -100,11 +103,11 @@ describe("enforced mode", () => {
   });
 
   // THE regression guard: the open tier must not reach delete/rename/rollback.
-  it("caps edit_policy=login at content — never owner", async () => {
+  it("does not grant editing merely for signing in", async () => {
     const s = site({ ownerId: "usr_a", editPolicy: "login" });
     const cap = await resolveCapability(resolveViewer(req(), session("usr_stranger")), s);
-    expect(cap).toBe("content");
-    expect(atLeast(cap, "content")).toBe(true);
+    expect(cap).toBe("none");
+    expect(atLeast(cap, "content")).toBe(false);
     expect(atLeast(cap, "manage")).toBe(false);
     expect(atLeast(cap, "owner")).toBe(false);   // ← would be a one-request site deletion
   });
@@ -114,10 +117,10 @@ describe("enforced mode", () => {
     expect(await resolveCapability(resolveViewer(req(), session("usr_anyone")), s)).toBe("none");
   });
 
-  it("promotes an explicit collaborator to manage, but not owner", async () => {
+  it("grants an explicit collaborator content editing only", async () => {
     const siteId = createId("site");
     await insertSiteWithVersion(
-      { id: siteId, slug: "sc", title: "t", kind: "single", editToken: "tk", visibility: "public" },
+      { id: siteId, tenantId: "init", slug: "sc", title: "t", kind: "single", editToken: "tk", visibility: "public" },
       { id: createId("ver"), siteId, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" },
     );
     const collab = await upsertUser({ authProvider: "test", providerSubject: "c" });
@@ -125,7 +128,7 @@ describe("enforced mode", () => {
 
     const s = site({ id: siteId, ownerId: "usr_a" });
     const cap = await resolveCapability(resolveViewer(req(), session(collab.id)), s);
-    expect(cap).toBe("manage");
+    expect(cap).toBe("content");
     expect(atLeast(cap, "owner")).toBe(false);
   });
 

@@ -1,3 +1,4 @@
+import { addCollaborator, setSiteOwnerIfUnowned } from "./fixtures/legacy-identity";
 // The permission gate of the edit page. What is fixed here is a FALSE LOCK: the check bypassed the
 // server-side capability model entirely and recognised only the per-site editToken, whereas with
 // ARTIFACT_ENFORCE_OWNERSHIP on, owners/collaborators are authorised by session — the token lives
@@ -21,7 +22,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describePermissions, requestFromHeaders } from "@/lib/authz";
 import { editorLocked } from "@/components/editor";
-import { addCollaborator, closeDbForTests, getSite, setSiteOwnerIfUnowned, upsertUser } from "@/lib/db";
+import { closeDbForTests, getSite, upsertUser } from "@/lib/db";
 import { mintSession } from "@/lib/session";
 import { createSite } from "@/lib/sites";
 
@@ -191,7 +192,7 @@ describe("wiring (source-structure constraints)", () => {
 
   it("the edit page resolves the capability on the server instead of letting the client guess", () => {
     expect(page).toMatch(/import \{ describePermissions, requestFromHeaders \} from "@\/lib\/authz"/);
-    expect(page).toMatch(/await describePermissions\(\s*requestFromHeaders\(await headers\(\)/);
+    expect(page).toContain("await describePermissions(request,view.site)");
     expect(page).toContain("const canEdit = permissions.canEditContent;");
   });
 

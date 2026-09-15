@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 // Postgres metadata backend. Enables multiple app replicas (no node-local state) once files are
 // also on S3. Timestamps are BIGINT ms-epoch (same numbers as the SQLite backend); a BIGSERIAL
 // `seq` gives a stable tiebreaker for version ordering.
@@ -5,6 +6,7 @@
 // bundled into a client component. The import is a build-time tripwire (see next.js docs).
 import "server-only";
 import pg from "pg";
+import { searchTenantUsers, migrateRbac, initializeUserTenant, type RbacQuery } from "@/lib/rbac-store";
 import { config } from "@/lib/config";
 import type {
   AuditEntry, EditPolicy, InsertShareInput, Session, Share, ShareGrant, SharePolicy, ShareRow, ShareView,
@@ -505,7 +507,37 @@ function toShareGrantRow(row: Row): ShareGrant {
 }
 
 export class PostgresStore implements MetadataStore {
+  private rbacContext = new AsyncLocalStorage<RbacQuery>();
+  private rbacQueue: Promise<void> = Promise.resolve();
+  private async withRbacSlot<T>(work: () => Promise<T>): Promise<T> {
+    if (this.rbacContext.getStore()) throw new Error("Nested RBAC transactions are not supported");
+    const previous = this.rbacQueue;
+    let release!: () => void;
+    this.rbacQueue = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try { return await work(); } finally { release(); }
+  }
   private pool!: pg.Pool;
+  rbacQuery: RbacQuery = async (sql, params = []) => {
+    const transaction = this.rbacContext.getStore();
+    return transaction ? transaction(sql, params) : (await this.pool.query(sql, [...params])).rows as Row[];
+  };
+  /** Never await network/request I/O inside work. */
+  async rbacTransaction<T>(work: (q: RbacQuery) => Promise<T>): Promise<T> {
+    // Queue before acquiring a pool connection, including other advisory-lock users.
+    return this.withRbacSlot(async () => {
+      const c = await this.pool.connect();
+      try {
+        await c.query("BEGIN");
+        // Global serialization covers RBAC mutations, adoption and ownership assignment.
+        // Resolve network-backed identity before entering; authorization reads share this connection.
+        await c.query("SELECT pg_advisory_xact_lock(4127714)");
+        const query: RbacQuery = async (sql, params = []) => (await c.query(sql, [...params])).rows as Row[];
+        const result = await this.rbacContext.run(query, () => work(query));
+        await c.query("COMMIT"); return result;
+      } catch (e) { await c.query("ROLLBACK"); throw e; } finally { c.release(); }
+    });
+  }
 
   async init(): Promise<void> {
     if (!config.databaseUrl) throw new Error("postgres driver needs ARTIFACT_DATABASE_URL");
@@ -543,6 +575,11 @@ export class PostgresStore implements MetadataStore {
         CREATE INDEX IF NOT EXISTS idx_sites_updated ON sites(deleted_at, updated_at DESC);
       `);
       for (const migration of MIGRATIONS) await client.query(migration);
+      await client.query("ALTER TABLE sites ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'anonymous'");
+      await client.query("ALTER TABLE site_shares ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'view' CHECK (mode IN ('view','comment','edit'))");
+      await client.query("ALTER TABLE site_shares ADD COLUMN IF NOT EXISTS version_id TEXT REFERENCES versions(id)");
+      await client.query("ALTER TABLE upload_sessions ADD COLUMN IF NOT EXISTS tenant_id TEXT");
+      await migrateRbac(async (sql, params = []) => (await client.query(sql, [...params])).rows as Row[]);
       // Backfill edit tokens for any legacy rows (e.g. data imported from a SQLite dump). No-op on a
       // fresh DB. Done inside the lock so concurrent replicas can't double-mint.
       const legacy = await client.query("SELECT id FROM sites WHERE edit_token IS NULL OR edit_token = ''");
@@ -585,8 +622,8 @@ export class PostgresStore implements MetadataStore {
     try {
       await client.query("BEGIN");
       await client.query(
-        "INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, claim_token, anon_owner_id, owner_id, visibility) VALUES ($1,$2,$3,$4,$5,$6,$6,NULL,$7,$8,$9,$10,$11)",
-        [site.id, site.slug, site.title, site.kind, version.id, now, site.editToken, site.claimToken ?? null, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility],
+        "INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, claim_token, anon_owner_id, owner_id, visibility, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$6,NULL,$7,$8,$9,$10,$11,$12)",
+        [site.id, site.slug, site.title, site.kind, version.id, now, site.editToken, site.claimToken ?? null, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, site.tenantId ?? (site.ownerId ? "init" : "anonymous")],
       );
       await client.query(
         "INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
@@ -744,12 +781,12 @@ export class PostgresStore implements MetadataStore {
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
-      WHERE s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
         AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL)
-             OR s.owner_id = $1
+             OR (s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = $2)
-             OR EXISTS (SELECT 1 FROM site_collaborators c
-                         WHERE c.site_id = s.id AND c.user_id = $1))
+             OR EXISTS (SELECT 1 FROM site_members c
+                         WHERE c.site_id = s.id AND c.user_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
       ORDER BY s.updated_at DESC
     `, [viewer?.userId ?? null, viewer?.anonId ?? null]);
     return (rows as Row[]).map(toSummary);
@@ -799,11 +836,12 @@ export class PostgresStore implements MetadataStore {
       [createId("usr"), input.authProvider, input.providerSubject, input.email ?? null,
        input.emailVerified ?? false, input.displayName ?? null, input.avatarUrl ?? null, now],
     );
-    return toUser(rows[0] as Row);
+    await this.rbacTransaction((q) => initializeUserTenant(q, rows[0].id as string));
+    return (await this.getUser(rows[0].id as string))!;
   }
 
   async getUser(id: string): Promise<User | null> {
-    const row = await this.one("SELECT * FROM users WHERE id=$1", [id]);
+    const [row] = await this.rbacQuery("SELECT * FROM users WHERE id=$1", [id]);
     return row ? toUser(row) : null;
   }
 
@@ -812,32 +850,12 @@ export class PostgresStore implements MetadataStore {
     return row ? toUser(row) : null;
   }
 
-  async searchUsers(q: string, limit: number): Promise<User[]> {
-    // Same escaping + same ordering as the SQLite side, deliberately: `%`/`_` are LIKE wildcards,
-    // so an unescaped query stops being a prefix search and a lone `%` returns everyone. COALESCE
-    // rather than `NULLS LAST` because SQLite has no such clause and the two must agree on which
-    // never-logged-in account sorts where.
-    const pattern = `${q.replace(/[\\%_]/g, "\\$&")}%`;
-    const { rows } = await this.pool.query(
-      `SELECT * FROM users
-        WHERE lower(display_name) LIKE lower($1) ESCAPE '\\'
-           OR (email_verified = true AND lower(email) LIKE lower($1) ESCAPE '\\')
-        ORDER BY COALESCE(last_login_at, 0) DESC, id
-        LIMIT $2`,
-      [pattern, limit],
-    );
-    return (rows as Row[]).map(toUser);
-  }
-
-  async addCollaborator(siteId: string, userId: string, grantedBy: string | null): Promise<void> {
-    await this.pool.query(
-      "INSERT INTO site_collaborators (site_id, user_id, role, granted_by, granted_at) VALUES ($1,$2,'editor',$3,$4) ON CONFLICT (site_id, user_id) DO NOTHING",
-      [siteId, userId, grantedBy, Date.now()],
-    );
+  async searchUsers(q: string, viewerId: string, limit: number): Promise<User[]> {
+    return (await searchTenantUsers(this.rbacQuery, q, viewerId, limit)).map(toUser);
   }
 
   async removeCollaborator(siteId: string, userId: string): Promise<void> {
-    await this.pool.query("DELETE FROM site_collaborators WHERE site_id=$1 AND user_id=$2", [siteId, userId]);
+    await this.pool.query("DELETE FROM site_members WHERE site_id=$1 AND user_id=$2", [siteId, userId]);
   }
 
   async updateSiteSharing(siteId: string, visibility: Visibility, editPolicy: EditPolicy): Promise<void> {
@@ -846,7 +864,7 @@ export class PostgresStore implements MetadataStore {
   }
 
   async listCollaborators(siteId: string): Promise<SiteCollaborator[]> {
-    const { rows } = await this.pool.query("SELECT * FROM site_collaborators WHERE site_id=$1 ORDER BY granted_at", [siteId]);
+    const { rows } = await this.pool.query("SELECT * FROM site_members WHERE site_id=$1 ORDER BY granted_at", [siteId]);
     return (rows as Row[]).map(toCollaborator);
   }
 
@@ -858,10 +876,10 @@ export class PostgresStore implements MetadataStore {
 
   async createShare(input: InsertShareInput): Promise<Share> {
     const { rows } = await this.pool.query(
-      `INSERT INTO site_shares (id, site_id, token_hash, policy, passcode_hash, label, created_by, created_anon, created_at, expires_at, revoked_at, allow_ai)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL,$11) RETURNING *`,
+      `INSERT INTO site_shares (id, site_id, token_hash, policy, passcode_hash, label, created_by, created_anon, created_at, expires_at, revoked_at, allow_ai, mode, version_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL,$11,$12,$13) RETURNING *`,
       [input.id, input.siteId, input.tokenHash, input.policy, input.passcodeHash ?? null, input.label ?? null,
-       input.createdBy ?? null, input.createdAnonId ?? null, Date.now(), input.expiresAt ?? null, input.allowAi ?? false],
+       input.createdBy ?? null, input.createdAnonId ?? null, Date.now(), input.expiresAt ?? null, input.allowAi ?? false, input.mode ?? "view", input.versionId ?? null],
     );
     // toShare, never toShareRow: the two hashes must not leave the storage layer.
     return toShare(rows[0] as Row);
@@ -1094,50 +1112,39 @@ export class PostgresStore implements MetadataStore {
     return res.rowCount ?? 0;
   }
 
-  async setSiteOwnerIfUnowned(siteId: string, ownerId: string): Promise<boolean> {
-    const res = await this.pool.query("UPDATE sites SET owner_id=$1, updated_at=$2 WHERE id=$3 AND owner_id IS NULL AND deleted_at IS NULL",
-      [ownerId, Date.now(), siteId]);
-    return (res.rowCount ?? 0) > 0;
-  }
-
   async claimSiteAudited(siteId: string, ownerId: string, audit: InsertAuditInput, adminLog?: AdminLogEntry): Promise<boolean> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const res = await client.query(
-        "UPDATE sites SET owner_id=$1, updated_at=$2 WHERE id=$3 AND owner_id IS NULL AND deleted_at IS NULL",
-        [ownerId, Date.now(), siteId]);
-      if ((res.rowCount ?? 0) === 0) {
-        await client.query("ROLLBACK");
-        return false;
+    // Queue before acquiring a pool connection, including other advisory-lock users.
+    return this.withRbacSlot(async () => {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(4127714)");
+        const res = await client.query(
+          "UPDATE sites SET owner_id=$1, tenant_id=CASE WHEN tenant_id='anonymous' THEN 'init' ELSE tenant_id END, updated_at=$2 WHERE id=$3 AND owner_id IS NULL AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members tm JOIN users u ON u.id=tm.user_id JOIN tenants t ON t.id=tm.tenant_id WHERE tm.user_id=$1 AND tm.tenant_id=CASE WHEN sites.tenant_id='anonymous' THEN 'init' ELSE sites.tenant_id END AND u.disabled_at IS NULL AND t.disabled_at IS NULL)",
+          [ownerId, Date.now(), siteId]);
+        if ((res.rowCount ?? 0) === 0) {
+          await client.query("ROLLBACK");
+          return false;
+        }
+        await this.writeAuditRow(client, audit, Date.now());
+        if (adminLog) {
+          const e = adminLog;
+          await client.query("INSERT INTO admin_log (id, actor_kind, actor_user_id, action, target_kind, target_id, reason, ip, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+            [e.id, e.actorKind, e.actorUserId, e.action, e.targetKind, e.targetId, e.reason, e.ip, e.createdAt]);
+        }
+        await client.query("COMMIT");
+        return true;
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
       }
-      await this.writeAuditRow(client, audit, Date.now());
-      if (adminLog) {
-        const e = adminLog;
-        await client.query("INSERT INTO admin_log (id, actor_kind, actor_user_id, action, target_kind, target_id, reason, ip, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-          [e.id, e.actorKind, e.actorUserId, e.action, e.targetKind, e.targetId, e.reason, e.ip, e.createdAt]);
-      }
-      await client.query("COMMIT");
-      return true;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async attributeUnattributedVersions(siteId: string, userId: string): Promise<number> {
     const res = await this.pool.query("UPDATE versions SET created_by=$1 WHERE site_id=$2 AND created_by IS NULL", [userId, siteId]);
-    return res.rowCount ?? 0;
-  }
-
-  async adoptAnonymousSites(anonOwnerId: string, userId: string): Promise<number> {
-    // Only rows still unowned: a site already claimed by an account is never pulled away from it.
-    const res = await this.pool.query(
-      "UPDATE sites SET owner_id=$1, anon_owner_id=NULL, updated_at=$2 WHERE anon_owner_id=$3 AND owner_id IS NULL AND deleted_at IS NULL",
-      [userId, Date.now(), anonOwnerId],
-    );
     return res.rowCount ?? 0;
   }
 
@@ -1148,16 +1155,12 @@ export class PostgresStore implements MetadataStore {
     await this.pool.query("UPDATE sites SET owner_id=NULL, edit_policy='owner', updated_at=$1 WHERE id=$2", [Date.now(), siteId]);
   }
 
-  async transferSiteOwner(siteId: string, toUserId: string): Promise<void> {
-    await this.pool.query("UPDATE sites SET owner_id=$1, updated_at=$2 WHERE id=$3 AND deleted_at IS NULL", [toUserId, Date.now(), siteId]);
-  }
-
   async listSitesByOwner(ownerId: string): Promise<SiteSummary[]> {
     const { rows } = await this.pool.query(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at,
              v.entry AS entry,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
-      WHERE s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = $1
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members m WHERE m.tenant_id=s.tenant_id AND m.user_id=s.owner_id)
       ORDER BY s.updated_at DESC`, [ownerId]);
     return (rows as Row[]).map(toSummary);
   }
@@ -1167,8 +1170,8 @@ export class PostgresStore implements MetadataStore {
              v.entry AS entry,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
-      JOIN site_collaborators c ON c.site_id = s.id AND c.user_id = $1
-      WHERE s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
+      JOIN site_members c ON c.site_id = s.id AND c.user_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
       ORDER BY s.updated_at DESC`, [userId]);
     return (rows as Row[]).map(toSummary);
   }
@@ -1413,8 +1416,8 @@ export class PostgresStore implements MetadataStore {
   }
 
   async insertUploadSession(u: UploadSessionRow): Promise<void> {
-    await this.pool.query("INSERT INTO upload_sessions (version_id, site_id, target_slug, title, owner_key, files, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-      [u.versionId, u.siteId, u.targetSlug ?? null, u.title ?? null, u.ownerKey, JSON.stringify(u.files), u.createdAt]);
+    await this.pool.query("INSERT INTO upload_sessions (version_id, site_id, target_slug, title, owner_key, files, created_at, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [u.versionId, u.siteId, u.targetSlug ?? null, u.title ?? null, u.ownerKey, JSON.stringify(u.files), u.createdAt, u.tenantId ?? null]);
   }
   async getUploadSession(versionId: string): Promise<UploadSessionRow | null> {
     const row = await this.one("SELECT * FROM upload_sessions WHERE version_id=$1", [versionId]);
@@ -1530,12 +1533,6 @@ export class PostgresStore implements MetadataStore {
              returnTo: r.return_to as string, expiresAt: Number(r.expires_at) };
   }
 
-  async isCollaborator(siteId: string, userId: string): Promise<boolean> {
-    const row = await this.one("SELECT 1 AS ok FROM site_collaborators WHERE site_id=$1 AND user_id=$2", [siteId, userId]);
-    return row != null;
-  }
-
-
   // --- administration -----------------------------------------------------------
 
   async setUserDisabled(id: string, at: number | null, reason: string | null): Promise<boolean> {
@@ -1627,11 +1624,11 @@ export class PostgresStore implements MetadataStore {
       FROM site_texts t
       JOIN sites s ON s.id = t.site_id AND s.current_version_id = t.version_id,
            to_tsquery('simple', $3) q
-      WHERE s.deleted_at IS NULL AND t.tokens @@ q
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND t.tokens @@ q
         AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL)
-             OR s.owner_id = $1
+             OR (s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = $2)
-             OR EXISTS (SELECT 1 FROM site_collaborators c WHERE c.site_id = s.id AND c.user_id = $1))
+             OR EXISTS (SELECT 1 FROM site_members c WHERE c.site_id = s.id AND c.user_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
       ORDER BY rank DESC, s.updated_at DESC
       LIMIT $4`, [viewer?.userId ?? null, viewer?.anonId ?? null, query, limit]);
     return (rows as Row[]).map(toSearchHit);
@@ -1641,7 +1638,7 @@ export class PostgresStore implements MetadataStore {
     const { rows } = await this.pool.query(`
       SELECT s.id, s.current_version_id FROM sites s
       LEFT JOIN site_texts t ON t.site_id = s.id
-      WHERE s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
         AND (t.site_id IS NULL OR t.version_id <> s.current_version_id OR t.extractor_version < $2)
       ORDER BY s.updated_at DESC LIMIT $1`, [limit, SITE_TEXT_EXTRACTOR_VERSION]);
     return (rows as Row[]).map((r) => ({ siteId: String(r.id), versionId: String(r.current_version_id) }));
@@ -1716,7 +1713,6 @@ export class PostgresStore implements MetadataStore {
       [opts.q, likeContains(opts.q), opts.ownerId, opts.anonymousOnly, opts.state, opts.limit, opts.offset]);
     return { rows: (rows as Row[]).map(toAdminSiteRow), total: Number((rows[0] as Row | undefined)?.total ?? 0) };
   }
-
 
   // --- quotas and expiry --------------------------------------------------------
 

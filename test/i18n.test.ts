@@ -2,6 +2,7 @@
 // are filled by name, and locale resolution prefers an explicit choice over Accept-Language.
 import { afterEach, describe, expect, it } from "vitest";
 import { __resetMessagesForTests, interpolate, registerMessages, resolveLocale, translate, translatorFor } from "@/lib/i18n";
+import { relTime } from "@/lib/rel-time";
 
 afterEach(() => __resetMessagesForTests());
 
@@ -39,5 +40,25 @@ describe("resolveLocale", () => {
     expect(resolveLocale(null, "fr-FR,fr;q=0.9,en;q=0.5")).toBe("en");
     expect(resolveLocale("klingon", "de")).toBe("en");
     expect(resolveLocale(undefined, undefined)).toBe("en");
+  });
+});
+
+describe("relTime", () => {
+  const t = translatorFor("en");
+  const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
+  const now = Date.UTC(2026, 0, 15, 12, 0, 0);
+
+  it("uses the singular for exactly one unit and the plural otherwise", () => {
+    expect(relTime(now - 30_000, t, "en", now)).toBe("Just now");
+    expect(relTime(now - MIN, t, "en", now)).toBe("1 minute ago");
+    expect(relTime(now - 5 * MIN, t, "en", now)).toBe("5 minutes ago");
+    expect(relTime(now - HOUR, t, "en", now)).toBe("1 hour ago");
+    expect(relTime(now - 3 * HOUR, t, "en", now)).toBe("3 hours ago");
+    expect(relTime(now - DAY, t, "en", now)).toBe("1 day ago");
+    expect(relTime(now - 2 * DAY, t, "en", now)).toBe("2 days ago");
+  });
+
+  it("falls back to the calendar date after 30 days", () => {
+    expect(relTime(now - 45 * DAY, t, "en", now)).toBe("12/1/2025");
   });
 });

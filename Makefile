@@ -99,4 +99,4 @@ test-pg: ## Run the integration tests against a real Postgres (throwaway contain
 	  trap "docker stop $$name >/dev/null" EXIT; \
 	  for i in $$(seq 1 30); do docker exec $$name pg_isready -U t -d t >/dev/null 2>&1 && break; sleep 1; done; \
 	  ARTIFACT_DATABASE_URL=postgres://t:t@127.0.0.1:$$port/t?sslmode=disable npx vitest run test/db-postgres.integration.test.ts; \
-	  ARTIFACT_DB_DRIVER=postgres ARTIFACT_DATABASE_URL=postgres://t:t@127.0.0.1:$$port/t?sslmode=disable npx vitest run test/admin.test.ts test/quota.test.ts test/settings.test.ts test/site-text.test.ts
+	  ARTIFACT_DB_DRIVER=postgres ARTIFACT_DATABASE_URL=postgres://t:t@127.0.0.1:$$port/t?sslmode=disable npx vitest run test/admin.test.ts test/quota.test.ts test/settings.test.ts test/site-text.test.ts test/rbac.test.ts

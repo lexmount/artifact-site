@@ -1,3 +1,4 @@
+import { creationTenant } from "@/lib/rbac-access";
 // Verbs — the product's four actions over sites: create (upload), edit (new version),
 // list, delete. Thin orchestration over db (metadata) + store (files) + upload (parsing).
 import {
@@ -80,6 +81,7 @@ export type PublicSite = Omit<Site, "editToken" | "claimToken" | "anonOwnerId" |
  */
 export function publicSite(site: Site): PublicSite {
   return {
+    tenantId: site.tenantId,
     id: site.id,
     slug: site.slug,
     title: site.title,
@@ -145,7 +147,7 @@ function stricter(a: Visibility, b: Visibility): Visibility {
 export async function commitUploadedVersion(
   request: Request,
   input: {
-    session: { siteId: string; versionId: string; targetSlug?: string | null };
+    session: { tenantId?: string; siteId: string; versionId: string; targetSlug?: string | null };
     entry: string;
     title?: string;
     expectedVersionId?: string;
@@ -226,7 +228,7 @@ export async function commitUploadedVersion(
   // Same audit path as createSite: a site built by chunked upload looks identical in the audit table to one from a one-shot upload.
   const audit = input.ctx ? auditRow(input.ctx, session.siteId, session.versionId, "create") : undefined;
   await insertSiteRetryingSlug(
-    { id: session.siteId, title, kind: input.document ? "document" : "folder", editToken, claimToken, anonOwnerId: session_ ? null : anonId, ownerId: session_?.userId ?? null, visibility: policy.defaultVisibility },
+    { tenantId: await creationTenant(session_?.userId ?? null,session.tenantId), id: session.siteId, title, kind: input.document ? "document" : "folder", editToken, claimToken, anonOwnerId: session_ ? null : anonId, ownerId: session_?.userId ?? null, visibility: policy.defaultVisibility },
     version, audit,
   );
   scheduleTextIndex(session.siteId, session.versionId);
@@ -237,7 +239,7 @@ export async function commitUploadedVersion(
 /** Drop → link. Parse the input, write the first version to disk, then record the site. */
 export async function createSite(
   input: UploadInput,
-  owner: { anonOwnerId?: string | null; ownerId?: string | null } = {},
+  owner: { tenantId?: string; anonOwnerId?: string | null; ownerId?: string | null } = {},
   ctx?: AuditContext,
 ): Promise<{ site: Site; version: Version }> {
   // Synchronous office→pdf preview (no-op for everything but office documents): runs BEFORE any
@@ -257,7 +259,7 @@ export async function createSite(
   const audit = ctx ? auditRow(ctx, siteId, versionId, "create") : undefined;
   // Visibility is decided HERE, not by the column default, because it depends on which deployment
   // this is: the intranet opens up, the public internet stays shut until the owner says otherwise. See config.defaultVisibility.
-  await insertSiteRetryingSlug({ id: siteId, title: normalized.title, kind: normalized.kind, editToken, claimToken, anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility: policy.defaultVisibility }, version, audit);
+  await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: normalized.title, kind: normalized.kind, editToken, claimToken, anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility: policy.defaultVisibility }, version, audit);
   scheduleTextIndex(siteId, versionId); // searchable text follows the version; the response does not wait for it
   return { site: (await getSite(siteId))!, version: (await getVersion(versionId))! };
 }
@@ -370,11 +372,11 @@ export async function replaceSiteContent(
  * lock base come from the same snapshot, so the agent can never base an edit on one version and
  * lock against another.
  */
-export async function exportSiteZip(slug: string): Promise<{ site: Site; versionId: string; filename: string; bytes: Uint8Array } | null> {
+export async function exportSiteZip(slug: string, versionId?: string): Promise<{ site: Site; versionId: string; filename: string; bytes: Uint8Array } | null> {
   const site = await getSiteBySlug(slug);
   if (!site || site.deletedAt) return null;
-  const version = await getVersion(site.currentVersionId);
-  if (!version) return null;
+  const version = await getVersion(versionId ?? site.currentVersionId);
+  if (!version || version.siteId !== site.id) return null;
   const storage = getStorage();
   const entries: Record<string, Uint8Array> = {};
   for (const relpath of await storage.list(site.id, version.id)) {
@@ -521,7 +523,7 @@ export async function forkSite(
   // nobody) but it has to be TYPED OUT. A default here reads as "ownership is optional" and would
   // let a future caller mint an unowned site by forgetting an argument — the exact shape of the bug
   // this function is being fixed for. Unowned copies require authorized ownership transfer.
-  owner: { anonOwnerId?: string | null; ownerId?: string | null },
+  owner: { tenantId?: string; anonOwnerId?: string | null; ownerId?: string | null },
   ctx?: AuditContext,
 ): Promise<{ site: Site; version: Version } | null> {
   const source = await getSiteBySlug(slug);
@@ -559,7 +561,7 @@ export async function forkSite(
   //   · Inserting first and calling updateSiteSharing afterwards leaves a window in which the copy of a
   //     private source is public. A single write leaves no window.
   const visibility = stricter(source.visibility, policy.defaultVisibility);
-  await insertSiteRetryingSlug({ id: siteId, title: `${source.title} (copy)`, kind: source.kind, editToken, claimToken, anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility }, version, audit);
+  await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: `${source.title} (copy)`, kind: source.kind, editToken, claimToken, anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility }, version, audit);
   scheduleTextIndex(siteId, versionId);
   return { site: (await getSite(siteId))!, version: (await getVersion(versionId))! };
 }

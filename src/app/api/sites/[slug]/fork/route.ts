@@ -56,7 +56,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     // markers are exclusive, and `ownerId` is what authz.resolveCapability actually consults for a
     // signed-in caller. Hardcoding `anonOwnerId` here orphaned every fork a signed-in user made —
     // owned by nobody, so its own creator could not edit, rename or delete it.
-    const owner = session ? { ownerId: session.userId } : { anonOwnerId: anonId };
+    const owner = session ? { ownerId: session.userId, tenantId: request.headers.get("x-artifact-tenant") || undefined } : { anonOwnerId: anonId };
     const result = await forkSite(slug, owner, apiAuditContext(request, actor));
     if (!result) return json({ error: "site not found" }, 404);
     const res = json({

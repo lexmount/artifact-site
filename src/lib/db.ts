@@ -39,6 +39,8 @@ import { notifySiteVersion } from "@/lib/site-events";
 import { SqliteStore } from "@/lib/db-sqlite";
 import { PostgresStore } from "@/lib/db-postgres";
 
+import type { RbacQuery, RbacTransaction } from "@/lib/rbac-store";
+
 export type Row = Record<string, unknown>;
 
 export function createId(prefix: string): string {
@@ -60,6 +62,7 @@ export function createEditToken(): string {
 export function toSite(row: Row): Site {
   return {
     id: row.id as string,
+    tenantId: row.tenant_id as string,
     slug: row.slug as string,
     title: row.title as string,
     kind: row.kind as SiteKind,
@@ -210,7 +213,7 @@ export function toCollaborator(row: Row): SiteCollaborator {
   return {
     siteId: row.site_id as string,
     userId: row.user_id as string,
-    role: row.role as "editor",
+    role: row.role as "editor" | "admin",
     grantedBy: (row.granted_by as string | null) ?? null,
     grantedAt: Number(row.granted_at),
   };
@@ -248,6 +251,7 @@ export function toAudit(row: Row): AuditEntry {
  *  `a:<anonId>`), and every later PUT / commit has to match it — otherwise anyone holding the
  *  versionId could push files into someone else's upload. */
 export interface UploadSessionRow {
+  tenantId?: string;
   versionId: string; siteId: string; targetSlug?: string | null; title?: string | null;
   ownerKey: string; files: { relpath: string; bytes: number }[]; createdAt: number;
 }
@@ -255,6 +259,7 @@ export function toUploadSession(row: Row): UploadSessionRow {
   let files: UploadSessionRow["files"] = [];
   try { files = JSON.parse(String(row.files ?? "[]")) as UploadSessionRow["files"]; } catch { /* a corrupt row counts as empty */ }
   return {
+    tenantId: (row.tenant_id as string | undefined) ?? undefined,
     versionId: row.version_id as string, siteId: row.site_id as string,
     targetSlug: (row.target_slug as string | null) ?? null, title: (row.title as string | null) ?? null,
     ownerKey: row.owner_key as string, files, createdAt: Number(row.created_at),
@@ -279,7 +284,7 @@ export function toSummary(row: Row): SiteSummary {
 
 // --- backend interface + selection -------------------------------------------
 
-export interface InsertSiteInput { id: string; slug: string; title: string; kind: SiteKind; editToken: string; claimToken?: string; anonOwnerId?: string | null; ownerId?: string | null; visibility: Visibility }
+export interface InsertSiteInput { tenantId?: string; id: string; slug: string; title: string; kind: SiteKind; editToken: string; claimToken?: string; anonOwnerId?: string | null; ownerId?: string | null; visibility: Visibility }
 
 /**
  * Who is asking for the site directory — the two ways someone can own a site, mirroring the anon/
@@ -349,6 +354,8 @@ export class UserCodeConflictError extends Error {
 }
 
 export interface MetadataStore {
+  rbacQuery: RbacQuery;
+  rbacTransaction: RbacTransaction;
   init(): Promise<void>;
   insertSite(input: InsertSiteInput): Promise<void>;
   /** Atomically insert a new site + its first version + point current at it (one transaction).
@@ -417,10 +424,7 @@ export interface MetadataStore {
    * exists: an unverified address is attacker-controllable, so anyone could put a colleague's
    * address on their own account and be picked out of this list in that colleague's place.
    */
-  searchUsers(q: string, limit: number): Promise<User[]>;
-  /** Is this user an explicit collaborator on this site? Used by the capability chain. */
-  isCollaborator(siteId: string, userId: string): Promise<boolean>;
-  addCollaborator(siteId: string, userId: string, grantedBy: string | null): Promise<void>;
+  searchUsers(q: string, viewerId: string, limit: number): Promise<User[]>;
   removeCollaborator(siteId: string, userId: string): Promise<void>;
   updateSiteSharing(siteId: string, visibility: Visibility, editPolicy: EditPolicy): Promise<void>;
   listCollaborators(siteId: string): Promise<SiteCollaborator[]>;
@@ -468,15 +472,9 @@ export interface MetadataStore {
    */
   getSiteViewStats(siteId: string, since: number, exclude: { userIds: readonly string[]; anonIds: readonly string[] }): Promise<SiteViewStats>;
   pruneSiteViews(before: number): Promise<number>;
-  /** Atomic claim: succeeds only while the site is still unowned, so two racing sign-ins
-   *  cannot both take it. Returns false if someone already owns it. */
-  setSiteOwnerIfUnowned(siteId: string, ownerId: string): Promise<boolean>;
   /** Attribute the anonymous versions of a just-claimed site to its new owner. */
   attributeUnattributedVersions(siteId: string, userId: string): Promise<number>;
   clearSiteOwner(siteId: string): Promise<void>;
-  /** Sign-in migration: hand every site this browser created to the account, in one statement. */
-  adoptAnonymousSites(anonOwnerId: string, userId: string): Promise<number>;
-  transferSiteOwner(siteId: string, toUserId: string): Promise<void>;
   /** "My sites" / "Sites I collaborate on". Deliberately NOT filtered by visibility: these answer "what is mine",
    *  and marking a site Unlisted must never hide it from the person who owns or co-edits it. */
   listSitesByOwner(ownerId: string): Promise<SiteSummary[]>;
@@ -772,9 +770,7 @@ export async function listVersions(siteId: string): Promise<Version[]> {
 export async function backfillEditTokens(): Promise<number> {
   return (await getStore()).backfillEditTokens();
 }
-export async function isCollaborator(siteId: string, userId: string): Promise<boolean> {
-  return (await getStore()).isCollaborator(siteId, userId);
-}
+
 export async function upsertUser(input: UpsertUserInput): Promise<User> {
   return (await getStore()).upsertUser(input);
 }
@@ -784,12 +780,10 @@ export async function getUser(id: string): Promise<User | null> {
 export async function getUserByVerifiedEmail(email: string): Promise<User | null> {
   return (await getStore()).getUserByVerifiedEmail(email);
 }
-export async function searchUsers(q: string, limit = 10): Promise<User[]> {
-  return (await getStore()).searchUsers(q, limit);
+export async function searchUsers(q: string, viewerId: string, limit = 10): Promise<User[]> {
+  return (await getStore()).searchUsers(q, viewerId, limit);
 }
-export async function addCollaborator(siteId: string, userId: string, grantedBy: string | null = null): Promise<void> {
-  return (await getStore()).addCollaborator(siteId, userId, grantedBy);
-}
+
 export async function removeCollaborator(siteId: string, userId: string): Promise<void> {
   return (await getStore()).removeCollaborator(siteId, userId);
 }
@@ -880,6 +874,9 @@ export async function pruneSiteViews(before: number): Promise<number> {
 /** Row → Share, shared by both backends so the two cannot drift on shape. */
 export function toShareRow(row: Row): ShareRow {
   return {
+    mode: (row.mode ?? "view") as Share["mode"],
+    versionId: (row.version_id as string | null) ?? null,
+
     id: row.id as string,
     siteId: row.site_id as string,
     tokenHash: row.token_hash as string,
@@ -928,21 +925,14 @@ export function toSiteOpen(row: Row): SiteOpen {
     viewedAt: Number(row.viewed_at),
   };
 }
-export async function setSiteOwnerIfUnowned(siteId: string, ownerId: string): Promise<boolean> {
-  return (await getStore()).setSiteOwnerIfUnowned(siteId, ownerId);
-}
+
 export async function attributeUnattributedVersions(siteId: string, userId: string): Promise<number> {
   return (await getStore()).attributeUnattributedVersions(siteId, userId);
 }
 export async function clearSiteOwner(siteId: string): Promise<void> {
   return (await getStore()).clearSiteOwner(siteId);
 }
-export async function adoptAnonymousSites(anonOwnerId: string, userId: string): Promise<number> {
-  return (await getStore()).adoptAnonymousSites(anonOwnerId, userId);
-}
-export async function transferSiteOwner(siteId: string, toUserId: string): Promise<void> {
-  return (await getStore()).transferSiteOwner(siteId, toUserId);
-}
+
 export async function listSitesByOwner(ownerId: string): Promise<SiteSummary[]> {
   return (await getStore()).listSitesByOwner(ownerId);
 }
@@ -1058,7 +1048,7 @@ export async function pruneOauth(now: number = Date.now()): Promise<number> { re
 export async function claimSiteAudited(siteId: string, ownerId: string, audit: InsertAuditInput, adminLog?: AdminLogEntry): Promise<boolean> {
   return (await getStore()).claimSiteAudited(siteId, ownerId, audit, adminLog);
 }
-export async function insertUploadSession(u: UploadSessionRow): Promise<void> { return (await getStore()).insertUploadSession(u); }
+export async function insertUploadSession(u: UploadSessionRow): Promise<void> { await (await getStore()).insertUploadSession(u); }
 export async function getUploadSessionRow(versionId: string): Promise<UploadSessionRow | null> { return (await getStore()).getUploadSession(versionId); }
 export async function setUploadSessionFiles(versionId: string, files: UploadSessionRow["files"]): Promise<void> { return (await getStore()).setUploadSessionFiles(versionId, files); }
 export async function deleteUploadSession(versionId: string): Promise<void> { return (await getStore()).deleteUploadSession(versionId); }
@@ -1228,3 +1218,7 @@ export async function writeSettings(scope: string, writes: SettingWrite[], updat
 }
 
 export async function compareUploadSessionFiles(versionId: string, before: UploadSessionRow["files"], after: UploadSessionRow["files"]): Promise<boolean> { return (await getStore()).compareUploadSessionFiles(versionId, before, after); }
+
+/** Internal, parameterized metadata access for the shared RBAC repository. */
+export async function rbacQuery(...args: Parameters<RbacQuery>): ReturnType<RbacQuery> { return (await getStore()).rbacQuery(...args); }
+export async function rbacTransaction<T>(work: (q: RbacQuery) => Promise<T>): Promise<T> { return (await getStore()).rbacTransaction(work); }

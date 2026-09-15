@@ -1,8 +1,44 @@
 import type { Messages } from "@/lib/i18n";
 
+
 /** Client components under src/components (grid, uploader, sharing drawer, version history,
  *  personal centre cards, header chrome). Keys are the English source strings exactly as in code. */
 export const components: Messages = {
+  "Saved": "已保存",
+  "Request failed": "请求失败",
+  "Disabled": "已停用",
+  "Email address": "邮箱地址",
+  "Administrator email": "管理员邮箱",
+  "Platform administrator": "平台管理员",
+  "Workspaces": "工作空间",
+  "Workspace": "工作空间",
+  "Workspace members": "工作空间成员",
+  "Workspace role": "工作空间角色",
+  "Workspace administrator": "租户管理员",
+  "Member": "成员",
+  "Save member": "保存成员",
+  "Create workspace": "创建工作空间",
+  "Workspace ID": "工作空间 ID",
+  "Workspace name": "工作空间名称",
+  "Claim anonymous artifacts": "认领匿名产物",
+  "Claim and move": "认领并迁入",
+  "Claim {n} artifacts from this browser and move them to the selected workspace.": "认领此浏览器创建的 {n} 个产物并迁入所选工作空间。",
+  "Membership is permanent until removed. Share links grant separate, revocable access.": "成员授权持续有效，直到被移除；分享链接提供独立、可撤销的访问授权。",
+  "Site role": "站点角色",
+  "Site administrator": "站点管理员",
+  "Collaborator": "协作者",
+  "Members and editable share links grant editing. Signing in alone does not.": "通过成员身份或可编辑分享链接获得编辑权，仅登录不会获得编辑权。",
+  "Shared version": "分享的版本",
+  "Follow latest version": "跟随最新版本",
+  "Version {n}": "版本 {n}",
+  "Link permissions": "链接权限",
+  "Can edit": "可编辑",
+  "Can comment (coming next)": "可评论（功能待上线）",
+  "View only": "纯只读",
+  "Editable links change this site for everyone following its latest version.": "通过可编辑链接发布的新版本，会影响所有跟随最新版的访问者。",
+  "Editable share": "可编辑分享",
+  "Comment access reserved": "已预留评论权限",
+
   // ── Connected applications (OAuth) ──
   "Connected applications": "已连接的应用",
   "{n} application": "{n} 个应用",
@@ -58,8 +94,11 @@ export const components: Messages = {
   "Failed to revoke": "撤销失败",
   "Network error. Try again later.": "网络错误，稍后再试。",
   "Just now": "刚刚",
+  "{n} minute ago": "{n} 分钟前",
   "{n} minutes ago": "{n} 分钟前",
+  "{n} hour ago": "{n} 小时前",
   "{n} hours ago": "{n} 小时前",
+  "{n} day ago": "{n} 天前",
   "{n} days ago": "{n} 天前",
   "Link copied": "链接已复制",
 
@@ -302,8 +341,6 @@ export const components: Messages = {
   "The site address itself is closed; only the share links below get in.": "站点地址本身已经关上，只有下面的分享链接进得来。",
   "Anyone with this address can open it right now.": "拿到这个地址的人现在就能打开。",
   "Who can edit": "谁能编辑",
-  "Even when open to signed-in users, they can only change the content; renaming, rollback, deletion and sharing stay yours alone.":
-    "开放给登录用户，他们也只能改内容；重命名、回滚、删除、分享始终只有你。",
 
   // ── Share links ──
   "Failed to load share links": "加载分享链接失败",
@@ -367,7 +404,7 @@ export const components: Messages = {
   // "My sites" rail + search
   "Search my sites": "搜索我的站点",
   "{n} site": "{n} 个站点",
-  "Sign in to edit and share this site; it becomes yours the moment you do": "登录后即可编辑和分享此站点；登录那一刻它就归你所有",
+  "Sign in and explicitly claim this site in Workspaces": "登录后在工作空间中主动认领此站点",
   // ── app shell (sidebar, top bar) and the home hero ──────────────────────
   "Home": "首页",
   "Explore": "发现作品",

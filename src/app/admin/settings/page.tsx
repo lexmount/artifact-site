@@ -4,6 +4,7 @@
 // force, where it comes from, and what the environment would give instead; "Use environment"
 // takes the console value off again.
 import { useCallback, useEffect, useState } from "react";
+import { PreviewKeySettings } from "@/components/admin/preview-key-settings";
 import { Loader2 } from "lucide-react";
 import { useLocale, useT } from "@/components/locale-provider";
 import { adminFetch, formatBytes, formatWhen } from "@/components/admin/format";
@@ -99,6 +100,7 @@ export default function AdminSettingsPage() {
         {saved && <span className="drawer-note" role="status">{saved}</span>}
         {error && <span className="drawer-error" role="alert">{error}</span>}
       </div>
+      <PreviewKeySettings />
     </form>
   );
 }

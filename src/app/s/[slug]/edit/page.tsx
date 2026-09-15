@@ -1,3 +1,4 @@
+import { canReadVersion, requestShareAccess } from "@/lib/share";
 // Editor route /s/[slug]/edit — reads a version's source off disk (there is no raw-file API; the
 // server component reads the immutable version tree directly) and hands it to the client Editor.
 // Single sites edit the whole entry doc; folder sites pick one text file to edit.
@@ -47,7 +48,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function EditorPage({ params, searchParams }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ version?: string | string[]; pick?: string | string[]; t?: string | string[] }>;
+  searchParams: Promise<{ version?: string | string[]; pick?: string | string[]; share?: string; t?: string | string[] }>;
 }) {
   const { slug } = await params;
   const sp = await searchParams;
@@ -61,14 +62,16 @@ export default async function EditorPage({ params, searchParams }: {
   // use (requireCapability(…, "content")), so this UI gate can never be wider than the server's.
   // `?t=` is handed to it as well, so a visitor arriving via an editable link gets an unlocked first
   // paint without waiting for hydration to fish the token out of the URL.
-  const permissions = await describePermissions(
-    requestFromHeaders(await headers(), `/s/${slug}/edit`, firstParam(sp?.t)),
-    view.site,
-  );
+  const request = requestFromHeaders(await headers(), `/s/${slug}/edit`, firstParam(sp?.t));
+  if(sp.share)request.headers.set("x-artifact-share",sp.share);
+  const permissions = await describePermissions(request,view.site);
+  if(!permissions.canEditContent) notFound();
   const canEdit = permissions.canEditContent;
 
   const { id: siteId } = view.site;
-  const versions = (await listVersions(slug)) ?? [];
+  const allVersions = (await listVersions(slug)) ?? [];
+  const link = await requestShareAccess(request,view.site);
+  const versions = link ? allVersions.filter(v=>v.id === (link.versionId ?? view.site.currentVersionId)) : allVersions;
   const plan = planEditEntry({
     versions,
     currentVersionId: view.version.id,
@@ -96,6 +99,7 @@ export default async function EditorPage({ params, searchParams }: {
   // entry is therefore equal to view.version.entry.
   const base = versions.find((v) => v.id === plan.baseVersionId) ?? view.version;
   const versionId = base.id;
+  if(!(await canReadVersion(request,view.site,versionId)))notFound();
   const entry = base.entry;
   // Only when it is not the current version do we hand "you are editing from an older version" to
   // the editor to display, and make the editing surface fetch its source from that version.

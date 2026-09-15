@@ -31,6 +31,22 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
     await store.close();
   });
 
+  it("keeps a pool connection available while RBAC callers wait for the advisory lock", async () => {
+    const pool = Reflect.get(store, "pool") as pg.Pool;
+    const timeout = pool.options.connectionTimeoutMillis;
+    pool.options.connectionTimeoutMillis = 1000; // A regression fails instead of hanging the suite.
+    try {
+      const results = await Promise.allSettled(Array.from({ length: 24 }, () => store.rbacTransaction(async q => {
+        // Let other transactions reach the lock before requiring an ordinary pooled read.
+        await q("SELECT pg_sleep(0.025)");
+        return store.getSite("missing-pool-test-site");
+      })));
+      expect(results.every(r => r.status === "fulfilled" && r.value === null)).toBe(true);
+      await expect(store.rbacTransaction(async () => { throw new Error("rollback queue test"); })).rejects.toThrow("rollback queue test");
+      expect(await store.rbacTransaction(q => q("SELECT 1 AS ready"))).toEqual([{ready:1}]);
+    } finally { pool.options.connectionTimeoutMillis = timeout; }
+  });
+
   it("atomically appends upload chunks across concurrent requests", async () => {
     const versionId = "ver_mcp_cas_test";
     await store.insertUploadSession({ versionId, siteId: "site_mcp_cas_test", targetSlug: "ver_mcp_parent_test", title: null, ownerKey: "u:test", files: [], createdAt: Date.now() });
@@ -138,7 +154,7 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
       expect(await listed({ userId: user.id })).toBe(false); // not the owner
 
       // Claiming moves the exception from the browser to the account.
-      expect(await store.setSiteOwnerIfUnowned(S3, user.id)).toBe(true);
+      expect(await store.rbacQuery("UPDATE sites SET owner_id=$1,tenant_id='init' WHERE id=$2 AND owner_id IS NULL RETURNING id", [user.id,S3])).toHaveLength(1);
       expect(await listed({ anonId: "anon_pgit" })).toBe(false);
       expect(await listed({ userId: user.id })).toBe(true);
       // …and the owner view never filtered in the first place.
@@ -148,7 +164,7 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
       // the home page's prune passes, so leaving them out silently drops their recent-shelf entry.
       const mate = await store.upsertUser({ authProvider: "t", providerSubject: `pgit-mate-${Date.now()}` });
       expect(await listed({ userId: mate.id })).toBe(false); // not yet granted
-      await store.addCollaborator(S3, mate.id, user.id);
+      await store.rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_by,granted_at) VALUES($1,$2,'editor',$3,$4)", [S3,mate.id,user.id,Date.now()]);
       expect(await listed({ userId: mate.id })).toBe(true);
 
       await store.updateSiteSharing(S3, "public", "owner");

@@ -901,7 +901,7 @@ input.field, textarea.field, .field input, .field textarea, .field select, .titl
 .folder-hint { font-size: 11px; color: var(--muted); padding: 0 10px; margin-top: 30px; }
 .folder-heading { display: flex; gap: 10px; align-items: baseline; margin: 0 0 13px; }
 .folder-heading h2 { font-size: 17px; font-weight: 600; margin: 0; }
-.folder-heading span { font-size: 12px; color: var(--muted); }
+.folder-heading span { font-size: 14px; color: var(--muted); }
 .folder-note { font-size: 12px; color: var(--warning); margin: 0 0 12px; }
 .list-header, .site-row { display: grid; grid-template-columns: minmax(220px, 1fr) 120px 60px 110px 28px; gap: 14px; align-items: center; }
 .list-header { font-size: 12px; color: var(--muted); padding: 10px 0; border-bottom: 1px solid var(--line); }
@@ -1294,3 +1294,13 @@ input.field, textarea.field, .field input, .field textarea, .field select, .titl
 .consent-scopes li { margin: 4px 0; }
 .consent-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .consent-actions .btn { padding: 9px 16px; border-radius: 7px; font-size: 14px; }
+
+/* Tenant settings reuse the sharing controls, with room for a full member directory. */
+.tenant-settings { max-width: 900px; }
+.tenant-settings .share-sec { margin-top: 32px; }
+.tenant-settings .share-sec h2 { font-size: 18px; }
+.tenant-settings .share-add { flex-wrap: wrap; align-items: center; }
+.tenant-settings .share-add input { flex: 1 1 180px; }
+.tenant-settings select { max-width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.tenant-settings .share-people span { min-width: 0; overflow-wrap: anywhere; }
+.tenant-settings .share-people button { flex-shrink: 0; }

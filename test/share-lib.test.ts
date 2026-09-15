@@ -17,6 +17,7 @@ import type { ShareRow } from "@/lib/types";
 const share = (over: Partial<ShareRow> = {}): ShareRow => ({
   id: "shr_1",
   siteId: "site_1",
+  mode: "view", versionId: null,
   tokenHash: "th",
   policy: "passcode",
   allowAi: false,

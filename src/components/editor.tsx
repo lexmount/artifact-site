@@ -1,4 +1,5 @@
 "use client";
+import { siteFetch as fetch, withShareContext } from "@/lib/share-context";
 
 // In-browser editor. The default is **visual**: you land straight in the preview and double-click text to change it,
 // with no source code and no file list in sight. Source editing was not removed — folder sites still need it for
@@ -356,7 +357,7 @@ export default function Editor(props: {
           <MoreMenu label={t("More")} iconOnly>
             {/* The "Preview" in the toolbar switches in place (no navigation), so this external link is called
                 "Open in new tab" instead — calling both of them preview only leaves people guessing which one leaves the page. */}
-            <a role="menuitem" className="menu-item" href={`/api/preview/${slug}/`} target="_blank" rel="noreferrer" title={t("Open the artifact itself in a new tab")}><ExternalLink size={14} aria-hidden="true" /> {t("Open in new tab")}</a>
+            <a role="menuitem" className="menu-item" href={withShareContext(`/api/preview/${slug}`)} target="_blank" rel="noreferrer" title={t("Open the artifact itself in a new tab")}><ExternalLink size={14} aria-hidden="true" /> {t("Open in new tab")}</a>
             {editToken && (
               <button role="menuitem" className="menu-item" type="button" onClick={shareEditable} title={t("Copy an editable link: anyone who has it can edit this site")}>
                 <Share2 size={14} aria-hidden="true" /> {t("Share editable link")}
@@ -461,7 +462,7 @@ export default function Editor(props: {
                 key={reloadKey}
                 className="editor-preview"
                 title={t("Site preview")}
-                src={`/api/preview/${slug}/?v=${reloadKey}`}
+                src={withShareContext(`/api/preview/${slug}?r=${reloadKey}`)}
                 sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
               />
             )}

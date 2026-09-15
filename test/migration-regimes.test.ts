@@ -1,3 +1,4 @@
+import { setSiteOwnerIfUnowned } from "./fixtures/legacy-identity";
 // What each generation of row does when ownership enforcement is switched on. The dangerous case
 // is a deployment that jumps straight to enforcement: rows created before the identity migration
 // carry no signal at all, and without the grandfather clause they freeze permanently — claiming
@@ -7,7 +8,7 @@ import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDbForTests, createId, getSiteBySlug, insertSiteWithVersion, setSiteOwnerIfUnowned, upsertUser } from "@/lib/db";
+import { closeDbForTests, createId, getSiteBySlug, insertSiteWithVersion, upsertUser } from "@/lib/db";
 import { atLeast, resolveCapability, resolveViewer } from "@/lib/authz";
 import type { Site } from "@/lib/types";
 
@@ -82,8 +83,8 @@ describe("grandfather clause", () => {
 // The stage-1-to-stage-3 path: nobody claimed anything in advance, so ownership has to settle at
 // the moment someone is blocked and signs in. Adoption must not turn a shared site into one
 // person's private property.
-describe("adopting a legacy site does not lock out the people it was shared with", () => {
-  it("downgrades other token holders to content rather than refusing them", async () => {
+describe("claiming retires legacy edit tokens", () => {
+  it("requires a new share or membership after claiming", async () => {
     const s = await mk("shared-legacy", {});
     enforce();
     const holder = resolveViewer(req({ "x-edit-token": s.editToken }));
@@ -98,7 +99,7 @@ describe("adopting a legacy site does not lock out the people it was shared with
     const adopted = (await getSiteBySlug("shared-legacy"))!;
 
     const cap = await resolveCapability(holder, adopted);
-    expect(cap).toBe("content");
+    expect(cap).toBe("none");
     expect(atLeast(cap, "manage")).toBe(false);
   });
 

@@ -70,6 +70,9 @@ export const EXPIRY_DAYS: readonly number[] = [7, 30, 90];
  * reconstruct a working link. Same shape as sessions.
  */
 export interface Share {
+  mode: import("@/lib/rbac").ShareMode;
+  /** null follows current; a value restricts the link to that snapshot. */
+  versionId: string | null;
   id: string;
   siteId: string;
   policy: SharePolicy;
@@ -110,6 +113,8 @@ export interface ShareRow extends Share {
 }
 
 export interface InsertShareInput {
+  mode?: import("@/lib/rbac").ShareMode;
+  versionId?: string | null;
   id: string;
   siteId: string;
   tokenHash: string;
@@ -182,6 +187,8 @@ export type Capability = "none" | "content" | "manage" | "owner";
 
 /** A hosted front-end site. `currentVersionId` points at the version served at /s/<slug>. */
 export interface Site {
+  /** Organization owning this resource. */
+  tenantId: string;
   id: string;
   slug: string;
   title: string;
@@ -229,7 +236,7 @@ export interface Site {
  *  to the IdP — never the email, which would let an attacker pre-register a victim's address. */
 export interface User {
   id: string;
-  /** Reserved for multi-tenancy; always null in v1 (no tenants table exists). */
+  /** Default tenant for creation; authorization uses tenant_members. */
   tenantId: string | null;
   authProvider: string;
   providerSubject: string;
@@ -343,7 +350,7 @@ export interface OauthConnection {
 export interface SiteCollaborator {
   siteId: string;
   userId: string;
-  role: "editor";
+  role: "admin" | "editor";
   grantedBy: string | null;
   grantedAt: number;
 }

@@ -4,7 +4,7 @@ const shell = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 export function guideCommands(base: string, token = "YOUR_TOKEN") {
   const address = shell(base);
   return {
-    install: "npm --prefix cli ci\nnpm --prefix cli run build\n(cd cli && npm link)",
+    install: "npm install -g @artifact-site/cli",
     login: `artifact-site login --base ${address}`,
     token: `export ARTIFACT_SITE_URL=${address}\nprintf 'Token: '; read -r -s ARTIFACT_SITE_TOKEN; printf '\\n'\nexport ARTIFACT_SITE_TOKEN`,
     verify: `artifact-site whoami --base ${address}`,

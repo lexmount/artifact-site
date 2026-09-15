@@ -30,6 +30,10 @@ AI 越来越擅长生成东西：一张交互图表、一份分析报告、一�
 
 **artifact-site 把这些作品集中到你自己的服务器上，变成可分享、可更新、可检索的链接。** 可以把它理解成团队自托管的、类似 Claude Artifacts 或 OpenAI Sites 的作品空间：作品由你选择的 AI 工具或内部工具生成，artifact-site 负责发布和管理。上传 HTML、静态网站或文档后，团队可以在线查看、设置访问权限并保留版本；coding agent 也能发布、更新、搜索和读取已有作品。
 
+> **[在线体验](https://artifact-site.app.lexmount.com/)，无需安装。** 拖入文件即可发布并获取分享链接，无需登录。
+>
+> 匿名发布的内容会在几天后过期。演示站为公共体验环境，请勿上传敏感信息。
+
 <p align="center"><img src="assets/demo.zh-CN.gif" alt="把一个 HTML 仪表盘拖进 artifact-site：几秒后变成链接，在沙箱里渲染，分享面板一键复制链接" width="820"></p>
 <p align="center"><sub><b>拖进来，拿链接，分享出去。</b>在线查看刚发布的作品，通过分享设置决定谁能打开。</sub></p>
 
@@ -103,7 +107,7 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 
 配置了 OIDC 的团队部署支持设备登录授权；本地匿名体验不需要这个步骤。agent 根据指南和服务器的发布策略选择认证方式。云端 agent 无法直接访问你电脑上的 `127.0.0.1`。
 
-CLI 需要 Node 24+。npm 包发布前，请按 [CLI 安装说明](../cli/README.md)从源码构建并安装，再运行：
+CLI 需要 Node 24+。用 `npm install -g @artifact-site/cli` 安装（细节和 MCP 配置见 [cli/README.md](../cli/README.md)），再运行：
 
 ```bash
 artifact-site login --base https://your-server        # 一次性设备登录

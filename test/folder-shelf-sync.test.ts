@@ -82,24 +82,23 @@ describe("edits made while the import is in flight", () => {
 });
 
 describe("ordering with site adoption", () => {
-  it("claims this browser's legacy sites BEFORE importing, so their assignments are not skipped", async () => {
+  it("does not claim sites implicitly when importing folders", async () => {
     store.set(KEY, shelf);
     store.set("sites:editToken:abc", "tok-abc");
     respond = (url) => new Response(JSON.stringify(url.endsWith("/adopt") ? { adopted: 1, slugs: ["abc"] } : { folders: [], assign: {} }), { status: 200 });
     const { syncLocalShelf } = await import("@/lib/folder-shelf");
     expect(await syncLocalShelf("u1")).toBe(true);
-    expect(calls.map((c) => c.url)).toEqual(["/api/me/adopt", "/api/me/folders/import"]);
-    expect(JSON.parse(calls[0].body!)).toEqual({ sites: [{ slug: "abc", editToken: "tok-abc" }] });
+    expect(calls.map((c) => c.url)).toEqual(["/api/me/folders/import"]);
   });
 
-  it("adoption is one call per page load, shared with the welcome burst", async () => {
+  it("welcome and folder import never claim sites automatically", async () => {
     store.set(KEY, shelf);
     store.set("sites:editToken:abc", "tok-abc");
     respond = (url) => new Response(JSON.stringify(url.endsWith("/adopt") ? { adopted: 0 } : { folders: [], assign: {} }), { status: 200 });
     const { adoptStoredSites } = await import("@/lib/adoption");
     const { syncLocalShelf } = await import("@/lib/folder-shelf");
     await Promise.all([adoptStoredSites(), syncLocalShelf("u1")]);
-    expect(calls.filter((c) => c.url === "/api/me/adopt")).toHaveLength(1);
+    expect(calls.filter((c) => c.url === "/api/me/adopt")).toHaveLength(0);
   });
 
   it("without stored tokens nothing is offered for adoption and the import goes straight through", async () => {

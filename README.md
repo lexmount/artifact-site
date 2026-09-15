@@ -28,6 +28,10 @@ AI tools produce more finished work every day: interactive charts, analysis repo
 
 **artifact-site brings that work onto your own server as links you can share, update and search.** Think of it as a self-hosted workspace for your team's artifacts, similar to Claude Artifacts or OpenAI Sites: your chosen AI tools or internal tools create the work, and artifact-site publishes and manages it. Upload HTML, static sites or documents so your team can view them online, control access and keep revisions. Coding agents can publish, update, search and read existing work too.
 
+> **[Try the live demo](https://artifact-site.app.lexmount.com/)** — no installation needed. Drag and drop a file to publish it and get a shareable link, without signing in.
+>
+> Anonymous uploads expire after a few days. This is a public demo; please do not upload sensitive information.
+
 <p align="center"><img src="docs/assets/demo.gif" alt="Dropping an HTML dashboard onto artifact-site: it becomes a link within seconds, renders in a sandboxed frame, and the sharing panel copies the link" width="820"></p>
 <p align="center"><sub><b>Drop a file, get a link, share it.</b> View your published work online and choose who can open it in the sharing settings.</sub></p>
 
@@ -101,7 +105,7 @@ Publish this project's output to artifact-site. Publishing guide: https://your-s
 
 Team deployments with OIDC support device sign-in approval; the anonymous local setup above does not require it. The agent follows the guide and the server's publishing policy to choose authentication. A cloud agent cannot directly reach `127.0.0.1` on your computer.
 
-The CLI requires Node 24+. Until the npm package is published, follow the [CLI installation instructions](cli/README.md) to build and install it from source, then run:
+The CLI requires Node 24+. Install it with `npm install -g @artifact-site/cli` (details and the MCP setup: [cli/README.md](cli/README.md)), then run:
 
 ```bash
 artifact-site login --base https://your-server        # one-time device sign-in

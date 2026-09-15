@@ -1,5 +1,5 @@
 // Anonymous browser identity. Lets someone who has never signed in keep editing the sites they
-// created, and lets a later sign-in adopt all of them in one statement.
+// created. Claiming later requires an explicit destination tenant.
 //
 // Deliberately a cookie, NOT the client IP. This app sits behind a gateway, so most requests
 // arrive with the gateway's address — an IP-keyed identity would put every colleague in one

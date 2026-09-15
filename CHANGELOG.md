@@ -5,7 +5,22 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+### Fixed
+
+- Prevent concurrent RBAC operations from exhausting the PostgreSQL connection pool while
+  waiting for the administration lock. Keep version access checks free of duplicate read audits.
+
 ### Added
+
+- Tenant-scoped RBAC with `init` and `anonymous` system tenants, tenant/site administrators,
+  permanent editor memberships, independent view/comment/edit share modes and fixed-version links.
+  Workspaces provides member management and explicit anonymous-artifact claiming. Comment
+  permissions are reserved; comment threads and UI will follow separately. See [RBAC](docs/RBAC.md).
+- Encrypted, version-scoped preview credentials that recheck share revocation and tenant access.
+  A shared database key is generated automatically; platform administrators can rotate it from
+  Settings without a restart. `PREVIEW_SIGNING_SECRET` is an optional first-start seed. Legacy
+  collaborators now have editing rights only; signing in alone no longer grants editing or
+  automatically claims anonymous sites.
 
 - README in 简体中文, 日本語, Deutsch, Français and Español under `docs/`, with a banner that
   follows GitHub's colour scheme.

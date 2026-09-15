@@ -67,11 +67,11 @@ const PROTECTED_DESCRIPTION: Record<Exclude<SharePolicy, "public">, string> = {
 /** The live site + version behind a share, or null once either is gone. Wrapped in cache() so
  *  generateMetadata and the page — two calls in the same request — share one pair of lookups
  *  (a pass-through outside a request scope, i.e. when tests invoke the page directly). */
-const resolveTarget = cache(async (siteId: string): Promise<{ site: Site; version: Version } | null> => {
+const resolveTarget = cache(async (siteId: string, versionId?: string | null): Promise<{ site: Site; version: Version } | null> => {
   const site = await getSite(siteId);
   if (!site || site.deletedAt || !site.currentVersionId) return null;
-  const version = await getVersion(site.currentVersionId);
-  return version ? { site, version } : null;
+  const version = await getVersion(versionId || site.currentVersionId);
+  return version && version.siteId===site.id ? { site, version } : null;
 });
 
 /** The artifact's own `<meta name="description">`, or null. Best-effort: unreadable storage makes
@@ -104,7 +104,7 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
   const [share, t] = await Promise.all([getShareByTokenHash(hashToken(token)), getT()]);
   if (!share || !isLive(share)) return { title: t(DEAD_TITLE), description: null };
 
-  const target = await resolveTarget(share.siteId);
+  const target = await resolveTarget(share.siteId,share.versionId);
   if (!target) return { title: t(DEAD_TITLE), description: null };
 
   const title = `${target.site.title} — artifact-site`;
@@ -145,7 +145,7 @@ export default async function SharedViewPage({
 
   if (!access.ok) return denied(t, access.reason, token, e);
 
-  const target = await resolveTarget(access.share.siteId);
+  const target = await resolveTarget(access.share.siteId,access.share.versionId);
   // The link is live but the artifact is not. Same undifferentiated answer — from the reader's seat
   // a deleted site and a revoked link are the same event.
   if (!target) return dead(t);
@@ -160,7 +160,7 @@ export default async function SharedViewPage({
 
   // Q&A mode: the assistant appears for THIS link's readers only when its owner switched it on —
   // and it carries no edit coordinates (see buildAssistantContext's null-site arm).
-  return reader(t, target.site, Boolean(config.assistantUrl && access.share.allowAi));
+  return reader(t, target.site, Boolean(config.assistantUrl && access.share.allowAi), token, access.share.versionId, access.share.mode);
 }
 
 // --- surfaces -----------------------------------------------------------------
@@ -256,7 +256,7 @@ function passcodeForm(t: Translator, token: string, error?: string) {
 }
 
 /** The artifact itself, full-bleed under a bar that offers reading and nothing else. */
-function reader(t: Translator, site: Site, assistant = false) {
+function reader(t: Translator, site: Site, assistant = false, token = "", versionId: string | null = null, mode = "view") {
   return (
     // Same full-screen stage as /s/<slug>, minus every control. `data-bar="open"` is static here:
     // the collapsing behaviour over there is driven by JavaScript, and this page has none — so the
@@ -270,7 +270,7 @@ function reader(t: Translator, site: Site, assistant = false) {
               get a laxer sandbox than the owner does. */}
           <iframe
             className="fs-frame"
-            src={`/api/preview/${site.slug}/`}
+            src={`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`}
             title={site.title}
             sandbox="allow-forms allow-modals allow-scripts allow-popups allow-downloads"
             allow="fullscreen"
@@ -290,14 +290,15 @@ function reader(t: Translator, site: Site, assistant = false) {
             <div className="viewer-meta">
               <span className="kind-chip">{site.kind === "single" ? t("Single file") : site.kind === "document" ? t("Document") : t("Folder")}</span>
               <span className="dot" aria-hidden="true" />
-              <span>{t("Read-only share")}</span>
+              <span>{t(mode === "edit" ? "Editable share" : mode === "comment" ? "Comment access reserved" : "Read-only share")}</span>
             </div>
           </div>
           <div className="controls">
+            {mode === "edit" && <Link className="btn" href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}`}>{t("Edit")}</Link>}
             {/* Unpinned: a share is a window onto whatever is CURRENT. Naming a version here would
                 quietly freeze the link at the moment it was opened, and the reader has no history
                 to navigate back out of it — that is the owner's surface, not this one. */}
-            <a className="btn sm ghost" href={`/api/preview/${site.slug}/`} target="_blank" rel="noreferrer">
+            <a className="btn sm ghost" href={`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`} target="_blank" rel="noreferrer">
               {t("Open in a new tab")}
             </a>
           </div>
