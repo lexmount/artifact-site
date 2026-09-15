@@ -101,7 +101,7 @@ Publish this project's output to artifact-site. Publishing guide: https://your-s
 
 Team deployments with OIDC support device sign-in approval; the anonymous local setup above does not require it. The agent follows the guide and the server's publishing policy to choose authentication. A cloud agent cannot directly reach `127.0.0.1` on your computer.
 
-The CLI requires Node 24+. Until the npm package is published, follow the [CLI installation instructions](cli/README.md) to build and install it from source, then run:
+The CLI requires Node 24+. Install it with `npm install -g @artifact-site/cli` (details and the MCP setup: [cli/README.md](cli/README.md)), then run:
 
 ```bash
 artifact-site login --base https://your-server        # one-time device sign-in

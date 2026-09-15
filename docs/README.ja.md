@@ -103,7 +103,7 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 
 OIDC を設定したチーム向けのデプロイでは、デバイスサインインの承認に対応しています。上記の匿名ローカル環境では不要です。エージェントはガイドとサーバーの公開ポリシーに従って認証方法を選びます。クラウド上のエージェントは、あなたのコンピューターの `127.0.0.1` に直接アクセスできません。
 
-CLI には Node 24 以上が必要です。npm パッケージが公開されるまでは、[CLI のインストール手順](../cli/README.md)に従ってソースからビルドしてインストールし、次を実行します。
+CLI には Node 24 以上が必要です。`npm install -g @artifact-site/cli` でインストールし（詳細と MCP の設定は [cli/README.md](../cli/README.md)）、次を実行します。
 
 ```bash
 artifact-site login --base https://your-server        # 一度きりのデバイスサインイン

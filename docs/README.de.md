@@ -103,7 +103,7 @@ Veröffentliche die Ausgabe dieses Projekts auf artifact-site. Anleitung zum Ver
 
 Team-Installationen mit OIDC unterstützen die Bestätigung einer Geräteanmeldung; die anonyme lokale Installation oben braucht das nicht. Der Agent folgt dem Leitfaden und der Veröffentlichungsrichtlinie des Servers, um die Authentifizierung zu wählen. Ein Cloud-Agent kann `127.0.0.1` auf Ihrem Computer nicht direkt erreichen.
 
-Die CLI erfordert Node 24+. Bis das npm-Paket veröffentlicht ist, folgen Sie der [CLI-Installationsanleitung](../cli/README.md), um sie aus dem Quelltext zu bauen und zu installieren, und führen Sie dann aus:
+Die CLI erfordert Node 24+. Installieren Sie sie mit `npm install -g @artifact-site/cli` (Details und die MCP-Einrichtung: [cli/README.md](../cli/README.md)) und führen Sie dann aus:
 
 ```bash
 artifact-site login --base https://your-server        # einmalige Geräteanmeldung

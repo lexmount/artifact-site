@@ -103,7 +103,7 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 
 配置了 OIDC 的团队部署支持设备登录授权；本地匿名体验不需要这个步骤。agent 根据指南和服务器的发布策略选择认证方式。云端 agent 无法直接访问你电脑上的 `127.0.0.1`。
 
-CLI 需要 Node 24+。npm 包发布前，请按 [CLI 安装说明](../cli/README.md)从源码构建并安装，再运行：
+CLI 需要 Node 24+。用 `npm install -g @artifact-site/cli` 安装（细节和 MCP 配置见 [cli/README.md](../cli/README.md)），再运行：
 
 ```bash
 artifact-site login --base https://your-server        # 一次性设备登录
