@@ -21,6 +21,10 @@ get wrong.
   in `src/content/publish-skill.md`, served at `/for-agents.md`.
 - Notes about any one company's own deployment do not belong in this repository; keep them with
   that deployment.
+- **`README.md` is the source; the translations in `docs/README.*.md` follow it.** A change to
+  the README lands in the same PR as the matching change to every translation, and
+  `npm run check:readme` (also in CI) must pass: it resolves every relative link and anchor in
+  all of them.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

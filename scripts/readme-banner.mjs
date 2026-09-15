@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 // Renders the README banner: docs/assets/artifact-site-banner.png (light) and
-// artifact-site-banner-dark.png (dark), 2000×1000 with transparent corners, from the brand mark
+// artifact-site-banner-dark.png (dark), 2000×1000 on a transparent background, from the brand mark
 // in src/app/icon.png and the wordmark set in Inter (fetched from Google Fonts while rendering,
 // so the machine needs network access). Re-run after changing the copy below.
+//
+// No card: the mark, the wordmark and the wave sit directly on whichever page shows the image, and
+// the wave fades out before the left and right edges, so the image has no visible boundary
+// on GitHub in either colour scheme. A framed card with rounded corners read as a widget dropped
+// onto the README, and its corners clipped the wave.
 //
 //   node scripts/readme-banner.mjs
 //   E2E_CHROME=/path/to/chrome node scripts/readme-banner.mjs   # a Chrome other than the macOS default
@@ -23,13 +28,13 @@ const copy = {
 const themes = {
   light: {
     file: "artifact-site-banner.png",
-    card: "#fdfdfd", border: "#e3e7e1", ink: "#171a17", tag: "#2f342f", sub: "#626862", rule: "#557341",
-    wave: "#e4edc8", wave1: 0.9, wave2: 0.55, glow: "#e4edc8", glowo: 0.6,
+    ink: "#171a17", tag: "#2f342f", sub: "#626862", rule: "#557341",
+    wave: "#e4edc8", wave1: 0.9, wave2: 0.55,
   },
   dark: {
     file: "artifact-site-banner-dark.png",
-    card: "#161916", border: "#2a2f2a", ink: "#f4f6f1", tag: "#d5dad1", sub: "#9ba398", rule: "#8fb46f",
-    wave: "#557341", wave1: 0.28, wave2: 0.16, glow: "#557341", glowo: 0.22,
+    ink: "#f4f6f1", tag: "#d5dad1", sub: "#9ba398", rule: "#8fb46f",
+    wave: "#557341", wave1: 0.28, wave2: 0.16,
   },
 };
 
@@ -60,13 +65,44 @@ const cutMark = async (page, color) =>
     return t.toDataURL("image/png");
   }, [icon, color]);
 
+/**
+ * Fade the wave out over the outer 14% of each side, so the image has no visible left or right
+ * edge on the page. Done on the pixels rather than with an SVG gradient mask: Chrome dithers
+ * gradient masks, and that noise made the PNG seven times larger than it is with a clean ramp. Only
+ * rows below the copy are touched (the wave and its accent line are the only things at the edges
+ * there), so a longer tagline can never be eaten by the fade.
+ */
+const fadeEdges = async (page, png) =>
+  Buffer.from((await page.evaluate(async (src) => {
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    const c = document.createElement("canvas");
+    c.width = img.width; c.height = img.height;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height);
+    const band = Math.round(c.width * 0.14);
+    const fromRow = Math.round(c.height * 0.62);
+    for (let y = fromRow; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        const edge = Math.min(x, c.width - 1 - x);
+        if (edge >= band) continue;
+        const k = edge / band;
+        d.data[(y * c.width + x) * 4 + 3] = Math.round(d.data[(y * c.width + x) * 4 + 3] * k * k * (3 - 2 * k)); // smoothstep
+      }
+    }
+    ctx.putImageData(d, 0, 0);
+    return c.toDataURL("image/png").split(",")[1];
+  }, `data:image/png;base64,${Buffer.from(png).toString("base64")}`)), "base64");
+
 const html = (t, mark) => `<!doctype html><meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&display=block" rel="stylesheet">
 <style>
   html, body { margin: 0; background: transparent; }
   .card { position: relative; width: 1000px; height: 500px; box-sizing: border-box; overflow: hidden;
-    border-radius: 36px; background: ${t.card}; border: 1px solid ${t.border}; font-family: Inter, sans-serif; }
+    background: transparent; font-family: Inter, sans-serif; }
   .card svg { position: absolute; inset: 0; width: 100%; height: 100%; }
   .stack { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
   .lockup { display: flex; align-items: center; gap: 26px; margin-top: -6px; }
@@ -79,11 +115,11 @@ const html = (t, mark) => `<!doctype html><meta charset="utf-8">
 </style>
 <div class="card">
   <svg viewBox="0 0 1000 500" preserveAspectRatio="none" aria-hidden="true">
-    <defs><radialGradient id="g" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="${t.glow}" stop-opacity="${t.glowo}"/><stop offset="1" stop-color="${t.glow}" stop-opacity="0"/></radialGradient></defs>
-    <circle cx="905" cy="70" r="300" fill="url(#g)"/>
-    <path d="M-20 400 C 140 330, 260 470, 430 430 S 700 560, 1020 470 L 1020 520 L -20 520 Z" fill="${t.wave}" fill-opacity="${t.wave1}"/>
-    <path d="M-20 450 C 160 390, 300 520, 480 470 S 780 560, 1020 500 L 1020 520 L -20 520 Z" fill="${t.wave}" fill-opacity="${t.wave2}"/>
-    <path d="M-20 360 C 120 300, 220 420, 380 392" fill="none" stroke="${t.rule}" stroke-opacity="0.35" stroke-width="1.5"/>
+    <g>
+      <path d="M-20 400 C 140 330, 260 470, 430 430 S 700 560, 1020 470 L 1020 520 L -20 520 Z" fill="${t.wave}" fill-opacity="${t.wave1}"/>
+      <path d="M-20 450 C 160 390, 300 520, 480 470 S 780 560, 1020 500 L 1020 520 L -20 520 Z" fill="${t.wave}" fill-opacity="${t.wave2}"/>
+      <path d="M-20 360 C 120 300, 220 420, 380 392" fill="none" stroke="${t.rule}" stroke-opacity="0.35" stroke-width="1.5"/>
+    </g>
   </svg>
   <div class="stack">
     <div class="lockup"><img src="${mark}" alt=""><div class="name">artifact-site</div></div>
@@ -115,7 +151,7 @@ try {
       { timeout: 30_000 },
     );
     const out = path.join(root, "docs/assets", t.file);
-    writeFileSync(out, await page.screenshot({ omitBackground: true }));
+    writeFileSync(out, await fadeEdges(page, await page.screenshot({ omitBackground: true })));
     console.log(`wrote ${path.relative(root, out)}`);
     await page.close();
   }
