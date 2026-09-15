@@ -5,7 +5,9 @@ the HTTP API documented at `/for-agents.md` and stores personal credentials per 
 `~/.config/artifact-site/tokens/<host>`.
 
 Remote MCP offers the same artifact operations directly from the platform, without installing
-this binary. Configure its URL and Bearer credential separately; see [MCP setup](../docs/MCP.md).
+this binary. Clients that implement MCP authorization (ChatGPT, Claude) sign in through the
+server's own OAuth consent page; others configure its URL and a Bearer credential; see
+[MCP setup](../docs/MCP.md).
 
 The deployment's `/for-agents#cli` and `/for-agents#mcp` pages provide copyable connection instructions for its address and authentication settings.
 
@@ -25,14 +27,15 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Keep that PATH entry in your shell startup file and restart your terminal or coding agent.
-Remote MCP uses the server URL and Authorization header; it does not use a local executable.
+Remote MCP uses the server URL, plus either the client's OAuth sign-in or an Authorization
+header; it does not use a local executable.
 
 To keep anonymous browser creation available alongside an operator token, explicitly set
 `ARTIFACT_CREATE_POLICY=open`. If the policy is unset, configuring `PUBLISH_API_TOKEN` changes
 the fallback policy to `token`, which rejects anonymous browser creation. Use `open` only where
 anonymous creation is intended; existing-site access and editing still follow their own rules.
 
-`login` requires an OIDC-configured server. CLI keyword find, read, info and skill work without a token where access permits. Remote MCP always requires a valid Bearer token. Publishing, updating, sharing and deleting require a token in the current client. The default open local setup issues no credentials; use browser uploads or the agent publishing guide, or configure OIDC or `PUBLISH_API_TOKEN` for authenticated CLI/MCP use. Supply an operator credential through `ARTIFACT_SITE_TOKEN`; operator tokens have broad privileges and cannot use the personal library (`find` without keywords). `whoami` prints “token present but not recognised by the server” for these tokens; verify them with a successful test publish instead. Environment tokens override saved tokens. `logout` forgets local credentials but does not revoke server-side tokens.
+`login` requires an OIDC-configured server. CLI keyword find, read, info and skill work without a token where access permits. Remote MCP always requires a valid Bearer token — an OAuth access token the client obtained by signing in, a personal token, or the operator token. Publishing, updating, sharing and deleting require a token in the current client. The default open local setup issues no credentials; use browser uploads or the agent publishing guide, or configure OIDC or `PUBLISH_API_TOKEN` for authenticated CLI/MCP use. Supply an operator credential through `ARTIFACT_SITE_TOKEN`; operator tokens have broad privileges and cannot use the personal library (`find` without keywords). `whoami` prints “token present but not recognised by the server” for these tokens; verify them with a successful test publish instead. Environment tokens override saved tokens. `logout` forgets local credentials but does not revoke server-side tokens.
 
 `login` runs the one-time device authorisation: it prints a message with a link and a code,
 opens the browser, and waits for you to click **Allow**. The publish token it receives is stored
@@ -86,8 +89,10 @@ artifact-site update k4wey6sCyFcm dist/ --expected-version ver_…
 ## Remote MCP
 
 MCP is hosted by the platform at `/mcp`; it does not require this CLI or Node on the client.
-Open `/for-agents#mcp` on your deployment to create a personal token and copy the remote
-configuration. See [the remote MCP guide](../docs/MCP.md) for tools, file transfers and migration.
+ChatGPT, Claude and other clients that implement MCP authorization connect with the address
+alone and sign in through the server's consent page. For other clients, open `/for-agents#mcp`
+on your deployment to create a personal token and copy the remote configuration. See
+[the remote MCP guide](../docs/MCP.md) for tools, file transfers and migration.
 The former `artifact-site mcp` stdio command has been removed. CLI commands remain available.
 
 ## Development

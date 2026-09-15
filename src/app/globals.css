@@ -783,6 +783,10 @@ input.field, textarea.field, .field input, .field textarea, .field select, .titl
 .lang-switch button { min-width: 44px; padding: 5px 12px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: 500 13px/1 var(--font-ui); transition: background .15s, color .15s; }
 .lang-switch button:hover { color: var(--ink); }
 .lang-switch button[aria-pressed="true"] { background: var(--green); color: var(--ink); font-weight: 600; }
+/* GitHub: the source, as a bare mark. Muted like the nav at rest, ink on hover; the box is the
+   avatar's size so the target is as easy to hit and the row keeps one height. */
+.site-header .github-link { flex: none; display: grid; place-items: center; width: 34px; height: 34px; color: var(--muted); transition: color .15s; }
+.site-header .github-link:hover, .site-header .github-link:focus-visible { color: var(--ink); }
 .avatar { width: 34px; height: 34px; border: 0; border-radius: 50%; background: var(--green); color: var(--ink); padding: 0; display: grid; place-items: center; font: 600 14px/1 var(--font-ui); cursor: pointer; }
 .site-header .auth-chip { position: relative; }
 .site-header .auth-menu { right: 0; left: auto; top: calc(100% + 8px); min-width: 220px; border: 1px solid var(--line); background: var(--bg); border-radius: 10px; box-shadow: var(--shadow); }
@@ -1283,3 +1287,10 @@ input.field, textarea.field, .field input, .field textarea, .field select, .titl
 .connection-token-value .btn { flex: 0 0 auto; min-height: 42px; white-space: nowrap; }
 
 .connection-copy-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* OAuth consent (/oauth/authorize): what the application gets, then the two answers. Same
+   narrow-hero shell as device authorization; nothing new in colour or radius. */
+.consent-scopes { margin: 0 0 22px; padding: 0 0 0 1.2rem; color: var(--ink); font-size: 15px; line-height: 1.7; }
+.consent-scopes li { margin: 4px 0; }
+.consent-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.consent-actions .btn { padding: 9px 16px; border-radius: 7px; font-size: 14px; }

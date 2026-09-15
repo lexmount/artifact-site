@@ -12,6 +12,7 @@ import type {
   AuditEntry, EditPolicy, InsertShareInput, Session, Share, ShareGrant, SharePolicy, ShareRow, ShareView,
   Site, SiteCollaborator, SiteOpen, SiteSummary, SiteView, SiteViewStats, User, Version, Visibility,
   AdminAction, AdminLogEntry, AdminOverview, AdminSiteRow, AdminUserRow, SettingRow, SettingWrite,
+  OauthAuthorization, OauthClientRecord, OauthConnection, OauthToken,
 } from "@/lib/types";
 import {
   adminUserOrder,
@@ -56,6 +57,10 @@ import {
   type UpsertUserInput,
   toPublishToken,
   toDeviceGrant,
+  toOauthAuthorization,
+  toOauthClient,
+  toOauthConnection,
+  toOauthToken,
   type DeviceGrant,
   type ListViewer,
   type MetadataStore,
@@ -199,6 +204,54 @@ export class SqliteStore implements MetadataStore {
         expires_at INTEGER NOT NULL,
         consumed_at INTEGER
       );
+
+      CREATE TABLE IF NOT EXISTS oauth_clients (
+        id TEXT PRIMARY KEY,
+        secret_hash TEXT,
+        name TEXT NOT NULL,
+        redirect_uris TEXT NOT NULL,
+        token_endpoint_auth_method TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS oauth_authorizations (
+        id TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL,
+        client_name TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        state TEXT,
+        code_challenge TEXT NOT NULL,
+        resource TEXT NOT NULL,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code_hash TEXT,
+        grant_id TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        approved_at INTEGER,
+        consumed_at INTEGER
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_oauth_authorizations_code ON oauth_authorizations(code_hash) WHERE code_hash IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_oauth_authorizations_expiry ON oauth_authorizations(expires_at);
+      CREATE TABLE IF NOT EXISTS oauth_tokens (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('access','refresh')),
+        grant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        client_id TEXT NOT NULL,
+        client_name TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        resource TEXT NOT NULL,
+        grant_created_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        absolute_expires_at INTEGER NOT NULL,
+        last_used_at INTEGER,
+        revoked_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_oauth_tokens_grant ON oauth_tokens(grant_id);
+      CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_oauth_tokens_expiry ON oauth_tokens(expires_at);
 
       CREATE TABLE IF NOT EXISTS upload_sessions (
         version_id TEXT PRIMARY KEY,
@@ -970,6 +1023,128 @@ export class SqliteStore implements MetadataStore {
     const res = this.db.prepare("UPDATE publish_tokens SET revoked_at=? WHERE id=? AND user_id=? AND revoked_at IS NULL")
       .run(Date.now(), id, userId);
     return res.changes > 0;
+  }
+
+  // --- OAuth (lib/oauth) -------------------------------------------------------------------
+
+  async insertOauthClient(c: OauthClientRecord): Promise<void> {
+    this.db.prepare("INSERT INTO oauth_clients (id, secret_hash, name, redirect_uris, token_endpoint_auth_method, created_at, last_used_at) VALUES (?,?,?,?,?,?,?)")
+      .run(c.id, c.secretHash, c.name, JSON.stringify(c.redirectUris), c.tokenEndpointAuthMethod, c.createdAt, c.lastUsedAt);
+  }
+
+  async getOauthClient(id: string): Promise<OauthClientRecord | null> {
+    const row = this.db.prepare("SELECT * FROM oauth_clients WHERE id=?").get(id) as Row | undefined;
+    return row ? toOauthClient(row) : null;
+  }
+
+  async touchOauthClient(id: string, now: number): Promise<void> {
+    this.db.prepare("UPDATE oauth_clients SET last_used_at=? WHERE id=?").run(now, id);
+  }
+
+  async insertOauthAuthorization(a: OauthAuthorization): Promise<void> {
+    this.db.prepare(
+      `INSERT INTO oauth_authorizations (id, client_id, client_name, redirect_uri, scope, state, code_challenge, resource, user_id, code_hash, grant_id, created_at, expires_at, approved_at, consumed_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(a.id, a.clientId, a.clientName, a.redirectUri, a.scope, a.state, a.codeChallenge, a.resource, a.userId, a.codeHash, a.grantId, a.createdAt, a.expiresAt, a.approvedAt, a.consumedAt);
+  }
+
+  async getOauthAuthorization(id: string): Promise<OauthAuthorization | null> {
+    const row = this.db.prepare("SELECT * FROM oauth_authorizations WHERE id=?").get(id) as Row | undefined;
+    return row ? toOauthAuthorization(row) : null;
+  }
+
+  async approveOauthAuthorization(id: string, userId: string, code: { codeHash: string; grantId: string; expiresAt: number }, now: number): Promise<boolean> {
+    const res = this.db.prepare(
+      "UPDATE oauth_authorizations SET approved_at=?, code_hash=?, grant_id=?, expires_at=? WHERE id=? AND user_id=? AND approved_at IS NULL AND consumed_at IS NULL AND expires_at > ?",
+    ).run(now, code.codeHash, code.grantId, code.expiresAt, id, userId, now);
+    return Number(res.changes ?? 0) > 0;
+  }
+
+  async consumeOauthAuthorization(id: string, now: number): Promise<boolean> {
+    const res = this.db.prepare("UPDATE oauth_authorizations SET consumed_at=? WHERE id=? AND consumed_at IS NULL").run(now, id);
+    return Number(res.changes ?? 0) > 0;
+  }
+
+  async redeemOauthCode(codeHash: string, now: number): Promise<{ authorization: OauthAuthorization; reused: boolean } | null> {
+    // Consume first, then read — the same order as the Postgres backend, for the same reason.
+    const row = this.db.prepare(
+      "UPDATE oauth_authorizations SET consumed_at=? WHERE code_hash=? AND consumed_at IS NULL AND expires_at > ? RETURNING *",
+    ).get(now, codeHash, now) as Row | undefined;
+    if (row) return { authorization: toOauthAuthorization(row), reused: false };
+    const seen = this.db.prepare("SELECT * FROM oauth_authorizations WHERE code_hash=?").get(codeHash) as Row | undefined;
+    return seen && seen.consumed_at != null ? { authorization: toOauthAuthorization(seen), reused: true } : null;
+  }
+
+  async insertOauthTokens(tokens: OauthToken[]): Promise<void> {
+    this.db.exec("BEGIN");
+    try {
+      const insert = this.db.prepare(
+        `INSERT INTO oauth_tokens (id, kind, grant_id, user_id, client_id, client_name, scope, resource, grant_created_at, created_at, expires_at, absolute_expires_at, last_used_at, revoked_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      );
+      for (const t of tokens) {
+        insert.run(t.id, t.kind, t.grantId, t.userId, t.clientId, t.clientName, t.scope, t.resource, t.grantCreatedAt, t.createdAt, t.expiresAt, t.absoluteExpiresAt, t.lastUsedAt, t.revokedAt);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      try { this.db.exec("ROLLBACK"); } catch { /* keep the original error */ }
+      throw error;
+    }
+  }
+
+  async getOauthToken(id: string): Promise<OauthToken | null> {
+    const row = this.db.prepare("SELECT * FROM oauth_tokens WHERE id=?").get(id) as Row | undefined;
+    return row ? toOauthToken(row) : null;
+  }
+
+  async touchOauthToken(id: string, now: number): Promise<void> {
+    this.db.prepare("UPDATE oauth_tokens SET last_used_at=? WHERE id=? AND revoked_at IS NULL").run(now, id);
+  }
+
+  async consumeOauthRefreshToken(id: string, now: number): Promise<{ token: OauthToken; reused: boolean } | null> {
+    const row = this.db.prepare("UPDATE oauth_tokens SET revoked_at=? WHERE id=? AND kind='refresh' AND revoked_at IS NULL AND expires_at > ? RETURNING *").get(now, id, now) as Row | undefined;
+    if (row) return { token: toOauthToken(row), reused: false };
+    const seen = this.db.prepare("SELECT * FROM oauth_tokens WHERE id=? AND kind='refresh'").get(id) as Row | undefined;
+    return seen && seen.revoked_at != null ? { token: toOauthToken(seen), reused: true } : null;
+  }
+
+  async revokeOauthToken(id: string, now: number): Promise<boolean> {
+    return Number(this.db.prepare("UPDATE oauth_tokens SET revoked_at=? WHERE id=? AND revoked_at IS NULL").run(now, id).changes ?? 0) > 0;
+  }
+
+  async revokeOauthGrant(grantId: string, now: number, userId: string | null = null): Promise<number> {
+    const res = userId == null
+      ? this.db.prepare("UPDATE oauth_tokens SET revoked_at=? WHERE grant_id=? AND revoked_at IS NULL").run(now, grantId)
+      : this.db.prepare("UPDATE oauth_tokens SET revoked_at=? WHERE grant_id=? AND user_id=? AND revoked_at IS NULL").run(now, grantId, userId);
+    return Number(res.changes ?? 0);
+  }
+
+  async revokeOauthGrantsForClient(userId: string, clientId: string, now: number, exceptGrantId: string): Promise<number> {
+    return Number(this.db.prepare("UPDATE oauth_tokens SET revoked_at=? WHERE user_id=? AND client_id=? AND grant_id<>? AND revoked_at IS NULL").run(now, userId, clientId, exceptGrantId).changes ?? 0);
+  }
+
+  async listOauthConnections(userId: string, now: number): Promise<OauthConnection[]> {
+    const rows = this.db.prepare(
+      `SELECT r.grant_id, r.client_id, r.client_name, r.scope, r.grant_created_at AS connected_at,
+              (SELECT MAX(t.last_used_at) FROM oauth_tokens t WHERE t.grant_id = r.grant_id) AS last_used_at
+       FROM oauth_tokens r WHERE r.user_id=? AND r.kind='refresh' AND r.revoked_at IS NULL AND r.expires_at > ?
+       ORDER BY r.grant_created_at DESC`,
+    ).all(userId, now) as Row[];
+    return rows.map(toOauthConnection);
+  }
+
+  async revokeOauthTokensForUser(userId: string, now: number): Promise<number> {
+    return Number(this.db.prepare("UPDATE oauth_tokens SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL").run(now, userId).changes ?? 0);
+  }
+
+  async pruneOauth(now: number): Promise<number> {
+    const day = 24 * 60 * 60 * 1000;
+    const requests = this.db.prepare("DELETE FROM oauth_authorizations WHERE expires_at < ?").run(now - day);
+    const tokens = this.db.prepare("DELETE FROM oauth_tokens WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)").run(now - day, now - 7 * day);
+    const clients = this.db.prepare(
+      "DELETE FROM oauth_clients WHERE (last_used_at IS NULL AND created_at < ?) OR (COALESCE(last_used_at, created_at) < ? AND id NOT IN (SELECT client_id FROM oauth_tokens))",
+    ).run(now - day, now - 90 * day);
+    return Number(requests.changes ?? 0) + Number(tokens.changes ?? 0) + Number(clients.changes ?? 0);
   }
 
   async listFolders(userId: string): Promise<UserFolder[]> {

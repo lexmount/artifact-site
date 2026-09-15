@@ -76,7 +76,7 @@ describe("the console API", () => {
   it("administrators only; PUT validates, applies, and logs the keys it changed", async () => {
     expect((await SETTINGS_GET(req("/api/admin/settings"))).status).toBe(401);
     const list = (await (await SETTINGS_GET(req("/api/admin/settings", { headers: asToken }))).json()) as { settings: { key: string; source: string }[] };
-    expect(list.settings.map((s) => s.key)).toEqual(["createPolicy", "anonymousSites", "defaultVisibility", "anonSiteTtlDays", "quotaSitesPerUser", "quotaBytesPerUser", "quotaSitesPerAnon", "quotaBytesPerAnon"]);
+    expect(list.settings.map((s) => s.key)).toEqual(["createPolicy", "anonymousSites", "defaultVisibility", "anonSiteTtlDays", "quotaSitesPerUser", "quotaBytesPerUser", "quotaSitesPerAnon", "quotaBytesPerAnon", "oauthClientHosts", "oauthDcr", "oauthAppSchemes"]);
     const bad = await SETTINGS_PUT(req("/api/admin/settings", { method: "PUT", headers: asToken, body: { values: { defaultVisibility: "hidden" } } }));
     expect(bad.status).toBe(400);
     const ok = await SETTINGS_PUT(req("/api/admin/settings", { method: "PUT", headers: asToken, body: { values: { defaultVisibility: "unlisted", quotaSitesPerAnon: "5" } } }));

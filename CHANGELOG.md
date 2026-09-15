@@ -5,7 +5,19 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- **OAuth for MCP clients.** ChatGPT, Claude and any client that implements MCP authorization
+  can connect to `/mcp` by signing in instead of pasting a token: this server is now its own
+  OAuth 2.1 authorization server — authorization code with PKCE (S256), refresh tokens with
+  rotation, RFC 9728 / RFC 8414 discovery, Client ID Metadata Documents and dynamic client
+  registration — with a consent page at `/oauth/authorize`, the scopes `artifacts:read` and
+  `artifacts:write`, and **Connected applications** in My sites to disconnect. Personal and
+  operator tokens work unchanged. New settings, also editable from the console:
+  `ARTIFACT_OAUTH_CLIENT_HOSTS`, `ARTIFACT_OAUTH_DCR`, `ARTIFACT_OAUTH_APP_SCHEMES`. The agent
+  guide's MCP tab offers both ways in.
+- The header links to the project's GitHub repository: a bare GitHub mark next to the
+  language switch, on every page that shares the header.
 
 ## 0.1.0 — 2026-09-14
 

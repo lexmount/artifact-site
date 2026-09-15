@@ -11,6 +11,7 @@ import { isAdmin } from "@/lib/auth";
 import { BadRequestError } from "@/lib/errors";
 import { limits } from "@/lib/config";
 import { getSkillForBase, resolvePublicBase } from "@/lib/publish-skill";
+import { readOnlyMcpTools } from "@/lib/mcp-tools";
 
 const id = z.string().min(1).max(200);
 const slug = { slug: id.describe("Artifact identifier returned by find/publish, or the slug in its /s/ URL. Not a local path.") };
@@ -41,7 +42,7 @@ export function createRemoteMcpServer(request: Request) {
     instructions: "Artifact Site is the connected remote library for AI-generated pages, reports, charts, prototypes and documents. Use its tools when users ask about their artifacts or want to publish, find, read, update or share previous work. Start with artifact_site_find for 'my artifacts'; no slug is needed. Explicit local filesystem requests belong to local file tools. Authentication is already supplied by the host; never ask users to paste tokens into chat. Use connection only to diagnose identity/limits, not before every task. Read artifact-site://skill when building hosted content. Uploaded paths are relative filenames, never local server paths."
   });
   function tool<S extends z.ZodRawShape>(name: string, title: string, description: string, inputSchema: S, action: (args: z.infer<z.ZodObject<S>>) => Promise<unknown>) {
-    server.registerTool(name, { title, description, inputSchema: z.strictObject(inputSchema), annotations: { idempotentHint: ["artifact_site_upload_write", "artifact_site_upload_cancel", "artifact_site_delete"].includes(name), readOnlyHint: ["artifact_site_connection", "artifact_site_find", "artifact_site_get_site", "artifact_site_read", "artifact_site_export"].includes(name), destructiveHint: ["artifact_site_update", "artifact_site_edit", "artifact_site_share", "artifact_site_rollback", "artifact_site_delete"].includes(name) } }, async (args: unknown): Promise<CallToolResult> => {
+    server.registerTool(name, { title, description, inputSchema: z.strictObject(inputSchema), annotations: { idempotentHint: ["artifact_site_upload_write", "artifact_site_upload_cancel", "artifact_site_delete"].includes(name), readOnlyHint: readOnlyMcpTools.has(name), destructiveHint: ["artifact_site_update", "artifact_site_edit", "artifact_site_share", "artifact_site_rollback", "artifact_site_delete"].includes(name) } }, async (args: unknown): Promise<CallToolResult> => {
       try { request.signal.throwIfAborted(); const data = await action(args as z.infer<z.ZodObject<S>>); return { content: [{ type: "text" as const, text: JSON.stringify(data) }] }; }
       catch (error) {
         const known = error as { statusCode?: number; data?: unknown };

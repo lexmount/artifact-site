@@ -241,6 +241,22 @@ export const config = {
     return Boolean(o.issuer && o.clientId && o.clientSecret);
   },
   /**
+   * The OAuth authorization server for remote MCP clients (lib/oauth). `clientHosts` limits which
+   * hosts may identify themselves — metadata-document client_ids and every redirect_uri — to a
+   * listed host or a subdomain of one; empty means any public https host, the default, because a
+   * self-hosted deployment gains nothing from refusing a client the signed-in person is about to
+   * approve on the consent page anyway. `dcrEnabled` switches the unauthenticated registration
+   * endpoint (RFC 7591); metadata-document clients (ChatGPT's preferred method) work either way.
+   */
+  get oauth(): { clientHosts: ReadonlySet<string>; dcrEnabled: boolean; appSchemes: ReadonlySet<string> } {
+    return {
+      clientHosts: new Set(csv(process.env.ARTIFACT_OAUTH_CLIENT_HOSTS).map((host) => host.toLowerCase())),
+      dcrEnabled: (process.env.ARTIFACT_OAUTH_DCR || "").trim().toLowerCase() !== "off",
+      /** Application schemes admitted as redirect addresses on top of the built-in shape (lib/oauth-clients). */
+      appSchemes: new Set(csv(process.env.ARTIFACT_OAUTH_APP_SCHEMES).map((scheme) => scheme.toLowerCase())),
+    };
+  },
+  /**
    * Who may create a site: open | login | token.
    *
    * Defaults FAIL-CLOSED. Before identity existed, setting PUBLISH_API_TOKEN was the only way to

@@ -3,7 +3,7 @@
 import { config } from "@/lib/config";
 import { policy as policySettings } from "@/lib/settings";
 import { safeEqual } from "@/lib/crypto";
-import { publishTokenFromRequest } from "@/lib/publish-token";
+import { oauthAccessTokenFromRequest, publishTokenFromRequest } from "@/lib/publish-token";
 import type { Session } from "@/lib/types";
 
 export class AuthError extends Error {
@@ -20,6 +20,22 @@ export class EditForbiddenError extends Error {
   constructor(message = "You do not have edit access to this site (an editable link is required)") {
     super(message);
     this.name = "EditForbiddenError";
+  }
+}
+
+/**
+ * An OAuth access token (lib/oauth) whose grant does not cover this request — a read-only
+ * connection trying to publish. 403 in the OAuth vocabulary (`insufficient_scope`, RFC 6750 §3.1),
+ * so the client can ask the person for the missing scope instead of retrying.
+ */
+export class InsufficientScopeError extends Error {
+  readonly statusCode = 403;
+  readonly code = "insufficient_scope";
+  readonly scope: string;
+  constructor(scope: string) {
+    super(`This connection was authorized for reading only; authorize it again with ${scope} to make changes`);
+    this.name = "InsufficientScopeError";
+    this.scope = scope;
   }
 }
 
@@ -85,8 +101,8 @@ export async function assertCanCreate(request: Request): Promise<void> {
  * and keep the other server's token, not to overwrite it. Agents key on `code`.
  */
 export class TokenRejectedError extends AuthError {
-  readonly code: "token_unknown" | "token_revoked";
-  constructor(code: "token_unknown" | "token_revoked", message: string) {
+  readonly code: "token_unknown" | "token_revoked" | "token_expired";
+  constructor(code: "token_unknown" | "token_revoked" | "token_expired", message: string) {
     super(message);
     this.name = "TokenRejectedError";
     this.code = code;
@@ -101,8 +117,20 @@ export class TokenRejectedError extends AuthError {
  * authorization. One extra lookup, and only on the failure path, to tell the two causes apart.
  */
 export async function assertPresentedBearerAlive(request: Request, session: Session | null): Promise<void> {
+  if (session) return;
+  // The same rule for an OAuth access token: presented and dead must be answered, not ignored.
+  const oauthBearer = oauthAccessTokenFromRequest(request);
+  if (oauthBearer) {
+    const { describeOauthAccessToken } = await import("@/lib/oauth");
+    const { issuerFor } = await import("@/lib/oauth-shared");
+    const state = await describeOauthAccessToken(oauthBearer, issuerFor(request));
+    const again = "Authorize the connection again from the MCP client (it sends you through this server's sign-in), or remove the authorization header to publish anonymously.";
+    if (state === "revoked") throw new TokenRejectedError("token_revoked", `This OAuth access token was revoked: the connection was disconnected from the account page, or the account was disabled. ${again}`);
+    if (state === "expired") throw new TokenRejectedError("token_expired", `This OAuth access token has expired. Refresh it with the refresh token, or authorize the connection again from the MCP client.`);
+    throw new TokenRejectedError("token_unknown", `This server does not know this OAuth access token: it was issued by another deployment, or for another address of this one. ${again}`);
+  }
   const bearer = publishTokenFromRequest(request);
-  if (!bearer || session) return;
+  if (!bearer) return;
   const { getPublishToken } = await import("@/lib/db");
   const { hashTokenSecret } = await import("@/lib/publish-token");
   const token = await getPublishToken(hashTokenSecret(bearer));

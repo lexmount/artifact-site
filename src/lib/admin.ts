@@ -14,9 +14,10 @@ import { policy } from "@/lib/settings";
 import { BadRequestError } from "@/lib/errors";
 import {
   createId, expireAnonymousSites, getSite, getSiteBySlug, getUser, hasRecentAdminLog, insertAdminLog, listDeletedSitesBefore, restoreDeletedSite,
-  revokePublishTokensForUser, revokeUserSessions, setSitePurged, setSiteTakenDown, setUserDisabled, softDeleteSite,
+  revokeOauthTokensForUser, revokePublishTokensForUser, revokeUserSessions, setSitePurged, setSiteTakenDown, setUserDisabled, softDeleteSite,
 } from "@/lib/db";
 import { auditRequestMeta } from "@/lib/audit";
+import { isTokenSession } from "@/lib/publish-token";
 import { csrfSafe, resolveSession } from "@/lib/session";
 import { getStorage } from "@/lib/storage";
 import type { AdminAction, AdminLogEntry, Session, Site, User } from "@/lib/types";
@@ -30,7 +31,7 @@ export async function resolveAdmin(request: Request, session?: Session | null): 
   if (isTokenAdmin(request)) return { kind: "token", userId: null };
   if (config.adminEmails.size === 0) return null;
   const resolved = session === undefined ? await resolveSession(request) : session;
-  if (!resolved || resolved.id.startsWith("pt:")) return null;
+  if (!resolved || isTokenSession(resolved)) return null;
   const user = await getUser(resolved.userId);
   if (!user || user.disabledAt || !user.email || !user.emailVerified) return null;
   return config.adminEmails.has(user.email.toLowerCase()) ? { kind: "user", userId: user.id, email: user.email } : null;
@@ -91,6 +92,7 @@ export async function disableUser(request: Request, actor: AdminActor, userId: s
   if (!(await setUserDisabled(userId, Date.now(), why))) throw new BadRequestError("The account is already disabled");
   await revokeUserSessions(userId);
   await revokePublishTokensForUser(userId);
+  await revokeOauthTokensForUser(userId);
   await recordAdminAction(request, actor, "user.disable", { kind: "user", id: userId }, why);
   return (await getUser(userId))!;
 }

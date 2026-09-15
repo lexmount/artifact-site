@@ -47,6 +47,24 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // Pages that grant access on one click — the OAuth consent page and the device-authorization
+        // page — must not be framed: an invisible frame over a "click here" is the clickjacking the
+        // OAuth security BCP (RFC 9700) tells authorization endpoints to refuse. Nothing legitimate
+        // embeds them; the JSON endpoints under /oauth get the same headers harmlessly.
+        source: "/oauth/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+        ],
+      },
+      {
+        source: "/activate",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+        ],
+      },
+      {
         source: "/:path*",
         headers: [
           // We host untrusted artifacts and render them in iframes. The editor's preview iframe

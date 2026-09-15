@@ -44,5 +44,28 @@ export function publishTokenFromRequest(request: Request): string | null {
   return bearer.startsWith(PUBLISH_TOKEN_PREFIX) ? bearer : null;
 }
 
+/**
+ * OAuth access tokens (lib/oauth) share the Bearer scheme. Their own prefix keeps the three kinds of
+ * bearer — the admin PUBLISH_API_TOKEN, an `ahp_` publish token, an `aho_` OAuth access token —
+ * apart at the parser, so each is validated by exactly one path and never falls through to another.
+ */
+export const OAUTH_ACCESS_TOKEN_PREFIX = "aho_";
+
+/** The `Authorization: Bearer aho_…` this request carries, if any. */
+export function oauthAccessTokenFromRequest(request: Request): string | null {
+  const header = request.headers.get("authorization") || "";
+  const bearer = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+  return bearer.startsWith(OAUTH_ACCESS_TOKEN_PREFIX) ? bearer : null;
+}
+
+/**
+ * A session minted from a bearer — a publish token (`pt:`) or an OAuth access token (`oat:`) —
+ * rather than from a browser login. Token management, device approval and OAuth consent refuse
+ * these: a leaked credential must never be able to mint itself a replacement or approve another.
+ */
+export function isTokenSession(session: { id: string }): boolean {
+  return session.id.startsWith("pt:") || session.id.startsWith("oat:");
+}
+
 export const DEVICE_GRANT_TTL_MS = 10 * 60 * 1000;
 export const DEVICE_POLL_INTERVAL_S = 5;

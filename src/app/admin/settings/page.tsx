@@ -8,7 +8,7 @@ import { Loader2 } from "lucide-react";
 import { useLocale, useT } from "@/components/locale-provider";
 import { adminFetch, formatBytes, formatWhen } from "@/components/admin/format";
 
-interface View { key: string; kind: "enum" | "int"; options?: string[]; value: string | number; source: "console" | "environment"; envValue: string | number; env: string; updatedAt: number | null }
+interface View { key: string; kind: "enum" | "int" | "list"; options?: string[]; value: string | number; source: "console" | "environment"; envValue: string | number; env: string; updatedAt: number | null }
 
 const LABELS: Record<string, { label: string; help: string }> = {
   createPolicy: { label: "Who can create sites", help: "open: anyone who can reach the service. login: signed-in accounts only. token: only scripts holding the API token." },
@@ -19,8 +19,11 @@ const LABELS: Record<string, { label: string; help: string }> = {
   quotaBytesPerUser: { label: "Storage per account (bytes)", help: "0 = unlimited. Every version of every site counts." },
   quotaSitesPerAnon: { label: "Sites per anonymous browser", help: "0 = unlimited." },
   quotaBytesPerAnon: { label: "Storage per anonymous browser (bytes)", help: "0 = unlimited." },
+  oauthClientHosts: { label: "MCP OAuth: hosts allowed to connect", help: "Comma-separated hostnames (subdomains included) that may identify themselves as an OAuth client or be redirected to; with a list set, only https redirects to these hosts pass. Empty: use the environment, which by default allows any public https host, loopback listeners and application schemes." },
+  oauthDcr: { label: "MCP OAuth: dynamic client registration", help: "on: clients without a metadata document (Claude Code, Cursor, MCP Inspector) may register themselves at /oauth/register. off: only clients with a metadata document (ChatGPT) can connect." },
+  oauthAppSchemes: { label: "MCP OAuth: additional application schemes", help: "URL schemes, comma-separated, admitted as return addresses on top of the reverse-domain shape and cursor / vscode / vscode-insiders — for example windsurf, zed. A redirect to a scheme opens whatever handles it on the person's computer, so add only editors you know." },
 };
-const OPTION_LABELS: Record<string, string> = { open: "Anyone", login: "Signed-in accounts", token: "API token only", full: "Owned by the creating browser", "read-only": "Read-only until signed in", public: "Public", unlisted: "Unlisted", private: "Private" };
+const OPTION_LABELS: Record<string, string> = { open: "Anyone", login: "Signed-in accounts", token: "API token only", full: "Owned by the creating browser", "read-only": "Read-only until signed in", public: "Public", unlisted: "Unlisted", private: "Private", on: "On", off: "Off" };
 
 export default function AdminSettingsPage() {
   const t = useT();
@@ -73,6 +76,8 @@ export default function AdminSettingsPage() {
                 <select id={`set-${s.key}`} value={current} onChange={(e) => setDraft({ ...draft, [s.key]: e.target.value })}>
                   {s.options!.map((o) => <option key={o} value={o}>{t(OPTION_LABELS[o] ?? o)}</option>)}
                 </select>
+              ) : s.kind === "list" ? (
+                <input id={`set-${s.key}`} type="text" autoComplete="off" spellCheck={false} placeholder={t("comma-separated; empty = use the environment")} value={current} onChange={(e) => setDraft({ ...draft, [s.key]: e.target.value })} />
               ) : (
                 <input id={`set-${s.key}`} type="number" min={0} step={1} value={current} onChange={(e) => setDraft({ ...draft, [s.key]: e.target.value })} />
               )}

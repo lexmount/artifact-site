@@ -262,6 +262,81 @@ export interface Session {
   revokedAt: number | null;
   ip: string | null;
   userAgent: string | null;
+  /**
+   * Set only on a session synthesised from an OAuth access token (lib/oauth): what the person
+   * granted the application. Absent — a browser login, a publish token — means everything the
+   * account may do. Enforced by lib/session on mutating requests and by /mcp per tool.
+   */
+  scopes?: readonly string[];
+}
+
+// --- OAuth (remote MCP clients such as ChatGPT; see lib/oauth) ------------------------------------
+
+export type OauthTokenEndpointAuthMethod = "none" | "client_secret_post" | "client_secret_basic";
+
+/** A dynamically registered client (RFC 7591). Metadata-document clients are never stored. */
+export interface OauthClientRecord {
+  id: string;
+  /** sha256 of the secret, for confidential clients; null for public ones. */
+  secretHash: string | null;
+  name: string;
+  redirectUris: string[];
+  tokenEndpointAuthMethod: OauthTokenEndpointAuthMethod;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+/**
+ * One authorization request, from the consent page to the redeemed code. `id` is the unguessable
+ * request id the consent form carries; `codeHash` is set when the person allows it and is the
+ * only way the token endpoint can find the row. `grantId` ties the tokens minted from it together.
+ */
+export interface OauthAuthorization {
+  id: string;
+  clientId: string;
+  clientName: string;
+  redirectUri: string;
+  scope: string;
+  state: string | null;
+  codeChallenge: string;
+  resource: string;
+  userId: string;
+  codeHash: string | null;
+  grantId: string | null;
+  createdAt: number;
+  expiresAt: number;
+  approvedAt: number | null;
+  consumedAt: number | null;
+}
+
+/** An access or refresh token. `id` is the sha256 of the bearer secret, as for every credential here. */
+export interface OauthToken {
+  id: string;
+  kind: "access" | "refresh";
+  grantId: string;
+  userId: string;
+  clientId: string;
+  clientName: string;
+  scope: string;
+  resource: string;
+  /** When the grant was approved — carried across refreshes so "connected since" stays put. */
+  grantCreatedAt: number;
+  createdAt: number;
+  expiresAt: number;
+  /** The grant's hard ceiling, fixed at consent and inherited by every refresh. */
+  absoluteExpiresAt: number;
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+}
+
+/** A live grant as the account page shows it: one row per connected application. */
+export interface OauthConnection {
+  id: string;
+  clientId: string;
+  clientName: string;
+  scope: string;
+  connectedAt: number;
+  lastUsedAt: number | null;
 }
 
 /** An explicit per-user grant. Collaborators always outrank `editPolicy`. */

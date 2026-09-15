@@ -48,6 +48,11 @@ behind a load balancer. Postgres + local disk is the single-host deployment (`ma
 - **Identity** — users come from an OIDC provider; sessions are cookie-backed rows (the cookie
   holds a secret, the row holds its SHA-256). Agents get long-lived **publish tokens** through a
   device-authorisation flow (`/api/device/*`); they are bearer credentials stored hashed too.
+  MCP clients that implement OAuth (ChatGPT, Claude) get short-lived **access tokens** from this
+  app's own authorization server (`src/lib/oauth*.ts`; `/oauth/*`, `/.well-known/*`):
+  authorization code with PKCE, a consent page, opaque tokens stored hashed, refresh with
+  rotation, and a per-connection disconnect on the account page. All three bearers fold into the
+  same session shape in `src/lib/session.ts`, so nothing downstream knows which one it got.
 - **Folder** — a per-user shelf for "My sites": `folders` (user, name, order) and
   `folder_assignments` (user, site, folder; one folder per site per user). Owner-perspective data:
   the site itself is untouched, and two people may file the same site differently. Signed-out

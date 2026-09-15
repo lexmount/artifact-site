@@ -3,6 +3,17 @@ import type { Messages } from "@/lib/i18n";
 /** Client components under src/components (grid, uploader, sharing drawer, version history,
  *  personal centre cards, header chrome). Keys are the English source strings exactly as in code. */
 export const components: Messages = {
+  // ── Connected applications (OAuth) ──
+  "Connected applications": "已连接的应用",
+  "{n} application": "{n} 个应用",
+  "{n} applications": "{n} 个应用",
+  "Applications such as ChatGPT connect to this server by signing in as you, without a token to paste. Disconnecting takes effect immediately; the application has to ask for your permission again.": "ChatGPT 这类应用通过以你的身份登录来连接本服务，不需要粘贴 Token。断开立即生效，应用需要重新征得你的同意。",
+  "Failed to disconnect the application": "断开失败",
+  "Read and change": "读取和修改",
+  "Read only": "只读",
+  "Connected {date}": "连接于 {date}",
+  "Disconnect": "断开",
+  "No applications are connected. Connect ChatGPT or another MCP client from the agent guide.": "还没有已连接的应用。可以按 Agent 接入指南连接 ChatGPT 或其他 MCP 客户端。",
   "More": "更多",
   "Action bar: automatic": "操作条：自动",
   "Action bar: manual": "操作条：手动",
@@ -362,6 +373,7 @@ export const components: Messages = {
   "Explore": "发现作品",
   "Help & docs": "帮助与文档",
   "Navigation": "导航",
+  "Source code on GitHub": "在 GitHub 上查看源码",
   "No site matches “{q}”": "没有站点匹配「{q}」",
   // ── design v3: header, hero, explore, my-sites list, agent guide ─────────
   "Agent guide": "Agent 指南",

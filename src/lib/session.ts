@@ -11,8 +11,14 @@ import { config } from "@/lib/config";
 import { safeEqual, sha256hex } from "@/lib/crypto";
 import { createSession, getPublishToken, getSession, revokeSession, touchPublishToken, touchSession } from "@/lib/db";
 import { isSecureRequest, readCookie } from "@/lib/http";
-import { hashTokenSecret, publishTokenFromRequest } from "@/lib/publish-token";
+import { InsufficientScopeError } from "@/lib/auth";
+import { resolveOauthAccessToken } from "@/lib/oauth";
+import { issuerFor, parseScopeList, SCOPE_WRITE } from "@/lib/oauth-shared";
+import { hashTokenSecret, oauthAccessTokenFromRequest, publishTokenFromRequest } from "@/lib/publish-token";
 import type { Session } from "@/lib/types";
+
+/** The methods a read-only OAuth grant may use. Everything that changes state is a POST/PUT/PATCH/DELETE. */
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 // The sliding window, and the ceiling it can never be pushed past. These MUST differ: when they
 // were equal, `min(now + TTL, absolute)` always came back as the current expiry, the difference was
@@ -95,6 +101,24 @@ export function clearSessionCookie(request: Request): string {
  * most once per TOUCH_INTERVAL_MS so an active user stays logged in without a write per request.
  */
 export async function resolveSession(request: Request): Promise<Session | null> {
+  // An OAuth access token (lib/oauth) folds into a session the same way a publish token does, with
+  // two differences: it expires, and it carries what the person granted (`scopes`). A grant that
+  // lacks the write scope may only READ, and the HTTP method is the cleanest line to draw that
+  // at — every route that changes something is a POST/PUT/PATCH/DELETE — so the refusal is thrown
+  // here, before any handler runs, as the 403 an OAuth client knows how to act on.
+  const oauthBearer = oauthAccessTokenFromRequest(request);
+  if (oauthBearer) {
+    const token = await resolveOauthAccessToken(oauthBearer, issuerFor(request));
+    if (!token) return null; // a bad explicit credential must not fall back to cookies
+    const scopes = parseScopeList(token.scope);
+    if (!scopes.includes(SCOPE_WRITE) && !READ_METHODS.has(request.method)) throw new InsufficientScopeError(SCOPE_WRITE);
+    return {
+      id: `oat:${token.id}`, userId: token.userId, oidcSid: null,
+      createdAt: token.createdAt, expiresAt: token.expiresAt, absoluteExpiresAt: token.absoluteExpiresAt,
+      lastSeenAt: token.lastUsedAt, revokedAt: null, ip: null, userAgent: null, scopes,
+    };
+  }
+
   // A publish token authenticates exactly like a login for authorization purposes, so it folds
   // into the session shape here — every caller downstream (site creation, capability checks,
   // audit attribution) then works for agents without knowing tokens exist. The synthetic session
@@ -143,12 +167,13 @@ export async function endSession(request: Request): Promise<void> {
  */
 /**
  * The CSRF gate writes should actually use. CSRF is a property of credentials the browser attaches
- * on its own (cookies); a publish-token Bearer is always set deliberately by the caller, so such a
- * request cannot be a cross-site forgery no matter what its Origin says — and non-browser agents
- * have no Origin to send. Same-origin stays required for everything cookie-authenticated.
+ * on its own (cookies); a publish-token or OAuth Bearer is always set deliberately by the caller,
+ * so such a request cannot be a cross-site forgery no matter what its Origin says — and
+ * non-browser agents have no Origin to send. Same-origin stays required for everything
+ * cookie-authenticated.
  */
 export function csrfSafe(request: Request): boolean {
-  return Boolean(publishTokenFromRequest(request)) || isSameOrigin(request);
+  return Boolean(publishTokenFromRequest(request)) || Boolean(oauthAccessTokenFromRequest(request)) || isSameOrigin(request);
 }
 
 export function isSameOrigin(request: Request): boolean {
