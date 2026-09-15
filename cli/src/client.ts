@@ -9,6 +9,7 @@ export type SiteKind = "single" | "folder" | "document";
 export type SharePolicy = "public" | "login" | "people" | "email" | "passcode";
 
 export interface CreatedSite {
+  officialVersionId?: string | null; officialRevision?: number; versionId?: string;
   slug: string;
   url: string;
   title: string;
@@ -19,6 +20,7 @@ export interface CreatedSite {
 }
 
 export interface VersionResult {
+  officialVersionId?: string | null; officialRevision?: number;
   slug: string;
   url: string;
   title: string;
@@ -136,16 +138,18 @@ export class ArtifactSiteClient {
 
   // ---- sites ---------------------------------------------------------------------------------
 
-  createPaste(html: string, title?: string): Promise<CreatedSite> {
-    return this.json("POST", "/api/sites", { body: { mode: "paste", html, title } });
+  createPaste(html: string, title?: string, official?: boolean): Promise<CreatedSite> {
+    return this.json("POST", "/api/sites", { body: { mode: "paste", html, title, official } });
   }
   /** One-shot upload of a single file (HTML or a document) — byte-clean via multipart. */
-  createFile(filename: string, bytes: Uint8Array, title?: string): Promise<CreatedSite> {
-    return this.json("POST", "/api/sites", { form: withTitle(multipart("file", filename, bytes), title) });
+  createFile(filename: string, bytes: Uint8Array, title?: string, official?: boolean): Promise<CreatedSite> {
+    return this.json("POST", "/api/sites", { form: withOfficial(withTitle(multipart("file", filename, bytes), title), official) });
   }
-  createZip(bytes: Uint8Array, title?: string): Promise<CreatedSite> {
-    return this.json("POST", "/api/sites", { form: withTitle(multipart("zip", "site.zip", bytes), title) });
+  createZip(bytes: Uint8Array, title?: string, official?: boolean): Promise<CreatedSite> {
+    return this.json("POST", "/api/sites", { form: withOfficial(withTitle(multipart("zip", "site.zip", bytes), title), official) });
   }
+  getOfficial(slug: string): Promise<{ officialVersionId: string | null; officialRevision?: number }> { return this.json("GET", `/api/sites/${enc(slug)}/official`); }
+  setOfficial(slug: string, versionId: string | null, expectedRevision?: number): Promise<{ officialVersionId: string | null; previousOfficialVersionId: string | null }> { return this.json(versionId ? "PUT" : "DELETE", `/api/sites/${enc(slug)}/official`, { body: { versionId: versionId ?? undefined, expectedRevision } }); }
   getSite(slug: string): Promise<SiteInfo> { return this.json("GET", `/api/sites/${enc(slug)}`); }
   listVersions(slug: string): Promise<{ versions: VersionRow[]; currentVersionId: string }> {
     return this.json("GET", `/api/sites/${enc(slug)}/versions`);
@@ -167,11 +171,11 @@ export class ArtifactSiteClient {
     return this.json("POST", `/api/sites/${enc(slug)}/edit`, { body: change, query: { expected_version: expectedVersion } });
   }
   /** Whole-tree replacement for a folder site (zip) — or the new file of a document site. */
-  replaceWithZip(slug: string, bytes: Uint8Array, expectedVersion?: string): Promise<VersionResult> {
-    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: multipart("zip", "site.zip", bytes), query: { expected_version: expectedVersion } });
+  replaceWithZip(slug: string, bytes: Uint8Array, expectedVersion?: string, official?: boolean): Promise<VersionResult> {
+    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("zip", "site.zip", bytes), official), query: { expected_version: expectedVersion } });
   }
-  replaceWithFile(slug: string, filename: string, bytes: Uint8Array, expectedVersion?: string): Promise<VersionResult> {
-    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: multipart("file", filename, bytes), query: { expected_version: expectedVersion } });
+  replaceWithFile(slug: string, filename: string, bytes: Uint8Array, expectedVersion?: string, official?: boolean): Promise<VersionResult> {
+    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("file", filename, bytes), official), query: { expected_version: expectedVersion } });
   }
   /** The current version as a zip, plus the version id to pass back as `expected_version`. */
   async export(slug: string): Promise<{ zip: Uint8Array; versionId: string | null }> {
@@ -200,8 +204,8 @@ export class ArtifactSiteClient {
   uploadBytes(versionId: string, relpath: string, bytes: Uint8Array): Promise<{ relpath: string; bytes: number }> {
     return this.json("PUT", `/api/uploads/${enc(versionId)}/files/${relpath.split("/").map(encodeURIComponent).join("/")}`, { raw: bytes });
   }
-  commitUpload(versionId: string, title?: string, expectedVersion?: string): Promise<VersionResult & { editToken?: string }> {
-    return this.json("POST", `/api/uploads/${enc(versionId)}/commit`, { body: title ? { title } : {}, query: { expected_version: expectedVersion } });
+  commitUpload(versionId: string, title?: string, expectedVersion?: string, official?: boolean): Promise<VersionResult & { editToken?: string }> {
+    return this.json("POST", `/api/uploads/${enc(versionId)}/commit`, { body: { ...(title ? { title } : {}), ...(official === undefined ? {} : { official }) }, query: { expected_version: expectedVersion } });
   }
 
   // ---- sharing -------------------------------------------------------------------------------
@@ -307,3 +311,5 @@ function withTitle(form: FormData, title?: string): FormData {
   if (title) form.set("title", title);
   return form;
 }
+
+function withOfficial(form: FormData, official?: boolean): FormData { if (official !== undefined) form.set("official", String(official)); return form; }

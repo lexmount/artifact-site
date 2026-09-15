@@ -21,8 +21,6 @@ import {
   type InsertSiteInput,
   type InsertVersionInput,
   type ListViewer,
-  insertVersion,
-  setCurrentVersion,
 } from "@/lib/db";
 import { zipSync } from "fflate";
 import type { AdminLogEntry, SiteKind, DocumentFormat } from "@/lib/types";
@@ -150,12 +148,13 @@ export async function commitUploadedVersion(
     session: { tenantId?: string; siteId: string; versionId: string; targetSlug?: string | null };
     entry: string;
     title?: string;
+    official?: boolean;
     expectedVersionId?: string;
     ctx?: AuditContext;
     /** Given for a single-PDF chunked upload: at commit, the index.html wrapper is generated from it (the original has already streamed to disk and is never read back into memory). */
     document?: { format: DocumentFormat; name: string; relpath: string };
   },
-): Promise<{ slug: string; url: string; title: string; kind: SiteKind; versionId: string; editToken?: string; expiresAt?: number | null }> {
+): Promise<{ slug: string; url: string; title: string; kind: SiteKind; versionId: string; editToken?: string; expiresAt?: number | null; officialVersionId?: string | null; officialRevision?: number }> {
   const { session, entry } = input;
   const storage = getStorage();
   // Single PDF: the original has already streamed to its relpath under session.versionId; only the
@@ -192,7 +191,7 @@ export async function commitUploadedVersion(
     // files were written under the correct prefix from the start; nothing needs moving here — and
     // nothing **may** be moved: a move would copy 300MB within storage, exactly what this path avoids.
     if (view.site.id !== session.siteId) throw new BadRequestError("upload session does not belong to this site");
-    const version: InsertVersionInput = { id: session.versionId, siteId: view.site.id, entry, fileCount, byteSize, source: "upload" };
+    const version: InsertVersionInput = { id: session.versionId, siteId: view.site.id, entry, fileCount, byteSize, source: "upload", official: input.official };
     if (input.ctx) {
       // Same path as editSite: version, current pointer and audit row land in one transaction. Written
       // separately, a failed audit insert would leave the version already live — the "who changed it"
@@ -208,11 +207,11 @@ export async function commitUploadedVersion(
         if (!ok) throw new BadRequestError("site not found");
       }
     } else {
-      await insertVersion(version);
-      await setCurrentVersion(view.site.id, session.versionId);
+      if (!(await addVersionAsCurrent(view.site.id, version))) throw new BadRequestError("site not found");
     }
     scheduleTextIndex(view.site.id, session.versionId);
-    return { slug: view.site.slug, url: siteUrl(view.site.slug), title: view.site.title, kind: view.site.kind, versionId: session.versionId };
+    const updated = await getSite(view.site.id);
+    return { slug: view.site.slug, url: siteUrl(view.site.slug), title: view.site.title, kind: view.site.kind, versionId: session.versionId, officialVersionId: updated?.officialVersionId, officialRevision: updated?.officialRevision };
   }
 
   // Create a new site
@@ -224,7 +223,7 @@ export async function commitUploadedVersion(
   const title = (input.title ?? "").trim()
     || (input.document ? documentTitleOf(input.document.name) : entry.replace(/\.html?$/i, ""))
     || "Untitled site";
-  const version: InsertVersionInput = { id: session.versionId, siteId: session.siteId, entry, fileCount, byteSize, source: "upload" };
+  const version: InsertVersionInput = { id: session.versionId, siteId: session.siteId, entry, fileCount, byteSize, source: "upload", official: input.official };
   // Same audit path as createSite: a site built by chunked upload looks identical in the audit table to one from a one-shot upload.
   const audit = input.ctx ? auditRow(input.ctx, session.siteId, session.versionId, "create") : undefined;
   await insertSiteRetryingSlug(
@@ -233,7 +232,7 @@ export async function commitUploadedVersion(
   );
   scheduleTextIndex(session.siteId, session.versionId);
   const site = (await getSite(session.siteId))!;
-  return { slug: site.slug, url: siteUrl(site.slug), title: site.title, kind: site.kind, versionId: session.versionId, ...(!site.ownerId ? {editToken} : {}), expiresAt: anonymousExpiresAt(site) };
+  return { slug: site.slug, url: siteUrl(site.slug), title: site.title, kind: site.kind, versionId: session.versionId, officialVersionId: site.officialVersionId, officialRevision: site.officialRevision, ...(!site.ownerId ? {editToken} : {}), expiresAt: anonymousExpiresAt(site) };
 }
 
 /** Drop → link. Parse the input, write the first version to disk, then record the site. */
@@ -252,7 +251,7 @@ export async function createSite(
   await assertQuotaRoom(quotaOwnerFor(owner), { sites: 1, bytes: bytesOf(normalized.files) });
   // Files land first (with all path + limit guards); then site + version are recorded atomically.
   const { fileCount, byteSize } = await writeVersionFiles(siteId, versionId, normalized.files);
-  const version: InsertVersionInput = { id: versionId, siteId, entry: normalized.entry, fileCount, byteSize, source: "upload" };
+  const version: InsertVersionInput = { id: versionId, siteId, entry: normalized.entry, fileCount, byteSize, source: "upload", official: input.official };
   const audit = ctx ? auditRow(ctx, siteId, versionId, "create") : undefined;
   // Visibility is decided HERE, not by the column default, because it depends on which deployment
   // this is: the intranet opens up, the public internet stays shut until the owner says otherwise. See config.defaultVisibility.
@@ -282,7 +281,7 @@ export async function replaceDocument(slug: string, input: UploadInput, ctx: Aud
   await assertQuotaRoom(quotaOwnerOf(site), { bytes: bytesOf(normalized.files) });
   const versionId = createId("ver");
   const { fileCount, byteSize } = await writeVersionFiles(site.id, versionId, normalized.files);
-  const version: InsertVersionInput = { id: versionId, siteId: site.id, entry: normalized.entry, fileCount, byteSize, source: "upload" };
+  const version: InsertVersionInput = { id: versionId, siteId: site.id, entry: normalized.entry, fileCount, byteSize, source: "upload", official: input.official };
   // Same atomicity contract as editSite: version + current-pointer + audit commit together; false
   // means the site was deleted mid-flight and the just-written files are the reconciler's to sweep.
   if (expectedVersionId) {
@@ -336,7 +335,7 @@ export async function replaceSiteContent(
   await assertQuotaRoom(quotaOwnerOf(site), { bytes: bytesOf(normalized.files) });
   const versionId = createId("ver");
   const { fileCount, byteSize } = await writeVersionFiles(site.id, versionId, normalized.files);
-  const version: InsertVersionInput = { id: versionId, siteId: site.id, entry: normalized.entry, fileCount, byteSize, source: "edit" };
+  const version: InsertVersionInput = { id: versionId, siteId: site.id, entry: normalized.entry, fileCount, byteSize, source: "edit", official: input.official };
   const audit = auditRow(ctx, site.id, versionId, "edit");
 
   if (expectedVersionId) {
@@ -394,6 +393,7 @@ export async function editSite(
   edit: EditInput,
   ctx: AuditContext,
   expectedVersionId?: string,
+  baseVersionId?: string,
 ): Promise<{ site: Site; version: Version } | VersionConflict | null> {
   const site = await getSiteBySlug(slug);
   if (!site || site.deletedAt) return null;
@@ -401,8 +401,8 @@ export async function editSite(
   // binary — a text edit of either only corrupts the site. Updating a document = re-uploading
   // the whole file to POST /api/sites/:slug/versions (replaceDocument below).
   if (site.kind === "document") throw new BadRequestError("Document sites cannot be edited online; re-upload the whole file with POST /api/sites/<slug>/versions to publish a new version");
-  const current = await getVersion(site.currentVersionId);
-  if (!current) return null;
+  const current = await getVersion(baseVersionId ?? site.currentVersionId);
+  if (!current || current.siteId !== site.id) return null;
   const versionId = createId("ver");
   let version: InsertVersionInput;
 
@@ -474,8 +474,8 @@ export async function editSite(
  * listSiteSummaries. Called with no argument it is the stranger's view, which is what any
  * unauthenticated surface must use.
  */
-export async function listSites(viewer?: ListViewer): Promise<SiteSummary[]> {
-  return listSiteSummaries(viewer);
+export async function listSites(viewer?: ListViewer, options?: { withViews?: boolean }): Promise<SiteSummary[]> {
+  return listSiteSummaries(viewer, options);
 }
 
 /**
@@ -489,11 +489,11 @@ export async function listViewerFromRequest(request: Request): Promise<ListViewe
 }
 
 /** Live site + its currently-served version, or null if missing/deleted. */
-export async function getSiteView(slug: string): Promise<{ site: Site; version: Version } | null> {
+export async function getSiteView(slug: string, requestedVersionId?: string): Promise<{ site: Site; version: Version } | null> {
   const site = await getSiteBySlug(slug);
   if (!site || site.deletedAt) return null;
-  const version = await getVersion(site.currentVersionId);
-  return version ? { site, version } : null;
+  const version = await getVersion(requestedVersionId ?? site.currentVersionId);
+  return version && version.siteId === site.id ? { site, version } : null;
 }
 
 /**
@@ -592,7 +592,7 @@ export async function listVersions(slug: string): Promise<VersionInfo[] | null> 
   const site = await getSiteBySlug(slug);
   if (!site || site.deletedAt) return null;
   const rows = await listVersionRows(site.id);
-  return rows.map((version) => ({ ...version, current: version.id === site.currentVersionId }));
+  return rows.map((version, index) => ({ ...version, number: rows.length - index, current: version.id === site.currentVersionId, official: version.id === site.officialVersionId }));
 }
 
 /**

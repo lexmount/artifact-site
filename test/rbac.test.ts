@@ -78,7 +78,6 @@ import { mintSession, csrfSafe } from "@/lib/session";
 import {
   resolveCapability,
   resolveViewer,
-  commentPermission,
 } from "@/lib/authz";
 import { canReadVersion, hashToken } from "@/lib/share";
 import { authorizePreview } from "@/lib/preview-access";
@@ -387,15 +386,6 @@ describe("RBAC boundaries", () => {
       (await (await claim(request(cookie, {}, { tenantId: "init" }))).json())
         .adopted,
     ).toBe(0);
-  });
-  it("reserved comment points enforce own-message operations", () => {
-    expect(commentPermission("editor", "comment.editOwn", false)).toBe(false);
-    expect(commentPermission("owner", "comment.editOwn", false)).toBe(false);
-    expect(commentPermission("editor", "comment.editOwn", true)).toBe(true);
-    expect(commentPermission("site-admin", "comment.moderate", false)).toBe(
-      true,
-    );
-    expect(commentPermission("viewer", "comment.read", true)).toBe(false);
   });
 });
 

@@ -29,12 +29,18 @@ describe.skipIf(!base || !token)("remote MCP final image", () => {
     try {
       expect((await c.listTools()).tools.map(t => [t.name, t.title])).toEqual(mcpTools);
       expect((await call("connection")).operator).toBe(true);
-      const site = await call("publish", { html: "<html><body>MCP image acceptance</body></html>", share: false }); created.push(site.slug);
+      const site = await call("publish", { html: "<html><body>MCP image acceptance</body></html>", official: true, share: false }); created.push(site.slug);
       const exported = await call("export", { slug: site.slug });
+      expect(site.officialVersionId).toBe(exported.versionId);
       const bytes = await call("export", { slug: site.slug, version_id: exported.versionId, path: "index.html" });
       expect(Buffer.from(bytes.base64, "base64").toString()).toContain("MCP image acceptance");
       await call("update", { slug: site.slug, expected_version: exported.versionId, html: "<html><body>Updated through remote MCP</body></html>" });
       expect((await call("read", { slug: site.slug })).text).toContain("Updated through remote MCP");
+      const officialInfo = await call("get_site", { slug: site.slug });
+      expect(officialInfo.officialVersionId).toBe(exported.versionId);
+      await call("clear_official", { slug: site.slug, expected_revision: officialInfo.officialRevision });
+      await call("set_official", { slug: site.slug, version_id: exported.versionId, expected_revision: officialInfo.officialRevision + 1 });
+      expect((await call("get_site", { slug: site.slug })).officialVersionId).toBe(exported.versionId);
       const version_id = (await call("upload_start", { title: "Large MCP tree" })).versionId;
       const binary = Buffer.alloc(3 * 1024 * 1024 + 7, 173);
       for (const [path, data] of [["index.html", Buffer.from("<html><body>Large tree</body></html>")], ["assets/data.bin", binary]] as const) {
@@ -55,13 +61,17 @@ describe.skipIf(!base || !token)("remote MCP final image", () => {
         });
         child.stdin?.end(input);
       });
-      const published = await cli(["publish", "-", "--share", "none"], "<html><body>CLI image acceptance</body></html>");
+      const published = await cli(["publish", "-", "--official", "--share", "none"], "<html><body>CLI image acceptance</body></html>");
       const cliSlug = published.slug ?? published.site?.slug; expect(cliSlug).toBeTruthy(); created.push(cliSlug);
       expect((await cli(["read", "--", cliSlug])).text).toContain("CLI image acceptance");
       await cli(["update", "--title", "Renamed by CLI", "--", cliSlug]);
       const info = await cli(["info", "--shares", "--", cliSlug]);
       const edited = await cli(["edit", "--file", info.files[0], "--expected-version", info.currentVersionId, "--", cliSlug, "-"], "<html><body>CLI edited acceptance</body></html>");
       expect(edited.versionId).not.toBe(info.currentVersionId);
+      expect(published.officialVersionId).toBe(info.currentVersionId);
+      expect((await cli(["official", "set", cliSlug, edited.versionId])).officialVersionId).toBe(edited.versionId);
+      await cli(["official", "clear", cliSlug]);
+      expect((await cli(["info", cliSlug])).officialVersionId).toBeNull();
       expect((await cli(["read", "--", cliSlug])).text).toContain("CLI edited acceptance");
       const copied = await cli(["fork", "--", cliSlug]); created.push(copied.slug);
       expect(copied.slug).not.toBe(cliSlug);

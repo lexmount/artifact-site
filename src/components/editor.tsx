@@ -60,6 +60,7 @@ export default function Editor(props: {
   slug: string; title: string; kind: "single" | "folder"; entry: string; versionId: string; files: EditFile[];
   /** Description of the base when it is a **historical** version (omitted when the base is the current version). See lib/edit-base. */
   baseVersion?: EditBaseInfo;
+  latestVersionId?: string; officialBase?: boolean;
   /**
    * Server-resolved "can this visitor change content" (capability ≥ content, see lib/authz). Required rather than
    * optional: every new render site must answer this question explicitly; a default of false would silently lock
@@ -87,7 +88,7 @@ export default function Editor(props: {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const [curVersion, setCurVersion] = useState(versionId);
+  const [curVersion, setCurVersion] = useState(props.latestVersionId ?? versionId);
   // The base only holds while nothing has been saved yet. Once a save succeeds, what we are editing is already the
   // **new current version**, and the base must be cleared: otherwise re-fetching the edit frame would still carry
   // ?version=<old version>, the x-ah-editor-version the server returns would not match the freshly saved baseline,
@@ -182,12 +183,13 @@ export default function Editor(props: {
       const body = kind === "single"
         ? { content: draft[selected] }
         : { path: selected, content: draft[selected] };
-      const res = await fetch(`/api/sites/${slug}/edit`, {
+      const res = await fetch(`/api/sites/${slug}/edit?expected_version=${encodeURIComponent(curVersion)}`, {
         method: "POST",
         headers: { "content-type": "application/json", ...(editToken ? { "x-edit-token": editToken } : {}) },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, baseVersionId: baseVersion?.id }),
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409) throw new Error(t("This report has changed. Your edits are still here; copy them before refreshing to review the latest version."));
       if (!res.ok) throw new Error(data?.error || t("Save failed ({status})", { status: res.status }));
       setSaved((prev) => ({ ...prev, [selected]: draft[selected] }));
       if (typeof data?.versionId === "string") setCurVersion(data.versionId);
@@ -302,7 +304,8 @@ export default function Editor(props: {
           </Link>
           <div className="header-title" title={title}>{title}</div>
           {/* Editing on top of an old version must stay visible at all times, otherwise users assume they are changing the live version. */}
-          <span className="editor-meta" title={baseVersion ? t("Content taken from {label}; saving creates a new version on top of the current one", { label: baseVersion.label }) : curVersion}>
+          {props.officialBase && <span className="official-pill">{t("Based on an official version; the original stays unchanged")}</span>}
+          <span className="editor-meta" title={baseVersion ? t("All files come from {label}; saving creates a new latest version", { label: baseVersion.label }) : curVersion}>
             {baseVersion ? <><History size={12} aria-hidden="true" /> {t("Based on {label}", { label: baseVersion.label })}</> : t("Editing version {version}", { version: shortVer })}
           </span>
           {!visual && kind === "folder" && <span className="editor-meta">{selected}</span>}
@@ -334,7 +337,7 @@ export default function Editor(props: {
           )}
           {/* The rest — the bare artifact, the editable link, forking, another base version — folds behind "···". */}
           <MoreMenu label={t("More")} iconOnly>
-            <SiteDownload slug={slug} editToken={editToken} versionId={curVersion} />
+            <SiteDownload slug={slug} editToken={editToken} versionId={baseVersion?.id ?? curVersion} />
             {/* The "Preview" in the toolbar switches in place (no navigation), so this external link is called
                 "Open in new tab" instead — calling both of them preview only leaves people guessing which one leaves the page. */}
             <a role="menuitem" className="menu-item" href={withShareContext(`/api/preview/${slug}`)} target="_blank" rel="noreferrer" title={t("Open the artifact itself in a new tab")}><ExternalLink size={14} aria-hidden="true" /> {t("Open in new tab")}</a>
@@ -364,7 +367,7 @@ export default function Editor(props: {
         <div className="editor-subbar">
           <span className="editor-hint">
             {baseVersion
-              ? t("Content taken from earlier version {label}; saving creates a new version on top of the current one, and {label} itself is not rewritten.", { label: baseVersion.label })
+              ? t("All files come from earlier version {label}. Saving creates a new latest version; {label} and the official version remain unchanged.", { label: baseVersion.label })
               : t("Saving creates a new immutable version; earlier versions stay unchanged.")}
           </span>
         </div>

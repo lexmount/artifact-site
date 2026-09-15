@@ -13,7 +13,7 @@ Hand a finished front-end artifact to the platform to host, and get back a `/s/<
 
 Skim the limits in section 3 before publishing — **most failures are the artifact itself violating a limit, not a wrong API call**.
 
-> **Shortcut**: if the `artifact-site` CLI is installed (`npm install -g @artifact-site/cli`), `artifact-site login --base $BASE` once and then `artifact-site publish <path>` / `artifact-site update <slug> <path> --expected-version <id>` do everything in sections 1–2 for you (mode selection, chunked upload, share link, optimistic locking). Agents with MCP support connect directly to `$BASE/mcp` over Streamable HTTP, without a CLI install: hosts that implement MCP authorization (ChatGPT, Claude) sign in through the server's OAuth consent page and need no token at all; others carry a personal or operator Bearer token. Use `artifact_site_find` to list your artifacts (no query) or search discoverable work (with query), and `artifact_site_read` to reuse earlier content. Use `artifact_site_publish` / `artifact_site_update` for inline content; for files above the MCP request limit, call `artifact_site_upload_start`, then sequential `artifact_site_upload_write` calls per relative path (zero-based index, base64, at most 256 KiB decoded, `final: true` on each file's last chunk). Finish by calling `artifact_site_publish` with `upload_id` and `share: false` if unshared, or `artifact_site_update` with `slug`, `upload_id` and `expected_version`. All paths are relative uploaded filenames, never paths on the server. `artifact_site_export` returns a manifest, or file bytes when given `path`, `version_id` and `offset`. `artifact_site_connection` reports identity and deployment limits. See `docs/MCP.md` in the repository for the 15-tool catalog and migration. The old local stdio command is removed. The rest of this document is the contract both of them implement.
+> **Shortcut**: if the `artifact-site` CLI is installed (`npm install -g @artifact-site/cli`), `artifact-site login --base $BASE` once and then `artifact-site publish <path>` / `artifact-site update <slug> <path> --expected-version <id>` do everything in sections 1–2 for you (mode selection, chunked upload, share link, optimistic locking). Agents with MCP support connect directly to `$BASE/mcp` over Streamable HTTP, without a CLI install: hosts that implement MCP authorization (ChatGPT, Claude) sign in through the server's OAuth consent page and need no token at all; others carry a personal or operator Bearer token. Use `artifact_site_find` to list your artifacts (no query) or search discoverable work (with query), and `artifact_site_read` to reuse earlier content. Use `artifact_site_publish` / `artifact_site_update` for inline content; for files above the MCP request limit, call `artifact_site_upload_start`, then sequential `artifact_site_upload_write` calls per relative path (zero-based index, base64, at most 256 KiB decoded, `final: true` on each file's last chunk). Finish by calling `artifact_site_publish` with `upload_id` and `share: false` if unshared, or `artifact_site_update` with `slug`, `upload_id` and `expected_version`. All paths are relative uploaded filenames, never paths on the server. `artifact_site_export` returns a manifest, or file bytes when given `path`, `version_id` and `offset`. `artifact_site_connection` reports identity and deployment limits. See `docs/MCP.md` in the repository for the 17-tool catalog and migration. The old local stdio command is removed. The rest of this document is the contract both of them implement.
 
 ## 1. Publishing
 
@@ -481,4 +481,25 @@ curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/api/sites/<slug>/text?file=src
 - To change what you found: `versionId` from the read is the baseline for `expected_version` in section 2, exactly like the export's.
 - With the CLI: `artifact-site find <words…>` and `artifact-site read <slug> [--file <relpath>] [--max-chars <n>]`; over MCP: `artifact_site_find` and `artifact_site_read`.
 
-Preview URLs reserve `?v=` for an authorized version ID; invalid or foreign IDs return 404. Use `?r=` for a cache-busting value. The visual editor can load historical entry HTML but uses the current resource tree, matching its save behavior; roll back the whole version first to restore its complete resource tree.
+Preview URLs reserve `?v=` for an authorized version ID; invalid or foreign IDs return 404. Use `?r=` for a cache-busting value. Historical editing uses the selected snapshot for both entry HTML and its resource tree; saving creates a new latest version.
+
+## Official versions
+
+A site can designate one immutable snapshot as official. The normal report URL still opens
+the latest version. Setting a different official version replaces only the designation;
+no snapshot is edited or deleted, and editing creates a new latest version without moving
+the official designation. Owners and site administrators can manage the designation.
+
+- Upload: JSON `official: true` or multipart `official=true` on `POST /api/sites` or
+  `POST /api/sites/<slug>/versions`. For chunked uploads, pass it to the commit endpoint.
+- Inspect: `GET /api/sites/<slug>/official` returns accessible versions and the revision.
+- Set: `PUT /api/sites/<slug>/official` with `{ "versionId": "ver_…", "expectedRevision": 0 }`.
+- Clear: `DELETE /api/sites/<slug>/official` with optional `{ "expectedRevision": 1 }`.
+- A stale revision returns 409. Refresh and resolve the conflict; do not blindly retry.
+- CLI: `publish <path> --official`, `update <slug> <path> --official`,
+  `official set <slug> <versionId>`, `official clear <slug>`.
+- MCP: publish/update accept `official`; use `artifact_site_set_official` or
+  `artifact_site_clear_official` for later changes.
+- Read a selected version at `/s/<slug>?version=<id>`; API item, text and export endpoints
+  also accept `version=<id>`. All access checks still apply. Fixed-version share links
+  never gain access to other versions when the official designation changes.

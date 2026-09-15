@@ -579,6 +579,15 @@ export class PostgresStore implements MetadataStore {
       await client.query("ALTER TABLE site_shares ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'view' CHECK (mode IN ('view','comment','edit'))");
       await client.query("ALTER TABLE site_shares ADD COLUMN IF NOT EXISTS version_id TEXT REFERENCES versions(id)");
       await client.query("ALTER TABLE upload_sessions ADD COLUMN IF NOT EXISTS tenant_id TEXT");
+      await client.query("ALTER TABLE sites ADD COLUMN IF NOT EXISTS official_version_id TEXT");
+      await client.query(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='sites'::regclass AND conname='sites_official_version_fk') THEN
+          ALTER TABLE sites ADD CONSTRAINT sites_official_version_fk FOREIGN KEY (official_version_id) REFERENCES versions(id) ON DELETE SET NULL;
+        END IF;
+      END $$`);
+      await client.query("ALTER TABLE sites ADD COLUMN IF NOT EXISTS official_set_at BIGINT");
+      await client.query("ALTER TABLE sites ADD COLUMN IF NOT EXISTS official_set_by TEXT");
+      await client.query("ALTER TABLE sites ADD COLUMN IF NOT EXISTS official_revision BIGINT NOT NULL DEFAULT 0");
       await migrateRbac(async (sql, params = []) => (await client.query(sql, [...params])).rows as Row[]);
       // Backfill edit tokens for any legacy rows (e.g. data imported from a SQLite dump). No-op on a
       // fresh DB. Done inside the lock so concurrent replicas can't double-mint.
@@ -630,6 +639,10 @@ export class PostgresStore implements MetadataStore {
         [version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now],
       );
       if (audit) await this.writeAuditRow(client, audit, now);
+      if (version.official) {
+        await client.query("UPDATE sites SET official_version_id=$1, official_set_at=$2, official_set_by=$3, official_revision=official_revision+1 WHERE id=$4", [version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId]);
+        if (audit) await this.writeAuditRow(client, { ...audit, id: createId("aud"), action: "official.set" }, now);
+      }
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
@@ -663,6 +676,10 @@ export class PostgresStore implements MetadataStore {
       );
       await client.query("UPDATE sites SET current_version_id=$1, updated_at=$2 WHERE id=$3", [version.id, now, siteId]);
       if (audit) await this.writeAuditRow(client, audit, now);
+      if (version.official) {
+        await client.query("UPDATE sites SET official_version_id=$1, official_set_at=$2, official_set_by=$3, official_revision=official_revision+1 WHERE id=$4", [version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId]);
+        if (audit) await this.writeAuditRow(client, { ...audit, id: createId("aud"), action: "official.set" }, now);
+      }
       await client.query("COMMIT");
       return true;
     } catch (error) {
@@ -703,6 +720,10 @@ export class PostgresStore implements MetadataStore {
       );
       await client.query("UPDATE sites SET current_version_id=$1, updated_at=$2 WHERE id=$3", [version.id, now, siteId]);
       if (audit) await this.writeAuditRow(client, audit, now);
+      if (version.official) {
+        await client.query("UPDATE sites SET official_version_id=$1, official_set_at=$2, official_set_by=$3, official_revision=official_revision+1 WHERE id=$4", [version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId]);
+        if (audit) await this.writeAuditRow(client, { ...audit, id: createId("aud"), action: "official.set" }, now);
+      }
       await client.query("COMMIT");
       return "applied";
     } catch (error) {
@@ -763,7 +784,7 @@ export class PostgresStore implements MetadataStore {
     await this.pool.query("UPDATE sites SET deleted_at=$1, updated_at=$1 WHERE id=$2 AND deleted_at IS NULL", [now, id]);
   }
 
-  async listSiteSummaries(viewer?: ListViewer): Promise<SiteSummary[]> {
+  async listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean }): Promise<SiteSummary[]> {
     // COALESCE, not a bare `= 'public'`: the column arrived by migration and a restored dump that
     // predates it (or was taken while it was still nullable) would otherwise read as "not public"
     // and silently empty the directory. The default is spelled the same way in toSummary().
@@ -776,8 +797,10 @@ export class PostgresStore implements MetadataStore {
     // assignment for a site they can still open and edit. Their "My sites" tab is unaffected — it
     // comes from listSitesForCollaborator — which is exactly what makes the loss confusing.
     const { rows } = await this.pool.query(`
-      SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at,
+      SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
+             (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.seq <= (SELECT seq FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
+             ${options?.withViews ? `CASE WHEN (s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (s.owner_id IS NULL AND s.anon_owner_id = $2) THEN (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) END AS total_views,` : ""}
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
@@ -1156,8 +1179,10 @@ export class PostgresStore implements MetadataStore {
   }
 
   async listSitesByOwner(ownerId: string): Promise<SiteSummary[]> {
-    const { rows } = await this.pool.query(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at,
+    const { rows } = await this.pool.query(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
+             (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.seq <= (SELECT seq FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
+             (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) AS total_views,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members m WHERE m.tenant_id=s.tenant_id AND m.user_id=s.owner_id)
@@ -1166,7 +1191,8 @@ export class PostgresStore implements MetadataStore {
   }
 
   async listSitesForCollaborator(userId: string): Promise<SiteSummary[]> {
-    const { rows } = await this.pool.query(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at,
+    const { rows } = await this.pool.query(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
+             (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.seq <= (SELECT seq FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id

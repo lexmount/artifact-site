@@ -103,11 +103,8 @@ export async function buildEditFrame(
   }
 
   const nonce = createId("nonce");
-  // <base> deliberately does NOT follow ?version= (nor could it: relative-path resolution drops the
-  // query string). This matches the save semantics rather than compromising them — saving a folder
-  // site copies the current version's tree and overwrites the one file you changed, so "entry from
-  // the chosen version, every other file from the current one" is exactly what a save produces,
-  // and the frame previews that.
+  // The resource credential pins the selected snapshot in the path, so relative assets
+  // and entry HTML use the same tree even though URL resolution drops query strings.
   const body = withConnectSrcMeta(
     // Once inside srcDoc the frame is an opaque origin and its sub-requests carry no cookies. A
     // private site therefore puts its read credential into <base> so relative assets inherit it

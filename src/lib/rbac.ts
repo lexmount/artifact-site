@@ -23,7 +23,7 @@ export const PERMISSIONS = [
   "site.content.edit",
   "site.history.read",
   "site.rename",
-  "site.version.rollback",
+  "site.version.rollback", "site.version.official.manage",
   "site.sharing.manage",
   "site.members.manage",
   "site.admins.manage",
@@ -37,6 +37,7 @@ export const PERMISSIONS = [
   "comment.editOwn",
   "comment.deleteOwn",
   "comment.resolveOwn",
+  "comment.resolve",
   "comment.moderate",
   "comment.aggregate",
 ] as const;
@@ -49,7 +50,9 @@ const comments: Permission[] = [
   "comment.deleteOwn",
   "comment.resolveOwn",
 ];
+// Resolve-any requires permanent membership or explicit governance, not an edit-share role.
 const editor: Permission[] = [
+  "comment.resolve",
   "site.read",
   "site.content.edit",
   "site.history.read",
@@ -59,7 +62,7 @@ const editor: Permission[] = [
 const manager: Permission[] = [
   ...editor,
   "site.rename",
-  "site.version.rollback",
+  "site.version.rollback", "site.version.official.manage",
   "site.sharing.manage",
   "site.members.manage",
   "site.audit.read",

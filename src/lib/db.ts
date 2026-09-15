@@ -67,6 +67,10 @@ export function toSite(row: Row): Site {
     title: row.title as string,
     kind: row.kind as SiteKind,
     currentVersionId: (row.current_version_id as string | null) ?? "",
+    officialVersionId: (row.official_version_id as string | null) ?? null,
+    officialSetAt: row.official_set_at == null ? null : Number(row.official_set_at),
+    officialSetBy: (row.official_set_by as string | null) ?? null,
+    officialRevision: Number(row.official_revision ?? 0),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
     deletedAt: row.deleted_at == null ? null : Number(row.deleted_at),
@@ -268,6 +272,9 @@ export function toUploadSession(row: Row): UploadSessionRow {
 
 export function toSummary(row: Row): SiteSummary {
   return {
+    ...(row.total_views != null ? { totalViews: Number(row.total_views) } : {}),
+    officialVersionId: (row.official_version_id as string | null) ?? null,
+    officialVersionNumber: row.official_version_id ? Number(row.official_version_number) : null,
     slug: row.slug as string,
     title: row.title as string,
     kind: row.kind as SiteKind,
@@ -312,7 +319,7 @@ export interface CreateSessionInput {
 export interface CreateOidcFlowInput {
   flowId: string; verifier: string; nonce: string; returnTo: string; expiresAt: number;
 }
-export interface InsertVersionInput { id: string; siteId: string; entry: string; fileCount: number; byteSize: number; source: VersionSource }
+export interface InsertVersionInput { official?: boolean; id: string; siteId: string; entry: string; fileCount: number; byteSize: number; source: VersionSource }
 
 /** An audit row to write. `createdAt` is stamped inside the transaction so it matches the version. */
 export interface InsertAuditInput {
@@ -404,7 +411,7 @@ export interface MetadataStore {
    * Omit `viewer` (or pass blanks) for the anonymous case: public rows only. Owner-scoped lists
    * (`listSitesByOwner` / `listSitesForCollaborator`) do NOT filter — see their doc comments.
    */
-  listSiteSummaries(viewer?: ListViewer): Promise<SiteSummary[]>;
+  listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean }): Promise<SiteSummary[]>;
   countVersions(siteId: string): Promise<number>;
   insertVersion(input: InsertVersionInput): Promise<void>;
   getVersion(id: string): Promise<Version | null>;
@@ -763,8 +770,8 @@ export async function setEditToken(id: string, token: string): Promise<void> {
 export async function softDeleteSite(id: string): Promise<void> {
   return (await getStore()).softDeleteSite(id);
 }
-export async function listSiteSummaries(viewer?: ListViewer): Promise<SiteSummary[]> {
-  return (await getStore()).listSiteSummaries(viewer);
+export async function listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean }): Promise<SiteSummary[]> {
+  return (await getStore()).listSiteSummaries(viewer, options);
 }
 export async function countVersions(siteId: string): Promise<number> {
   return (await getStore()).countVersions(siteId);

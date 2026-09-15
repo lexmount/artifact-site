@@ -138,17 +138,18 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
   });
 
   program.command("publish")
+    .option("--official", "designate the uploaded version as the only official version")
     .description("Publish a file (.html / pdf / pptx / docx / .zip), a directory, or HTML from stdin (`-`) as a new site")
     .argument("<path>", "file, directory, or - for stdin")
     .option("-t, --title <title>", "site title")
     .option("-s, --share <policy>", "share link to create: public (default), login, email, passcode, or none", parsePolicy, "public")
-    .action(async (target: string, opts: { title?: string; share: SharePolicy | false }) => {
+    .action(async (target: string, opts: { official?: boolean; title?: string; share: SharePolicy | false }) => {
       const c = client();
       const progress = json() ? undefined : (l: string) => io.err(l);
       const out = target === "-"
-        ? await publishHtml(c, await io.stdin(), { title: opts.title, share: opts.share })
-        : await publishPath(c, target, { title: opts.title, share: opts.share, onProgress: progress });
-      emit({ slug: out.site.slug, kind: out.site.kind, title: out.site.title, siteUrl: out.siteUrl, readerUrl: out.readerUrl, share: out.share ?? null, shareError: out.shareError, route: out.route }, () => {
+        ? await publishHtml(c, await io.stdin(), { official: opts.official, title: opts.title, share: opts.share })
+        : await publishPath(c, target, { official: opts.official, title: opts.title, share: opts.share, onProgress: progress });
+      emit({ officialVersionId: out.site.officialVersionId, officialRevision: out.site.officialRevision, slug: out.site.slug, kind: out.site.kind, title: out.site.title, siteUrl: out.siteUrl, readerUrl: out.readerUrl, share: out.share ?? null, shareError: out.shareError, route: out.route }, () => {
         io.out(`Published ${out.site.title} (${out.site.kind}, slug ${out.site.slug})`);
         io.out(`  site:  ${out.siteUrl}`);
         if (out.share) io.out(`  share: ${out.share.url}${out.share.passcode ? `  (passcode ${out.share.passcode})` : ""}  ← give this one to readers`);
@@ -158,21 +159,34 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
     });
 
   program.command("update")
+    .option("--official", "designate the uploaded version as the only official version")
     .description("Replace a remote artifact's full contents, or rename it with --title and no path")
     .argument("<slug>", "remote artifact identifier").argument("[path]", "replacement local file or directory; omit for title-only changes")
     .option("-t, --title <title>", "rename only; cannot be combined with a path")
     .option("--expected-version <id>", "reject concurrent changes; get this ID from info or export")
-    .action(async (slug: string, target: string | undefined, opts: { title?: string; expectedVersion?: string }) => {
+    .action(async (slug: string, target: string | undefined, opts: { official?: boolean; title?: string; expectedVersion?: string }) => {
       if (!target) {
-        if (!opts.title?.trim() || opts.expectedVersion) throw new CliError("Without a path, supply --title and no --expected-version", 2);
+        if (!opts.title?.trim() || opts.expectedVersion || opts.official) throw new CliError("Without a path, supply --title and omit --expected-version and --official", 2);
         const r = await client().rename(slug, opts.title);
         emit(r, () => io.out(`Renamed ${slug} to ${r.title}`)); return;
       }
       if (opts.title !== undefined) throw new CliError("Use update with either a path or --title, not both", 2);
       const c = client();
-      const r = await updateFromPath(c, slug, target, { expectedVersion: opts.expectedVersion, onProgress: json() ? undefined : (l) => io.err(l) });
-      emit({ slug: r.slug, kind: r.kind, versionId: r.versionId, siteUrl: c.absolute(r.url) }, () => io.out(`Updated ${r.slug}: new version ${r.versionId}`));
+      const r = await updateFromPath(c, slug, target, { official: opts.official, expectedVersion: opts.expectedVersion, onProgress: json() ? undefined : (l) => io.err(l) });
+      emit({ slug: r.slug, kind: r.kind, versionId: r.versionId, officialVersionId: r.officialVersionId, officialRevision: r.officialRevision, siteUrl: c.absolute(r.url) }, () => io.out(`Updated ${r.slug}: new version ${r.versionId}`));
     });
+
+  const official = program.command("official").description("Manage the single official designation without changing latest contents");
+  official.command("set").argument("<slug>").argument("<versionId>").action(async (slug: string, versionId: string) => {
+    const c = client(); const before = await c.getOfficial(slug);
+    const result = await c.setOfficial(slug, versionId, before.officialRevision);
+    emit(result, () => io.out(`Official version: ${result.officialVersionId}; previous designation: ${result.previousOfficialVersionId ?? "none"}. Latest unchanged.`));
+  });
+  official.command("clear").argument("<slug>").action(async (slug: string) => {
+    const c = client(); const before = await c.getOfficial(slug);
+    const result = await c.setOfficial(slug, null, before.officialRevision);
+    emit(result, () => io.out("Official designation removed. Version contents unchanged."));
+  });
 
   program.command("edit")
     .description("Replace one remote text file, preserving other files; read it first and supply its version")
@@ -206,11 +220,12 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
 
   program.command("info").description("Inspect a remote artifact: kind, current version, files and history; optionally sharing records").argument("<slug>").option("--shares", "include share summaries (requires owner permission)").action(async (slug: string, opts: { shares?: boolean }) => {
     const c = client(Boolean(opts.shares));
-    const [info, versions] = await Promise.all([c.getSite(slug), c.listVersions(slug)]);
+    const [info, versions, official] = await Promise.all([c.getSite(slug), c.listVersions(slug), c.getOfficial(slug)]);
     const shares = opts.shares ? await c.listShares(slug) : undefined;
-    emit({ ...info, ...shares, content: undefined, currentVersionId: versions.currentVersionId, versions: versions.versions }, () => {
+    emit({ ...info, ...shares, ...official, content: undefined, currentVersionId: versions.currentVersionId, versions: versions.versions }, () => {
       io.out(`${info.title} — ${info.kind} — ${c.absolute(info.url)}`);
       io.out(`current version: ${versions.currentVersionId}  (${versions.versions.length} in history)`);
+      io.out(`official version: ${official.officialVersionId ?? "none"}`);
       if (shares) io.out(`share records: ${shares.shares.length} (secret links are not returned)`);
       io.out(`files (${info.files.length}): ${info.files.slice(0, 20).join(", ")}${info.files.length > 20 ? ", …" : ""}`);
     });

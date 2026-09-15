@@ -25,6 +25,7 @@ export default function ArtifactCard({ site, note, actions }: { site: SiteSummar
         <p className="recent-title">{site.title}</p>
       </SiteLink>
       {actions && <div className="artifact-card-actions">{actions}</div>}
+      {site.officialVersionId && <SiteLink slug={site.slug} className="official-pill" href={`/s/${site.slug}?version=${encodeURIComponent(site.officialVersionId)}`}>{t("Official v{n}", { n: site.officialVersionNumber ?? "" })}</SiteLink>}
       <p className="recent-meta">{kindLabel(site.kind, t)} · {note ?? relTime(site.updatedAt, t, locale)}</p>
     </article>
   );

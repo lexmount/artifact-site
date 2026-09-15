@@ -11,13 +11,13 @@ import SiteVersionWatcher from "@/components/site-version-watcher";
 import { config } from "@/lib/config";
 import { getSiteView } from "@/lib/sites";
 import { anonymousExpiresAt } from "@/lib/quota";
-import { countVersions } from "@/lib/db";
+import { getVersion, countVersions } from "@/lib/db";
 import { describePermissions, isAnonymousCreator, viewerRequestFromHeaders } from "@/lib/authz";
 import { getStorage } from "@/lib/storage";
 import { extractDescription } from "@/lib/upload";
 // Same origin resolver the /for-agents surfaces use: ARTIFACT_PUBLIC_URL, else the forwarded Host.
 import { resolvePublicBase } from "@/lib/publish-skill";
-import { canReadSite, logSiteOpen } from "@/lib/share";
+import { canReadVersion, canReadSite, logSiteOpen } from "@/lib/share";
 import { resolveSession } from "@/lib/session";
 import { anonIdFromRequest } from "@/lib/anon";
 import { afterResponse } from "@/lib/after-response";
@@ -102,15 +102,17 @@ export default async function ViewerPage({
   params, searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ published?: string }>;
+  searchParams: Promise<{ published?: string; version?: string }>;
 }) {
   const { slug } = await params;
-  const { published } = await searchParams;
+  const { published, version: requestedVersion } = await searchParams;
   // One rebuilt Request and one session resolution for the whole request — generateMetadata, the
   // gate, the permission flags and the view log all see the same reader (see pageContext). The
   // viewer Request variant carries the address / agent / prefetch headers logSiteOpen reads; the
   // authorization path ignores them.
-  const { request, view, session, readable } = await pageContext(slug);
+  const { request, view: latestView, session, readable } = await pageContext(slug);
+  const selected = requestedVersion ? await getVersion(requestedVersion) : latestView?.version;
+  const view = latestView && selected && selected.siteId === latestView.site.id ? { site: latestView.site, version: selected } : null;
   if (!view) notFound();
   // Taken down: the link was public and people hold it, so the honest answer is a sentence, not a
   // 404. No reason is shown — it was written for the owner and the administrators.
@@ -118,6 +120,7 @@ export default async function ViewerPage({
   // A private site's own address is for its owner and collaborators; readers arrive at /v/<token>.
   // notFound() rather than a refusal screen — same reason the API outlets answer 404.
   if (!readable) notFound();
+  if (!(await canReadVersion(request, view.site, view.version.id, session))) notFound();
   // Independent lookups, one round-trip's worth of waiting. `session` is threaded into
   // describePermissions so nothing on this page resolves the cookie twice.
   const [versionCount, permissions] = await Promise.all([
@@ -147,6 +150,11 @@ export default async function ViewerPage({
         updatedAt={view.site.updatedAt}
       />
       <SiteViewer
+        key={view.version.id}
+        viewedVersionId={view.version.id}
+        latestVersionId={view.site.currentVersionId}
+        pinnedVersionId={requestedVersion}
+        officialVersionId={view.site.officialVersionId ?? null}
         slug={slug}
         title={view.site.title}
         kind={view.site.kind}
@@ -164,7 +172,7 @@ export default async function ViewerPage({
       {/* Whoever can edit is the person who directed this change: swap in the new version right away,
           then tell them. Read-only visitors get a hint they can act on at a time of their choosing —
           they may be halfway through a long document. */}
-      <SiteVersionWatcher slug={slug} versionId={view.version.id} autoRefresh={permissions.canEditContent} />
+      {!requestedVersion && <SiteVersionWatcher slug={slug} versionId={view.version.id} autoRefresh={permissions.canEditContent} />}
       {/* Assistant edit mode: the floating assistant appears only where the deployment enabled it
           AND this viewer may edit — the permission that makes "Let AI edit this artifact" honourable is
           decided server-side, so an unauthorized viewer never even loads the SDK. */}

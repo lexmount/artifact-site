@@ -17,6 +17,8 @@ import Link from "next/link";
 import type { Visibility } from "@/lib/types";
 import { Pencil, ExternalLink, ArrowLeft, Monitor, Tablet, Smartphone, Copy, FileUp, Loader2, Share2, ChevronDown, ChevronUp, Lock, MousePointer2, MousePointerClick } from "lucide-react";
 import { Dwell, hoverArmsReveal, leaveSchedulesHide, modeAutoHides, barModeStore } from "@/lib/bar-mode";
+import OfficialVersion from "@/components/official-version";
+import { useUploadConfirmation } from "@/components/upload-confirmation";
 import VersionHistory, { drawerHost } from "@/components/version-history";
 import AdminActivity from "@/components/admin-activity";
 import SharePanel from "@/components/share-panel";
@@ -80,6 +82,7 @@ export function drawerHoldEffect(before: number, after: number): "reveal" | "hid
 }
 
 export default function SiteViewer(props: {
+  viewedVersionId?: string; latestVersionId?: string; pinnedVersionId?: string; officialVersionId?: string | null;
   visibility: Visibility;
   permissions: SitePermissions;
   slug: string; title: string; kind: "single" | "folder" | "document"; versionCount: number; published?: boolean;
@@ -96,17 +99,36 @@ export default function SiteViewer(props: {
   const locale = useLocale();
   const [device, setDevice] = useState<Device>("desktop");
   const [title, setTitle] = useState(props.title);
+  const [officialVersion, setOfficialVersion] = useState(props.officialVersionId ?? null);
+  const [viewedVersion, setViewedVersion] = useState(props.viewedVersionId);
+  const [latestVersion, setLatestVersion] = useState(props.latestVersionId ?? props.viewedVersionId);
+  const officialStatus = useCallback((official: string | null, latest: string | null) => { setOfficialVersion(official); if (latest) setLatestVersion(latest); }, []);
+  const { confirmUpload, uploadConfirmation } = useUploadConfirmation();
   const [versionCount, setVersionCount] = useState(props.versionCount);
   const [frameKey, setFrameKey] = useState(0); // bump to reload the preview after a rollback
 
   // Someone landed a new version while this page was open (see site-version-watcher): swap the
   // artifact frame in place. Deliberately NOT a page reload — the reader may be mid-conversation
   // with the assistant that produced this very change.
+  const refreshFrame = useCallback(async () => {
+    if (props.pinnedVersionId) return;
+    try {
+      const response = await fetch(`/api/sites/${slug}/versions`, { cache: "no-store" });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.currentVersionId) { setViewedVersion(data.currentVersionId); setLatestVersion(data.currentVersionId); }
+      }
+    } catch {
+      // Keep the known snapshot if metadata is temporarily unavailable.
+    } finally {
+      setFrameKey(k => k + 1);
+    }
+  }, [slug, props.pinnedVersionId]);
   useEffect(() => {
-    const onRefresh = () => setFrameKey((k) => k + 1);
+    const onRefresh = () => { void refreshFrame().catch(() => {}); };
     window.addEventListener(ARTIFACT_REFRESH_EVENT, onRefresh);
     return () => window.removeEventListener(ARTIFACT_REFRESH_EVENT, onRefresh);
-  }, []);
+  }, [refreshFrame]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(props.title);
   const [forking, setForking] = useState(false);
@@ -283,18 +305,26 @@ export default function SiteViewer(props: {
   // (there is no /edit); without this button, a web user's only way to update would be "open a new site and swap the link".
   async function replaceDocumentFile(file: File | null) {
     if (!file || replacing) return;
+    if (docInput.current) docInput.current.value = "";
+    const official = await confirmUpload(true, permissions.canManageSharing);
+    if (official === null) return;
     setReplacing(true);
     try {
       const fd = new FormData();
       fd.set("mode", "file");
+      fd.set("official", String(official));
       fd.set("file", file, file.name);
-      const res = await fetch(`/api/sites/${slug}/versions`, {
+      const res = await fetch(`/api/sites/${slug}/versions${latestVersion ? `?expected_version=${encodeURIComponent(latestVersion)}` : ""}`, {
         method: "POST",
         body: fd,
         headers: editToken ? { "x-edit-token": editToken } : {},
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || t("Uploading the new version failed"));
+      if (data.versionId) {
+        setLatestVersion(data.versionId);
+        if (!props.pinnedVersionId) setViewedVersion(data.versionId);
+      }
       setVersionCount((n) => n + 1);
       setFrameKey((k) => k + 1); // reload the preview: the new version is current now
       flash(t("New version published · The share link is unchanged"));
@@ -325,7 +355,7 @@ export default function SiteViewer(props: {
   }
 
   function onRolledBack() {
-    setFrameKey((k) => k + 1); // reload the iframe to show the new current version
+    void refreshFrame(); // resolve and pin the newly restored snapshot
     setVersionCount((n) => n + 1);
     flash(t("Rolled back · A new version was created"));
     router.refresh();
@@ -335,6 +365,7 @@ export default function SiteViewer(props: {
 
   return (
     <div className="fs-viewer" ref={viewerRef} data-device={device} data-bar={barOpen ? "open" : "closed"} data-bar-mode={barMode}>
+      {uploadConfirmation}
       <div className="fs-stage-wrap">
         {props.takenDownReason != null && (
           <div className="fs-notice" role="status">
@@ -355,7 +386,7 @@ export default function SiteViewer(props: {
             key={frameKey}
             ref={frameRef}
             className="fs-frame"
-            src={`/api/preview/${slug}/?r=${frameKey}`}
+            src={`/api/preview/${slug}/?r=${frameKey}${viewedVersion ? `&v=${encodeURIComponent(viewedVersion)}` : ""}`}
             title={title}
             sandbox="allow-forms allow-modals allow-scripts allow-popups allow-downloads"
             allow="fullscreen"
@@ -463,7 +494,7 @@ export default function SiteViewer(props: {
             </div>
             {/* The bar carries the two things an owner does most — edit and share — as the design draws them:
                 an outline button and a black one, then everything else behind "···". */}
-            {mayEdit && <Link className="btn" href={`/s/${slug}/edit`}><Pencil size={14} aria-hidden="true" /> {t("Edit")}</Link>}
+            {mayEdit && <Link className="btn" href={`/s/${slug}/edit${props.pinnedVersionId ? `?version=${encodeURIComponent(props.pinnedVersionId)}` : ""}`}><Pencil size={14} aria-hidden="true" /> {t(officialVersion === viewedVersion ? "Create a new version" : "Edit")}</Link>}
             {!mayEdit && permissions.needsLogin && kind !== "document" && (
               <LockedAction label={t("Edit")} icon={<Pencil size={14} />} hint={t("Sign in required")} onOpen={() => openGate("edit")} />
             )}
@@ -491,7 +522,7 @@ export default function SiteViewer(props: {
               <a
                 role="menuitem"
                 className="menu-item"
-                href={`/api/preview/${slug}/`}
+                href={`/api/preview/${slug}/${props.pinnedVersionId ? `?v=${encodeURIComponent(props.pinnedVersionId)}` : ""}`}
                 target="_blank"
                 rel="noreferrer"
                 title={props.visibility === "private"
@@ -532,6 +563,7 @@ export default function SiteViewer(props: {
             <span className="controls-sep" aria-hidden="true" />
             <AuthButton variant="avatar" />
           </div>
+          <OfficialVersion slug={slug} versionId={viewedVersion} onStatus={officialStatus} />
         </header>
 
         {/* Persistent handle: touch screens have no hover, and keyboard/mouse users also need a visible "there is

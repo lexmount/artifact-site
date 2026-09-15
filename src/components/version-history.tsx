@@ -7,13 +7,14 @@ import SiteDownload from "@/components/site-download";
 
 // Version history — a right-side drawer reachable from the viewer/editor. Lazily loads
 // GET /api/sites/<slug>/versions on open and renders the immutable timeline (newest first).
-// Each row: "Preview this version" (opens /api/preview/<slug>/?v=<id> read-only) + "Roll back to this version"
+// Each row: "Preview this version" (opens /s/<slug>?version=<id> read-only) + "Roll back to this version"
 // (confirm → POST /rollback → reload the list and let the parent refresh its preview).
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { History, X, Eye, RotateCcw, Loader2 } from "lucide-react";
 import type { VersionInfo } from "@/lib/types";
 import { countText } from "@/lib/i18n";
+import { OFFICIAL_CHANGED } from "@/components/official-version";
 import { relTime } from "@/lib/rel-time";
 import { useLocale, useT } from "@/components/locale-provider";
 
@@ -47,6 +48,8 @@ export default function VersionHistory({ slug, editToken, onRolledBack, onOpenCh
   const permissions = useSitePermissions(slug);
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<VersionInfo[] | null>(null);
+  const [officialRevision, setOfficialRevision] = useState<number>();
+  const [canManageOfficial, setCanManageOfficial] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rolling, setRolling] = useState<string | null>(null);
@@ -55,16 +58,32 @@ export default function VersionHistory({ slug, editToken, onRolledBack, onOpenCh
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sites/${slug}/versions`, { cache: "no-store" });
+      const res = await fetch(`/api/sites/${slug}/versions`, { cache: "no-store", headers: editToken ? { "x-edit-token": editToken } : {} });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || t("Failed to load"));
       setVersions(data.versions as VersionInfo[]);
+      setOfficialRevision(data.officialRevision);
+      setCanManageOfficial(!!data.canManageOfficial);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("Failed to load"));
     } finally {
       setLoading(false);
     }
-  }, [slug, t]);
+  }, [slug, t, editToken]);
+
+  useEffect(() => { if (!open) return; const refresh = () => { void load(); }; window.addEventListener(OFFICIAL_CHANGED, refresh); const timer = canManageOfficial ? setInterval(refresh, 10000) : undefined; return () => { clearInterval(timer); window.removeEventListener(OFFICIAL_CHANGED, refresh); }; }, [open, load, canManageOfficial]);
+
+  async function designate(version: VersionInfo) {
+    setRolling(version.id);
+    try {
+      const res = await fetch(`/api/sites/${slug}/official`, { method: version.official ? "DELETE" : "PUT", headers: { "content-type": "application/json", ...(editToken ? { "x-edit-token": editToken } : {}) }, body: JSON.stringify({ versionId: version.id, expectedRevision: officialRevision }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      window.dispatchEvent(new Event(OFFICIAL_CHANGED));
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : t("Could not change the official version")); }
+    finally { setRolling(null); }
+  }
 
   function openDrawer() {
     setOpen(true);
@@ -137,8 +156,9 @@ export default function VersionHistory({ slug, editToken, onRolledBack, onOpenCh
               {versions?.map((v, i) => (
                 <div key={v.id} className={`ver-row${v.current ? " is-current" : ""}`}>
                   <div className="ver-row-head">
-                    <span className="ver-num">v{total - i}</span>
+                    <span className="ver-num">v{v.number ?? total - i}</span>
                     <span className="kind-chip">{t(SOURCE_LABEL[v.source] ?? v.source)}</span>
+                    {v.official && <span className="official-pill">{t("Official version")}</span>}
                     {v.current && <span className="ver-current-pill">{t("Current")}</span>}
                   </div>
                   <div className="ver-row-meta">
@@ -148,7 +168,8 @@ export default function VersionHistory({ slug, editToken, onRolledBack, onOpenCh
                   </div>
                   <div className="ver-row-actions">
                     {canDownload && <SiteDownload slug={slug} versionId={v.id} editToken={editToken} menuItem={false} />}
-                    <a className="btn sm ghost" href={`/api/preview/${slug}/?v=${v.id}`} target="_blank" rel="noreferrer">
+                    {canManageOfficial && <button type="button" className="btn sm" disabled={rolling !== null} onClick={() => void designate(v)}>{t(v.official ? "Remove official designation" : "Set as official version")}</button>}
+                    <a className="btn sm ghost" href={`/s/${slug}?version=${encodeURIComponent(v.id)}`} target="_blank" rel="noreferrer">
                       <Eye size={13} /> {t("Preview this version")}
                     </a>
                     {/* title goes on the outer span rather than the button: a disabled button

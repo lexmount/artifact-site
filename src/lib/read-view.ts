@@ -6,7 +6,7 @@ import { resolveSession } from "@/lib/session";
 /** Resolve a fixed share before choosing bytes; never silently substitute the current version. */
 // Routes that record a more specific event (such as export) can disable the read audit.
 // Authorization and fixed-version selection are unchanged.
-export async function getReadableView(request: Request, slug: string, { audit = true }: { audit?: boolean } = {}) {
+export async function getReadableView(request: Request, slug: string, { audit = true, versionAlias = false }: { audit?: boolean; versionAlias?: boolean } = {}) {
     const view = await getSiteView(slug);
     if (!view)
         return null;
@@ -15,7 +15,7 @@ export async function getReadableView(request: Request, slug: string, { audit = 
         return { ...view, readable: false };
     const share = await requestShareAccess(request, view.site, session);
     const params = new URL(request.url).searchParams;
-    const versionId = params.get("version_id") ?? share?.versionId ?? view.version.id;
+    const versionId = params.get("version_id") ?? (versionAlias ? params.get("version") : null) ?? share?.versionId ?? view.version.id;
     if (!await canReadVersion(request, view.site, versionId, session))
         return null;
     const version = versionId === view.version.id ? view.version : await getVersion(versionId);

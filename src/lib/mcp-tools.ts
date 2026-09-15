@@ -9,6 +9,8 @@ export const mcpTools = [
   ["artifact_site_read", "Read a site"],
   ["artifact_site_fork", "Fork a site"],
   ["artifact_site_share", "Create a share link"],
+  ["artifact_site_set_official", "Set official version"],
+  ["artifact_site_clear_official", "Clear official version"],
   ["artifact_site_rollback", "Roll back a site"],
   ["artifact_site_delete", "Delete a site"],
   ["artifact_site_export", "Export a site"],

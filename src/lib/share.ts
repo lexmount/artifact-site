@@ -220,9 +220,9 @@ export async function readableVersionFilter(request: Request, site: Site, sessio
   if (await accountSiteRole(site,resolved) || await managementRole(request,site,resolved) || isAnonymousCreator(resolveViewer(request,resolved),site)) return () => true;
   if (!shareTokenFromRequest(request) && await resolveCapability(resolveViewer(request,resolved),site) === "owner") return () => true;
   const share = await requestShareAccess(request,site,resolved);
-  if (share) return (id) => id === (share.versionId ?? site.currentVersionId);
+  if (share) return (id) => share.versionId ? id === share.versionId : id === site.currentVersionId || id === site.officialVersionId;
   const readable = await canReadSite(request,site,resolved,false);
-  return (id) => readable && id === site.currentVersionId;
+  return (id) => readable && (id === site.currentVersionId || id === site.officialVersionId);
 }
 
 // --- view log -----------------------------------------------------------------

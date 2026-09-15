@@ -118,3 +118,18 @@ spelling, which is still accepted. `share --mode view|comment|edit --version-id 
 controls the share role and optional fixed version (edit cannot be pinned).
 Source reads, export and fork require editor-or-higher access; plain report text follows
 read permissions. Public sharing creates a reader URL without changing site visibility.
+## Official versions
+
+```sh
+artifact-site publish report.pdf --official
+artifact-site update SLUG report.pdf --official
+artifact-site official set SLUG VERSION_ID
+artifact-site official clear SLUG
+artifact-site info SLUG
+```
+
+There is at most one official version. Designating a current or historical version replaces
+the old designation without changing the latest version or any snapshot contents. Upload
+flags take effect in the same transaction as publication; they require management permission
+when updating an existing site. The `official` commands read the current designation revision
+and refuse concurrent changes. `info` and `--json` include official version metadata.

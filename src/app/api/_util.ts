@@ -231,7 +231,16 @@ async function fromForm(form: FormData): Promise<UploadInput> {
 /** Parse POST /api/sites body (json or multipart) into an UploadInput for createSite. */
 export async function parseUploadInput(request: Request): Promise<UploadInput> {
   const contentType = request.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) return fromJson(await (await readBodyWithinUploadLimit(request)).json());
-  if (contentType.includes("multipart/form-data")) return fromForm(await (await readBodyWithinUploadLimit(request)).formData());
+  if (contentType.includes("application/json")) {
+    const body = await (await readBodyWithinUploadLimit(request)).json();
+    const { official } = z.object({ official: z.boolean().optional() }).parse(body);
+    return { ...fromJson(body), official };
+  }
+  if (contentType.includes("multipart/form-data")) {
+    const form = await (await readBodyWithinUploadLimit(request)).formData();
+    const flag = form.get("official");
+    if (flag !== null && flag !== "true" && flag !== "false") throw new BadRequestError("official must be true or false");
+    return { ...await fromForm(form), official: flag === "true" };
+  }
   throw new BadRequestError("Unsupported Content-Type: application/json or multipart/form-data is required");
 }

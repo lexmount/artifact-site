@@ -80,7 +80,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate }: {
   const [policy, setPolicy] = useState<SharePolicy>("login");
   const [mode,setMode] = useState<"view"|"comment"|"edit">("view");
   const [versionId,setVersionId] = useState("");
-  const [versions,setVersions] = useState<{id:string;createdAt:number}[]>([]);
+  const [versions,setVersions] = useState<{id:string;createdAt:number;number?:number;official?:boolean}[]>([]);
   const [label, setLabel] = useState("");
   const [expiry, setExpiry] = useState<ExpiryChoice>("never");
   const [draftPeople, setDraftPeople] = useState<PickedPerson[]>([]);
@@ -360,7 +360,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate }: {
             <label htmlFor="share-mode">{t("Link permissions")}</label>
             <select id="share-mode" value={mode} onChange={e=>{setMode(e.target.value as typeof mode);if(e.target.value === "edit")setVersionId("");}}><option value="view">{t("View only")}</option><option value="comment">{t("Can comment (coming next)")}</option><option value="edit">{t("Can edit")}</option></select>
             <p className="share-hint">{t("Editable links change this site for everyone following its latest version.")}</p>
-            <label htmlFor="share-version">{t("Shared version")}</label><select id="share-version" value={versionId} disabled={mode === "edit"} onChange={e=>setVersionId(e.target.value)}><option value="">{t("Follow latest version")}</option>{versions.map((v,i)=><option key={v.id} value={v.id}>{t("Version {n}",{n:versions.length-i})} · {new Date(v.createdAt).toLocaleString(locale)}</option>)}</select>
+            <label htmlFor="share-version">{t("Shared version")}</label><select id="share-version" value={versionId} disabled={mode === "edit"} onChange={e=>setVersionId(e.target.value)}><option value="">{t("Follow latest version")}</option>{versions.map((v,i)=><option key={v.id} value={v.id}>{t("Version {n}",{n:v.number ?? versions.length-i})}{v.official ? ` · ${t("Official version")}` : ""} · {new Date(v.createdAt).toLocaleString(locale)}</option>)}</select>
             <label htmlFor="share-new-policy">{t("Who can open this link")}</label>
             <select id="share-new-policy" value={policy} onChange={(e) => setPolicy(e.target.value as SharePolicy)}>
               {SHARE_POLICY_MENU.map((p) => <option key={p} value={p}>{t(POLICY_LABEL[p])}</option>)}

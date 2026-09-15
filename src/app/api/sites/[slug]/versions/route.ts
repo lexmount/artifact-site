@@ -10,7 +10,7 @@ import { assertMutationOrigin } from "@/lib/request-auth";
 //         "content", CSRF only for ambient (cookie) credentials.
 import type { NextResponse } from "next/server";
 import { ensureAnonId } from "@/lib/anon";
-import { requireActor } from "@/lib/authz";
+import { describePermissions, requirePermission, requireActor } from "@/lib/authz";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { readableVersionFilter, canReadSite } from "@/lib/share";
 import { getSiteView, listVersions, replaceDocument, replaceSiteContent, siteUrl } from "@/lib/sites";
@@ -40,7 +40,8 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const currentVersionId = versions.find((v) => v.current)?.id ?? null;
     const allows = await readableVersionFilter(request, view.site);
     const readable = versions.filter(v => allows(v.id));
-    return json({ versions: readable, currentVersionId: readable.some(v=>v.id===currentVersionId)?currentVersionId:null });
+    const permissions = await describePermissions(request, view.site);
+    return json({ officialRevision: permissions.canManageSharing ? view.site.officialRevision : undefined, canManageOfficial: permissions.canManageSharing, versions: readable, currentVersionId: readable.some(v=>v.id===currentVersionId)?currentVersionId:null });
   } catch (error) {
     return errorResponse(error);
   }
@@ -60,6 +61,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
       await assertMutationOrigin(request, view.site);
 
     const input = await parseUploadInput(request);
+    if (input.official) await requirePermission(request, view.site, "site.version.official.manage", undefined, false);
     const ctx: AuditContext = {
       authorizationRequest: request,
       actor: { ...actor, anonId: actor.anonId ?? anonId },
@@ -81,6 +83,8 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
       title: result.site.title,
       kind: result.site.kind,
       versionId: result.version.id,
+      officialVersionId: result.site.officialVersionId,
+      officialRevision: result.site.officialRevision,
     });
     if (cookie) res.headers.append("set-cookie", cookie);
     return res;

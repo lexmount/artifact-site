@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActor } from "@/lib/authz";
 import { checkRateLimit } from "@/lib/ratelimit";
+import { canReadVersion } from "@/lib/share";
 import { editSite, getSiteView, siteUrl } from "@/lib/sites";
 import { auditRequestMeta, type AuditContext } from "@/lib/audit";
 import { ensureAnonId } from "@/lib/anon";
@@ -19,6 +20,7 @@ import { readBodyWithinUploadLimit, errorResponse, json, parseExpectedVersion, v
 
 const editSchema = z.object({
   content: z.string(),
+  baseVersionId: z.string().min(1).optional(),
   path: z.string().optional(),
   // How the edit was made, for the audit trail. Default "source" — the only editor posting here
   // today. A lying client can only mislabel HOW it edited, never WHO: identity is server-resolved.
@@ -44,7 +46,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     // with no credentials at all was already refused (403) and never reaches this check.
       await assertMutationOrigin(request, view.site);
 
-    const { content, path, method } = editSchema.parse(await (await readBodyWithinUploadLimit(request)).json());
+    const { content, path, method, baseVersionId } = editSchema.parse(await (await readBodyWithinUploadLimit(request)).json());
     const edit: EditInput = path === undefined ? { content } : { path, content };
     const ctx: AuditContext = {
       authorizationRequest: request,
@@ -58,7 +60,9 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     const expected = parseExpectedVersion(request);
     if (expected.rejection) return expected.rejection;
 
-    const result = await editSite(slug, edit, ctx, expected.value);
+    if (baseVersionId && !expected.value) return json({ error: "expected_version is required with baseVersionId" }, 400);
+    if (baseVersionId && !(await canReadVersion(request, view.site, baseVersionId))) return json({ error: "version not found" }, 404);
+    const result = await editSite(slug, edit, ctx, expected.value, baseVersionId);
     if (!result) return json({ error: "site not found" }, 404);
     if ("conflict" in result) return versionConflictResponse(result.currentVersionId);
 

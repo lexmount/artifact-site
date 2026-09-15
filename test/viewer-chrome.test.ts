@@ -248,7 +248,7 @@ describe("C3 accessibility trade-offs of the collapsed state", () => {
 describe("C5 the More menu folds the secondary actions", () => {
   const menu = read("src/components/more-menu.tsx");
   it("the secondary actions sit inside the menu, the primary ones stay on the bar", () => {
-    const controls = block(viewer, 'className="controls"', "</div>\n        </header>");
+    const controls = block(viewer, 'className="controls"', "</header>");
     const menuBlock = block(controls, "<MoreMenu", "</MoreMenu>");
     // The bare artifact moved into the menu with the design pass; Edit and the device switch stay on the bar.
     expect(menuBlock).not.toContain('aria-label={t("Preview device")}');
@@ -259,7 +259,7 @@ describe("C5 the More menu folds the secondary actions", () => {
     // The owner's window into the administration log sits in the menu too, owner-only.
     expect(menuBlock).toContain('{permissions.canManageSharing && <AdminActivity slug={slug} onOpenChange={onActivityOpen} />}');
     const before = controls.slice(0, controls.indexOf("<MoreMenu"));
-    expect(before).toContain('href={`/s/${slug}/edit`}'); // edit is a first-class button on the bar
+    expect(before).toContain('href={`/s/${slug}/edit${props.pinnedVersionId ? `?version=${encodeURIComponent(props.pinnedVersionId)}` : ""}`}'); // edit is a first-class button on the bar
     expect(before).toContain('className="segmented device-switch"'); // and so is the device preview
     expect(before).toContain('<SharePanel');
   });
@@ -345,7 +345,7 @@ describe("C5 no action on the bar may go missing", () => {
       ["版本历史", "<VersionHistory"],
       ["分享设置", "<SharePanel"],
       ["登录/登出", "<AuthButton"],
-      ["编辑", "href={`/s/${slug}/edit`}"],
+      ["编辑", 'href={`/s/${slug}/edit${props.pinnedVersionId'],
       // Switched from aria-label to visible text: it used to be the only unnamed button on the bar, a
       // bare external-link arrow, and elsewhere that arrow reads as "share" — inviting exactly "copy
       // this address and send it", but it is the artifact's own address, and on a private site the

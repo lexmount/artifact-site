@@ -102,9 +102,13 @@ scope checks; knowing a tenant ID, site slug or version ID never creates authori
 
 ## Reserved comment permissions
 
-The catalog reserves read, create, reply, edit/delete/resolve-own, moderate and aggregate actions.
+See [the comment contract](COMMENTS.md) for scope, provenance and adapter requirements.
+
+The catalog reserves read, create, reply, edit/delete/resolve-own, resolve, moderate and aggregate actions.
 Owners/site admins/tenant admins can moderate; no role may edit another author's message body.
-Commenters and editors may read/reply and operate on their own messages. View-only visitors cannot
+Commenters and editors may read/reply and operate on their own messages. Permanent editors may
+also resolve/reopen others' visible threads through `comment.resolve`; share-derived editors may
+only resolve their own. The permission catalog alone does not verify this provenance. View-only visitors cannot
 read comments. Moderation is separate from changing another author's text.
 
 The next phase must authorize the exact discussion scope before applying these points:

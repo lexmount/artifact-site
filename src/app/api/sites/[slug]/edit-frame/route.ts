@@ -29,10 +29,9 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const requestedVersion = new URL(request.url).searchParams.get("version") || new URL(request.url).searchParams.get("v") || view.site.currentVersionId;
     if(!(await canReadVersion(request,view.site,requestedVersion))) return json({error:"version not accessible"},404); // no edit access → 403 (and no script)
 
-    // Saving historical entry HTML copies the current resource tree (see buildEditFrame).
-    // Normalize both version parameter spellings to that same resource snapshot.
+    // Scope resources to the selected source tree, matching baseVersionId on save.
     const resourceUrl = new URL(request.url);
-    resourceUrl.searchParams.set("v", view.site.currentVersionId);
+    resourceUrl.searchParams.set("v", requestedVersion);
     const resourceRequest = new Request(resourceUrl, request);
     const access = await authorizePreview(resourceRequest, view.site, null);
     if (!access) return json({ error: "version not accessible" }, 404);

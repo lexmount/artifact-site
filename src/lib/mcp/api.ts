@@ -15,7 +15,9 @@ import * as uploads from "@/app/api/uploads/route";
 import * as commit from "@/app/api/uploads/[versionId]/commit/route";
 import * as uploadFile from "@/app/api/uploads/[versionId]/files/[...relpath]/route";
 
-export type Operation = "publish" | "get" | "rename" | "delete" | "versions" | "update" | "edit" | "fork" | "rollback" | "share" | "shares" | "search" | "read" | "list" | "whoami" | "upload_start" | "upload_file" | "upload_commit";
+import * as official from "@/app/api/sites/[slug]/official/route";
+
+export type Operation = "official" | "official_set" | "official_clear" | "publish" | "get" | "rename" | "delete" | "versions" | "update" | "edit" | "fork" | "rollback" | "share" | "shares" | "search" | "read" | "list" | "whoami" | "upload_start" | "upload_file" | "upload_commit";
 export function apiRequest(source: Request, route: string, method = "GET", body?: BodyInit) {
   const url = new URL(route, source.url);
   const authorization = source.headers.get("authorization")!;
@@ -31,6 +33,7 @@ export async function callApi(source: Request, op: Operation, args: { slug?: str
   const item = `/api/sites/${encodeURIComponent(slug)}`;
   const query = args.query ? `?${new URLSearchParams(args.query)}` : "";
   const routes = {
+    official: ["GET", `${item}/official`, official.GET], official_set: ["PUT", `${item}/official`, official.PUT], official_clear: ["DELETE", `${item}/official`, official.DELETE],
     publish: ["POST", "/api/sites", collection.POST], get: ["GET", item, site.GET], rename: ["PATCH", item, site.PATCH], delete: ["DELETE", item, site.DELETE],
     versions: ["GET", `${item}/versions`, versions.GET], update: ["POST", `${item}/versions`, versions.POST], edit: ["POST", `${item}/edit`, edit.POST],
     fork: ["POST", `${item}/fork`, fork.POST], rollback: ["POST", `${item}/rollback`, rollback.POST], share: ["POST", `${item}/shares`, shares.POST], shares: ["GET", `${item}/shares`, shares.GET],

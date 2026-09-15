@@ -30,7 +30,7 @@ const renameSchema = z.object({ title: z.string() });
 export async function GET(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
   try {
     const { slug } = await context.params;
-    const view = await getReadableView(request, slug);
+    const view = await getReadableView(request, slug, { versionAlias: true });
     if (!view) return json({ error: "site not found" }, 404);
     // This response carries the entry file's full source, so it is a content outlet like
     // /api/preview and needs the same gate. 404 rather than 403: a private site does not confirm

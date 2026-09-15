@@ -72,7 +72,7 @@ export default async function EditorPage({ params, searchParams }: {
   const { id: siteId } = view.site;
   const allVersions = (await listVersions(slug)) ?? [];
   const link = await requestShareAccess(request,view.site);
-  const versions = link ? allVersions.filter(v=>v.id === (link.versionId ?? view.site.currentVersionId)) : allVersions;
+  const versions = link ? allVersions.filter(v=>link.versionId ? v.id === link.versionId : v.current || v.official) : allVersions;
   const plan = planEditEntry({
     versions,
     currentVersionId: view.version.id,
@@ -104,7 +104,7 @@ export default async function EditorPage({ params, searchParams }: {
   const entry = base.entry;
   // Only when it is not the current version do we hand "you are editing from an older version" to
   // the editor to display, and make the editing surface fetch its source from that version.
-  const baseInfo = plan.baseIsCurrent
+  const baseInfo = plan.baseIsCurrent && base.id !== view.site.officialVersionId
     ? undefined
     : { id: base.id, label: versionLabel(versions, base.id), createdAt: base.createdAt };
 
@@ -118,6 +118,8 @@ export default async function EditorPage({ params, searchParams }: {
         kind="single"
         entry={entry}
         versionId={versionId}
+        latestVersionId={view.site.currentVersionId}
+        officialBase={base.id === view.site.officialVersionId}
         baseVersion={baseInfo}
         canEdit={canEdit}
         canPickVersion={versions.length > 1}
@@ -145,6 +147,8 @@ export default async function EditorPage({ params, searchParams }: {
       kind="folder"
       entry={entry}
       versionId={versionId}
+        latestVersionId={view.site.currentVersionId}
+        officialBase={base.id === view.site.officialVersionId}
       baseVersion={baseInfo}
       canEdit={canEdit}
       canPickVersion={versions.length > 1}

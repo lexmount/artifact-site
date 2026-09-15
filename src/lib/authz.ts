@@ -265,9 +265,3 @@ export async function requirePermission(request: Request, site: Site, permission
   return { capability: await resolveCapability(viewer, site), actor: resolveActor(viewer), viewer, ...authority };
 
 }
-/** Reserved policy for future comment routes. Caller must first authorize the exact site/share/version. */
-export function commentPermission(role: Parameters<typeof roleAllows>[0], action: Permission, own: boolean): boolean {
-  if (!action.startsWith("comment.")) return false;
-  if ((action.endsWith("Own")) && !own) return false;
-  return roleAllows(role,action);
-}
