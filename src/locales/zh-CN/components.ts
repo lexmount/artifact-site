@@ -4,6 +4,17 @@ import type { Messages } from "@/lib/i18n";
 /** Client components under src/components (grid, uploader, sharing drawer, version history,
  *  personal centre cards, header chrome). Keys are the English source strings exactly as in code. */
 export const components: Messages = {
+  "Version": "版本",
+  "Current version": "当前版本",
+  "Download (ZIP)": "下载（ZIP）",
+  "Download this version (ZIP)": "下载此版本（ZIP）",
+  "Includes all files in the saved version. Documents include the original file in original/. Unsaved edits are not included.": "包含已保存版本的全部文件；文档原文件位于 original/ 目录中。不包含尚未保存的修改。",
+  "Administrative downloads are recorded in the audit log.": "管理员下载会记录在审计日志中。",
+  "Downloads the saved version selected here.": "下载此处选中的已保存版本。",
+  "Choose a historical version": "选择历史版本",
+  "Failed to download": "下载失败",
+  "Download started": "已开始下载",
+
   "Saved": "已保存",
   "Request failed": "请求失败",
   "Disabled": "已停用",
@@ -202,20 +213,17 @@ export const components: Messages = {
 
   // ── Auth / login gate / welcome ──
   "Sign in to edit": "编辑需要先登录",
-  "Viewing and sharing need no sign-in. Changing the content does, so every version has a recorded author and can be recovered if something breaks.":
-    "查看和分享都不需要登录。改动内容需要，这样每一版的作者才有记录、也才能在改坏时找回来。",
+  "Sign in with an account that has edit access, or use an editable share link.": "请使用有编辑权限的账号登录，或通过可编辑分享链接访问。",
   "Sign in to set the sharing scope": "设置分享范围需要先登录",
-  "Anyone with the link can view — that does not change. Deciding who can edit means knowing who you are first.":
-    "任何拿到链接的人都能查看，这一点不变。要决定谁能改，得先知道你是谁。",
+  "Only the owner or a site administrator can change sharing settings.": "只有所有者或站点管理员可以修改分享设置。",
   "Sign in to rename": "重命名需要先登录",
-  "The site name is visible to every visitor; only the site's owner can change it.": "站点名字对所有访客可见，改名只有站点的所有者能做。",
+  "Only the owner or a site administrator can rename this site.": "只有所有者或站点管理员可以重命名此站点。",
   "Sign in to roll back": "回滚版本需要先登录",
-  "A rollback changes what every visitor sees; only the site's owner can do it.": "回滚会改变所有访客看到的内容，只有站点的所有者能做。",
+  "Only the owner or a site administrator can roll back a version.": "只有所有者或站点管理员可以回滚版本。",
   "Sign in to delete": "删除需要先登录",
   "Deleting makes the link stop working immediately; only the site's owner can do it.": "删除会让链接立刻失效，只有站点的所有者能做。",
-  "After signing in, the": "登录后，这个浏览器建过的",
-  "this browser created will move under your account, so you can keep managing them from another computer.": "会归到你的账号下，换台电脑也能继续管理。",
   "Sign in with your company account": "用企业账号登录",
+  "Signing in does not claim anonymous sites. Claim them explicitly in Workspaces using the browser that created them.": "登录不会自动认领匿名站点。请在创建站点的浏览器中，前往工作空间主动认领。",
   "Keep browsing": "继续浏览",
   "sites are now yours": "个站点已归到你名下",
   "The sites this browser created anonymously now belong to you": "这个浏览器之前匿名创建的站点，现在都是你的了",

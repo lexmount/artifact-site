@@ -4,6 +4,7 @@
 // rename it, delete it — plus the toast that reports each. Shared by the account list (my-sites)
 // (and formerly the card grid), so the edit-token header, the strings and the "tell the host to
 // refetch" rule live in exactly one place.
+import { siteFetch as fetch } from "@/lib/share-context";
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { rememberEditToken } from "@/lib/edit-token";
@@ -39,7 +40,7 @@ export function useSiteActions(tokens: Readonly<Record<string, string | undefine
     if (forking) return;
     setForking(slug);
     try {
-      const res = await fetch(`/api/sites/${slug}/fork`, { method: "POST" });
+      const res = await fetch(`/api/sites/${slug}/fork`, { method: "POST",headers:tokenHeader(slug) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || t("Failed to save a copy"));
       // The fork is ours: keep its fresh edit token so we can edit the new copy.

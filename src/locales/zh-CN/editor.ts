@@ -6,7 +6,6 @@ export const editor: Messages = {
   "Published · Only you can open it for now. Create a share link under Sharing settings before sending it to others":
     "已发布 · 目前只有你能打开，到「分享设置」里建一条分享链接再发给别人",
   "Published · Copy the link under Sharing settings": "已发布 · 到「分享设置」里复制链接",
-  "Editable link copied · Anyone with this link can edit": "可编辑链接已复制 · 任何拿到此链接的人都能编辑",
   "Rename failed": "重命名失败",
   "Renamed": "已重命名",
   "Uploading the new version failed": "上传新版本失败",
@@ -25,8 +24,6 @@ export const editor: Messages = {
   "Desktop": "桌面",
   "Tablet": "平板",
   "Mobile": "手机",
-  "Copy an editable link: anyone who has it can edit this site": "复制一个可编辑链接：任何拿到它的人都能编辑此站点",
-  "Share editable link": "分享可编辑链接",
   "Re-upload the whole document: a new version is published at the same link, and earlier versions can be rolled back":
     "重传整份文档：同一链接发布新版本，历史版本可回滚",
   "Upload new version": "上传新版本",

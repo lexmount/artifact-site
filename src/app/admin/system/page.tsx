@@ -8,7 +8,7 @@ import { adminFetch } from "@/components/admin/format";
 import ActionLog from "@/components/admin/action-log";
 import type { AdminLogEntry } from "@/lib/types";
 
-type Task = "purge-deleted" | "sweep-uploads" | "reconcile" | "expire-anonymous" | "backfill-text";
+type Task = "purge-deleted" | "sweep-uploads" | "reconcile" | "expire-anonymous" | "backfill-text" | "prune-audit";
 
 export default function AdminSystemPage() {
   const t = useT();
@@ -65,6 +65,7 @@ export default function AdminSystemPage() {
       <div className="admin-actions-row">
         <button type="button" className="btn sm" disabled={busy != null} onClick={() => run("purge-deleted")}>{busy === "purge-deleted" && <Loader2 size={14} className="spin" />} {t("Purge deleted sites past retention")}</button>
         <button type="button" className="btn sm" disabled={busy != null} onClick={() => run("expire-anonymous")}>{busy === "expire-anonymous" && <Loader2 size={14} className="spin" />} {t("Expire unclaimed anonymous sites")}</button>
+        <button type="button" className="btn sm" disabled={busy != null} onClick={() => run("prune-audit")}>{busy === "prune-audit" && <Loader2 size={14} className="spin" />} {t("Prune expired audit logs")}</button>
         <button type="button" className="btn sm" disabled={busy != null} onClick={() => run("sweep-uploads")}>{busy === "sweep-uploads" && <Loader2 size={14} className="spin" />} {t("Sweep abandoned uploads")}</button>
         <button type="button" className="btn sm" disabled={busy != null} onClick={() => run("backfill-text")}>{busy === "backfill-text" && <Loader2 size={14} className="spin" />} {t("Index search text of existing sites")}</button>
         <button type="button" className="btn sm" disabled={busy != null} onClick={() => run("reconcile", true)}>{busy === "reconcile:dry" && <Loader2 size={14} className="spin" />} {t("Reconcile storage (dry run)")}</button>

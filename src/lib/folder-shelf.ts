@@ -14,7 +14,6 @@ import {
   type FolderState,
 } from "@/lib/folders";
 import { readLocal, useLocalJson, writeLocal } from "@/lib/local-store";
-import { adoptStoredSites } from "@/lib/adoption";
 
 /** `refused` = the rule said no (blank name, full shelf); `storage` = the browser write failed;
  *  `server` = the account API said no (the message is in `error`). */
@@ -62,11 +61,6 @@ export function syncLocalShelf(userId: string): Promise<boolean> {
   const hasLocal = localState.folders.length > 0 || Object.keys(localState.assign).length > 0;
   if (!hasLocal) return Promise.resolve(false);
   const run = (async () => {
-    // Ownership first: a site this browser made before the account existed is claimed by
-    // /api/me/adopt on the same page load. Importing before that settles would skip its
-    // assignment as "not your site" — and then forget it with the local copy. Memoised, so the
-    // welcome burst and this share one call.
-    await adoptStoredSites();
     const result = await call("/api/me/folders/import", { method: "POST", body: stored ?? "" });
     if (result.ok) {
       // Forget the local copy only if it is still the one that was sent. A change made while the

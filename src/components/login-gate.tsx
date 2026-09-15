@@ -7,14 +7,9 @@
 // sent them; a door on the way in would turn "sharing" into "requesting access". So the gate is
 // tied to intent — it appears only once the viewer actually asks to do the thing.
 //
-// Being intent-triggered is also what earns it the right to explain the one consequence nobody
-// would otherwise discover: signing in adopts every site this browser created anonymously into the
-// account. That happens today, silently, in the OIDC callback. Announcing it beforehand is the
-// difference between a helpful migration and finding your sites reassigned without being asked.
 import { useCallback, useEffect, useRef } from "react";
 import { LogIn, Lock, X } from "lucide-react";
 import { useT } from "@/components/locale-provider";
-import { countText } from "@/lib/i18n";
 
 /** What the viewer was reaching for — each states its own reason, in the product's own verbs. */
 export type GateAction = "edit" | "share" | "rename" | "rollback" | "delete";
@@ -22,31 +17,25 @@ export type GateAction = "edit" | "share" | "rename" | "rollback" | "delete";
 const REASON: Record<GateAction, { title: string; body: string }> = {
   edit: {
     title: "Sign in to edit",
-    body: "Viewing and sharing need no sign-in. Changing the content does, so every version has a recorded author and can be recovered if something breaks.",
+    body: "Sign in with an account that has edit access, or use an editable share link.",
   },
   share: {
     title: "Sign in to set the sharing scope",
-    body: "Anyone with the link can view — that does not change. Deciding who can edit means knowing who you are first.",
+    body: "Only the owner or a site administrator can change sharing settings.",
   },
-  rename: { title: "Sign in to rename", body: "The site name is visible to every visitor; only the site's owner can change it." },
-  rollback: { title: "Sign in to roll back", body: "A rollback changes what every visitor sees; only the site's owner can do it." },
+  rename: { title: "Sign in to rename", body: "Only the owner or a site administrator can rename this site." },
+  rollback: { title: "Sign in to roll back", body: "Only the owner or a site administrator can roll back a version." },
   delete: { title: "Sign in to delete", body: "Deleting makes the link stop working immediately; only the site's owner can do it." },
 };
 
 export default function LoginGate({
   action,
   returnTo,
-  pendingAdoptions,
   onClose,
 }: {
   action: GateAction;
   /** Where to land after the round-trip — the page the viewer was on, not the home page. */
   returnTo: string;
-  /**
-   * How many sites this browser made anonymously and would hand over on sign-in. Null when the
-   * count is unknown; the sentence is then omitted rather than guessed at.
-   */
-  pendingAdoptions: number | null;
   onClose: () => void;
 }) {
   const t = useT();
@@ -117,11 +106,7 @@ export default function LoginGate({
           </div>
         </div>
 
-        {pendingAdoptions != null && pendingAdoptions > 0 && (
-          <p className="gate-note">
-            {t("After signing in, the")} <b>{countText(t, pendingAdoptions, "{n} site", "{n} sites")}</b> {t("this browser created will move under your account, so you can keep managing them from another computer.")}
-          </p>
-        )}
+        <p className="gate-note">{t("Signing in does not claim anonymous sites. Claim them explicitly in Workspaces using the browser that created them.")}</p>
 
         <div className="gate-actions">
           <a ref={primary} className="btn solid" href={loginHref}>

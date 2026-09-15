@@ -138,10 +138,10 @@ describe("explicit credentials stay exempt — no Origin required", () => {
     }
   });
 
-  it("a scripted fork with no credentials at all stays open — it rides nobody's identity", async () => {
+  it("a scripted fork still needs source permission", async () => {
     const site = await mine();
     const res = await FORK(new Request(`https://x/api/sites/${site.slug}/fork`, { method: "POST" }), params(site.slug));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
   });
 });
 
@@ -186,12 +186,15 @@ describe("CSRF gate on the chunked upload of a new version", () => {
     expect((await commitFor(versionId, { origin: "https://x" })).status).toBe(201);
   });
 
-  it("a session for a NEW site is creation and needs no Origin at any step", async () => {
-    const opened = await openFor(undefined, {});
+  it("new-site cookie uploads require an Origin at every step", async () => {
+    expect((await openFor(undefined, {})).status).toBe(401);
+    const opened = await openFor(undefined, {origin:"https://x"});
     expect(opened.status).toBe(201);
-    const { versionId } = (await opened.json()) as { versionId: string };
-    expect((await putFor(versionId, {})).status).toBe(200);
-    expect((await commitFor(versionId, {})).status).toBe(201);
+    const {versionId} = await opened.json();
+    expect((await putFor(versionId, {})).status).toBe(401);
+    expect((await putFor(versionId, {origin:"https://x"})).status).toBe(200);
+    expect((await commitFor(versionId, {})).status).toBe(401);
+    expect((await commitFor(versionId, {origin:"https://x"})).status).toBe(201);
   });
 
   it("an x-edit-token client needs no Origin on the chunked path either", async () => {
@@ -218,14 +221,14 @@ describe("the published skill matches the gate it documents", () => {
     for (const file of gated) {
       // csrfSafe wraps isSameOrigin; the ambient-cookie rejections above prove the wrap didn't
       // loosen anything — a publish-token Bearer is the one deliberate credential it admits.
-      expect(readFileSync(file, "utf8"), `${file} must enforce the gate`).toContain("csrfSafe(request)");
+      expect(readFileSync(file, "utf8"), `${file} must enforce the gate`).toContain("assertMutationOrigin(request");
     }
   });
 
-  it("create stays ungated — the doc's stated cookie-mode rule, and no gate on the route", async () => {
+  it("creation applies the same origin gate to cookie requests", async () => {
     const { readFileSync } = await import("node:fs");
     const create = readFileSync("src/app/api/sites/route.ts", "utf8");
-    expect(create).not.toContain("isSameOrigin");
+    expect(create).toContain("assertMutationOrigin(request)");
     expect(create).not.toContain("csrfSafe");
     expect(readFileSync("src/content/publish-skill.md", "utf8")).toContain("Cookie-based mutating requests must carry `Origin`");
   });

@@ -826,3 +826,60 @@ it("keeps an access audit for operator previews that pass the ordinary capabilit
     else process.env.PUBLISH_API_TOKEN = previous;
   }
 });
+
+it("downloads snapshots through the HTTP export gate and audits management downloads", async () => {
+  const { GET } = await import("@/app/api/sites/[slug]/export/route");
+  const { unzipSync } = await import("fflate");
+  const owner = await identity(), admin = await identity(), reader = await identity();
+  const site = await artifact(owner), other = await artifact(owner);
+  const context = { params: Promise.resolve({ slug: site.slug }) };
+  const download = (cookie: string, version = site.currentVersionId, headers = {}) => GET(
+    new Request(`${origin}/api/sites/${site.slug}/export?version=${version}`, { headers: { cookie, ...headers } }), context);
+  await editSite(site.slug, { content: "<html>second</html>" }, { actor: { kind: "user", userId: owner.user.id, anonId: null }, method: "api", ip: null, userAgent: null });
+  const response = await download(owner.cookie);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("x-artifact-version")).toBe(site.currentVersionId);
+  expect(response.headers.get("content-disposition")).toContain("attachment;");
+  expect(new TextDecoder().decode(unzipSync(new Uint8Array(await response.arrayBuffer()))["index.html"])).toContain("one");
+  expect((await download(reader.cookie)).status).toBe(403);
+  expect((await download(owner.cookie, other.currentVersionId)).status).toBe(404);
+  const previous = process.env.ARTIFACT_ADMIN_EMAILS;
+  process.env.ARTIFACT_ADMIN_EMAILS = admin.user.email!;
+  try {
+    for (const headers of [{}, { "x-management-reason": "" }, { "x-management-reason": "   " }, { "x-management-reason": "x".repeat(501) }]) {
+      const denied = await download(admin.cookie, site.currentVersionId, headers);
+      expect(denied.status).toBe(403);
+      expect(await denied.json()).toMatchObject({ error: "Unsupported or denied permission: site.source.export" });
+    }
+    expect(await rbacQuery("SELECT * FROM rbac_audit WHERE target_id=$1 AND action=$2", [site.id, "site.source.export"])).toHaveLength(0);
+    // A download is a read: taking a site down must not prevent the owner or an explicit
+    // administrator from retrieving its saved files. No mutation permission is relaxed.
+    await rbacQuery("UPDATE sites SET taken_down_at=$1 WHERE id=$2", [Date.now(), site.id]);
+    expect((await download(owner.cookie)).status).toBe(200);
+    expect((await download(admin.cookie, site.currentVersionId, { "x-management-reason": "  Support export  " })).status).toBe(200);
+    const rows = await rbacQuery("SELECT * FROM rbac_audit WHERE target_id=$1 AND action=$2", [site.id, "site.source.export"]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].reason).toBe("Support export");
+    const { managementReasonHeaders } = await import("@/lib/management-reason");
+    const chinese = managementReasonHeaders("支持导出\r\n工单确认 ✅");
+    expect((await download(admin.cookie, site.currentVersionId, chinese)).status).toBe(200);
+    const decodedAudits = await rbacQuery("SELECT action,reason FROM rbac_audit WHERE target_id=$1 AND reason=$2", [site.id, "支持导出 工单确认 ✅"]);
+    expect(decodedAudits).toEqual([{ action: "site.source.export", reason: "支持导出 工单确认 ✅" }]);
+    const rejectedReason = managementReasonHeaders("Rejected version export");
+    expect((await download(admin.cookie, other.currentVersionId, rejectedReason)).status).toBe(404);
+    expect(await rbacQuery("SELECT * FROM rbac_audit WHERE target_id=$1 AND reason=$2", [site.id, "Rejected version export"])).toHaveLength(0);
+    // Ordinary reads retain their audit; only the export route owns its own event.
+    const { getReadableView } = await import("@/lib/read-view");
+    await getReadableView(request(admin.cookie, managementReasonHeaders("Normal administrative read")), site.slug);
+    expect(await rbacQuery("SELECT action FROM rbac_audit WHERE target_id=$1 AND reason=$2", [site.id, "Normal administrative read"])).toEqual([{ action: "site.read" }]);
+    expect((await download(admin.cookie, site.currentVersionId, managementReasonHeaders("中".repeat(501)))).status).toBe(403);
+    // A normal editor/owner can supply a reason but must not be logged as an administrator.
+    expect((await download(owner.cookie, site.currentVersionId, managementReasonHeaders("Owner export"))).status).toBe(200);
+    expect(await rbacQuery("SELECT * FROM rbac_audit WHERE target_id=$1 AND reason=$2", [site.id, "Owner export"])).toHaveLength(0);
+    await rbacQuery("UPDATE sites SET deleted_at=$1 WHERE id=$2", [Date.now(), site.id]);
+    expect((await download(owner.cookie)).status).toBe(404);
+  } finally {
+    if (previous === undefined) delete process.env.ARTIFACT_ADMIN_EMAILS;
+    else process.env.ARTIFACT_ADMIN_EMAILS = previous;
+  }
+});

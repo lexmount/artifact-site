@@ -5,7 +5,7 @@
 // of it. Dates, actions and the reason an administrator wrote — not the administrator's identity,
 // which stays in the console (an owner needs to know that it happened and why, not who to chase).
 import type { NextResponse } from "next/server";
-import { requireCapability } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import { listAdminLog } from "@/lib/db";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { getSiteBySlug } from "@/lib/db";
@@ -22,7 +22,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     // row is theirs until it is purged; the capability gate below still decides who may ask.
     const site = await getSiteBySlug(slug);
     if (!site) return json({ error: "site not found" }, 404);
-    await requireCapability(request, site, "manage");
+    await requirePermission(request, site, "site.audit.read");
     // One more than the page so the response can say whether older rows exist.
     const rows = await listAdminLog({ targetId: site.id, limit: LIMIT + 1 });
     const entries = rows.slice(0, LIMIT).map((e) => ({ id: e.id, action: e.action, at: e.createdAt, reason: e.reason }));

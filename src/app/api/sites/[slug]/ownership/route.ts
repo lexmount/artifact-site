@@ -1,12 +1,12 @@
+import { assertSessionCurrent } from "@/lib/authorized-commit";
 import { recordRbacAudit } from "@/lib/rbac-access";
-// Owner-level transfer and disown operations. Email administrators assign unowned sites
+// Owner-level transfer. Disown is retired. Email administrators assign unowned sites
 // through /api/admin/sites/:slug/owner; this route retains its same-origin requirement.
 //
-//   DELETE → disown  (owner_id back to NULL; the site returns to unowned state; reassignment requires an authorized caller)
+//   DELETE → 410; use transfer or an explicit anonymous claim instead.
 //   POST   → transfer to another account, by verified email
 import type { NextResponse } from "next/server";
 import {
-  clearSiteOwner,
   getUserByVerifiedEmail,
   rbacTransaction,
   toSite,
@@ -22,22 +22,8 @@ export async function DELETE(
   request: Request,
   context: { params: Promise<{ slug: string }> },
 ): Promise<NextResponse> {
-  try {
-    if (!csrfSafe(request)) throw new AuthError("Cross-site request rejected");
-    const { slug } = await context.params;
-    const view = await getSiteView(slug);
-    if (!view) return json({ error: "site not found" }, 404);
-    const { actor } = await requireActor(request, view.site, "owner");
-    await clearSiteOwner(view.site.id);
-    await recordSiteAudit(
-      view.site.id,
-      "disown",
-      apiAuditContext(request, actor),
-    );
-    return json({ ok: true, ownerId: null }, 200);
-  } catch (error) {
-    return errorResponse(error);
-  }
+  void request; void context;
+  return json({ error: "Transfer ownership to an active tenant member instead", code: "disown_disabled" }, 410);
 }
 
 export async function POST(
@@ -49,6 +35,7 @@ export async function POST(
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
+    if (!view.site.ownerId) throw new EditForbiddenError("Claim anonymous sites explicitly in Workspaces before transferring ownership");
     const session = await resolveSession(request);
     if (!atLeast(await resolveCapability(resolveViewer(request, session), view.site), "owner"))
       throw new EditForbiddenError("Site ownership access required");
@@ -69,6 +56,7 @@ export async function POST(
       );
 
     const actor = await rbacTransaction(async (q) => {
+      await assertSessionCurrent(q, session);
       const [row] = await q(
         "SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL",
         [view.site.id],
@@ -85,7 +73,7 @@ export async function POST(
           "The new owner must be an active member of this tenant",
         );
       await q(
-        "UPDATE sites SET owner_id=$1,anon_owner_id=NULL,updated_at=$2 WHERE id=$3",
+        "UPDATE sites SET owner_id=$1,edit_token='',claim_token=NULL,anon_owner_id=NULL,updated_at=$2 WHERE id=$3",
         [target.id, Date.now(), site.id],
       );
       await recordRbacAudit(

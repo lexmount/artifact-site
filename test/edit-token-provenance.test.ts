@@ -34,7 +34,7 @@ describe("edit token provenance", () => {
     rememberEditToken("mine-a", "tok-a");
     rememberEditToken("mine-b", "tok-b");
     expect(slugs(allStoredEditTokens())).toEqual(["mine-a", "mine-b"]);
-    expect(countAdoptableSites()).toBe(2);
+    expect(countAdoptableSites()).toBe(0);
   });
 
   // The bug this test exists for: open a colleague's ?t= link once, sign in anywhere later, and

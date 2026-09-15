@@ -15,6 +15,7 @@ const LABELS: Record<string, { label: string; help: string }> = {
   createPolicy: { label: "Who can create sites", help: "open: anyone who can reach the service. login: signed-in accounts only. token: only scripts holding the API token." },
   anonymousSites: { label: "Sites created without an account", help: "full: the creating browser owns the site (edit, share, delete). read-only: the browser can only open it; every other action asks for a sign-in, after which the site belongs to that account. Needs ownership enforcement." },
   defaultVisibility: { label: "New sites are", help: "public: listed and open to anyone. unlisted: open to anyone with the address. private: owner and collaborators only, until shared." },
+  auditRetentionDays: { label: "Audit log retention (days)", help: "0 = keep forever. Applies to site, administrator and permission audit logs. Expired records are permanently deleted in maintenance batches; increasing retention cannot restore them." },
   anonSiteTtlDays: { label: "Unclaimed anonymous sites are removed after (days)", help: "0 = never. Counted from the last change; removal is an ordinary delete an administrator can undo within the retention window." },
   quotaSitesPerUser: { label: "Sites per account", help: "0 = unlimited." },
   quotaBytesPerUser: { label: "Storage per account (bytes)", help: "0 = unlimited. Every version of every site counts." },

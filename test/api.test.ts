@@ -148,7 +148,7 @@ describe("GET /api/sites — list", () => {
 describe("GET /api/sites/:slug — viewer/editor data", () => {
   it("returns metadata, the file list, and the entry source", async () => {
     const created = await createPaste("<html><head><title>V</title></head><body>editable</body></html>");
-    const res = await itemGET(new Request(`http://x/api/sites/${created.slug}`), params(created.slug));
+    const res = await itemGET(new Request(`http://x/api/sites/${created.slug}`,{headers:withToken(created.editToken)}), params(created.slug));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.kind).toBe("single");
@@ -162,11 +162,11 @@ describe("GET /api/sites/:slug — viewer/editor data", () => {
       mode: "folder",
       files: [{ path: "index.html", content: "<title>F</title>" }, { path: "about.html", content: "<h1>about-src</h1>" }],
     }));
-    const { slug } = await res.json();
-    const about = await itemGET(new Request(`http://x/api/sites/${slug}?file=about.html`), params(slug));
+    const { slug, editToken } = await res.json();
+    const about = await itemGET(new Request(`http://x/api/sites/${slug}?file=about.html`,{headers:withToken(editToken)}), params(slug));
     expect(about.status).toBe(200);
     expect((await about.json()).content).toContain("about-src");
-    const missing = await itemGET(new Request(`http://x/api/sites/${slug}?file=nope.html`), params(slug));
+    const missing = await itemGET(new Request(`http://x/api/sites/${slug}?file=nope.html`,{headers:withToken(editToken)}), params(slug));
     expect(missing.status).toBe(404);
   });
 

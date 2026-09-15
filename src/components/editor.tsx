@@ -1,4 +1,6 @@
 "use client";
+
+import SiteDownload from "@/components/site-download";
 import { siteFetch as fetch, withShareContext } from "@/lib/share-context";
 
 // In-browser editor. The default is **visual**: you land straight in the preview and double-click text to change it,
@@ -9,7 +11,7 @@ import { siteFetch as fetch, withShareContext } from "@/lib/share-context";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ComponentType } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Save, ExternalLink, Loader2, FileCode2, Copy, Share2, Lock, Code2, MousePointerClick, History, Eye } from "lucide-react";
+import { ArrowLeft, Save, ExternalLink, Loader2, FileCode2, Copy, Lock, Code2, MousePointerClick, History, Eye } from "lucide-react";
 import { useEditToken, rememberEditToken } from "@/lib/edit-token";
 import VisualEditor, { type VisualEditorState } from "@/components/visual-editor";
 import MoreMenu from "@/components/more-menu";
@@ -49,27 +51,9 @@ export function visualSwitchPlan(
   return { needsConfirm: true, nextDraft: { ...draft, [entry]: saved[entry] ?? "" } };
 }
 
-/**
- * Whether to show the lock screen. **Either the server-side capability or this browser's token is enough to
- * edit** — neither authorization path may override the other.
- *
- * This used to be just `authResolved && !editToken`, which bet "can I edit" entirely on the per-site token. But the
- * token only lives in localStorage (or a `?t=` link), and once ARTIFACT_ENFORCE_OWNERSHIP is on, owners and
- * collaborators are authorized **by session**: signing in on another device, clearing site data, or a site that was
- * claimed after signing in in the first place — none of these leave a token in hand, so the server would allow the
- * edit while the frontend slapped "You do not have edit access to this site" over it.
- *
- * Conversely, not a single character of the token path may change: an anonymous visitor holding a `?t=` editable
- * link is the product's sharing mechanism, and the server-computed canEdit is false for everyone in legacy mode
- * (ownership enforcement off) — the authority is the token in localStorage, which the server never sees — so
- * dropping `|| editToken` would break share links entirely.
- *
- * When canEdit is true the door opens immediately, without waiting for hydration: it was computed server-side and
- * shipped with the HTML, so the first paint should already be unlocked.
- */
+/** Source is loaded only after server authorization. A cached receipt cannot unlock this page. */
 export function editorLocked(state: { canEdit: boolean; authResolved: boolean; editToken: string | null }): boolean {
-  if (state.canEdit) return false;
-  return state.authResolved && !state.editToken;
+  return !state.canEdit;
 }
 
 export default function Editor(props: {
@@ -223,7 +207,7 @@ export default function Editor(props: {
     if (anyDirty && !window.confirm(t("There are unsaved changes. Save as new site only includes the saved version; unsaved content will not be in the copy. Continue?"))) return;
     setForking(true);
     try {
-      const res = await fetch(`/api/sites/${slug}/fork`, { method: "POST" });
+      const res = await fetch(`/api/sites/${slug}/fork`, { method: "POST", headers:editToken ? {"x-edit-token":editToken} : {} });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || t("Save as new site failed"));
       // The fork is ours: keep its fresh edit token so we can edit the new copy.
@@ -237,12 +221,7 @@ export default function Editor(props: {
   }
 
   // Share editable link — copy a link that carries this site's edit token; anyone who opens it can edit.
-  async function shareEditable() {
-    if (!editToken) return;
-    const url = `${window.location.origin}/s/${slug}/edit?t=${editToken}`;
-    try { await navigator.clipboard.writeText(url); flash(t("Editable link copied · Anyone with this link can edit")); }
-    catch { flash(url); }
-  }
+
 
   // Ctrl/Cmd+S saves.
   function onKeyDown(e: React.KeyboardEvent) {
@@ -355,14 +334,11 @@ export default function Editor(props: {
           )}
           {/* The rest — the bare artifact, the editable link, forking, another base version — folds behind "···". */}
           <MoreMenu label={t("More")} iconOnly>
+            <SiteDownload slug={slug} editToken={editToken} versionId={curVersion} />
             {/* The "Preview" in the toolbar switches in place (no navigation), so this external link is called
                 "Open in new tab" instead — calling both of them preview only leaves people guessing which one leaves the page. */}
             <a role="menuitem" className="menu-item" href={withShareContext(`/api/preview/${slug}`)} target="_blank" rel="noreferrer" title={t("Open the artifact itself in a new tab")}><ExternalLink size={14} aria-hidden="true" /> {t("Open in new tab")}</a>
-            {editToken && (
-              <button role="menuitem" className="menu-item" type="button" onClick={shareEditable} title={t("Copy an editable link: anyone who has it can edit this site")}>
-                <Share2 size={14} aria-hidden="true" /> {t("Share editable link")}
-              </button>
-            )}
+
             <button role="menuitem" className="menu-item" type="button" onClick={fork} disabled={forking} title={t("Copy into a separate new site")}>
               {forking ? <Loader2 size={14} className="spin" /> : <Copy size={14} aria-hidden="true" />} {t("Save as new site")}
             </button>

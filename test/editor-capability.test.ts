@@ -64,7 +64,7 @@ async function loginCookie(userId: string): Promise<string> {
 
 // ── (1) Pure decision: four kinds of visitor ────────────────────────────────────
 
-describe("editorLocked — server capability OR local token, either one opens the door", () => {
+describe("editorLocked — only the server permission opens the door", () => {
   // This is the bug itself: a logged-in owner on a different device, the server says they can
   // edit, and they hold no token.
   it("[REPRO] server allows + no editToken → not locked (the old implementation showed the lock screen here)", () => {
@@ -77,16 +77,16 @@ describe("editorLocked — server capability OR local token, either one opens th
 
   // The token path must not change by a single character — the `?t=` editable link is the
   // product's sharing mechanism.
-  it("[NO REGRESSION] legacy mode, server says no, but this browser holds the token → still editable", () => {
-    expect(editorLocked({ canEdit: false, authResolved: true, editToken: "tok" })).toBe(false);
+  it("an unverified local token cannot override a server denial", () => {
+    expect(editorLocked({ canEdit: false, authResolved: true, editToken: "tok" })).toBe(true);
   });
 
   it("neither path available → lock screen", () => {
     expect(editorLocked({ canEdit: false, authResolved: true, editToken: null })).toBe(true);
   });
 
-  it("not yet hydrated does not count as 'no permission'; the lock screen must not flash", () => {
-    expect(editorLocked({ canEdit: false, authResolved: false, editToken: null })).toBe(false);
+  it("hydration cannot grant a permission the server denied", () => {
+    expect(editorLocked({ canEdit: false, authResolved: false, editToken: null })).toBe(true);
   });
 });
 

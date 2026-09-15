@@ -70,7 +70,7 @@ describe("edit token — generation & backfill", () => {
 });
 
 describe("edit token — mutations are gated (403 without, 200 with)", () => {
-  it("edit: 403 without token, 200 with the header token, 200 with ?t=, 403 with a wrong token", async () => {
+  it("edit: 403 without token, 200 with the header token, 401 with originless ?t=, 403 with a wrong token", async () => {
     const { slug, editToken } = await createViaApi("<title>E</title><body>one</body>");
 
     const noToken = await editPOST(editReq(slug, { content: "<body>two</body>" }), params(slug));
@@ -80,7 +80,7 @@ describe("edit token — mutations are gated (403 without, 200 with)", () => {
     expect(viaHeader.status).toBe(200);
 
     const viaQuery = await editPOST(editReq(slug, { content: "<body>three</body>" }, { queryToken: editToken }), params(slug));
-    expect(viaQuery.status).toBe(200);
+    expect(viaQuery.status).toBe(401);
 
     const wrong = await editPOST(editReq(slug, { content: "<body>four</body>" }, { token: "not-the-token" }), params(slug));
     expect(wrong.status).toBe(403);
@@ -115,7 +115,7 @@ describe("edit token — mutations are gated (403 without, 200 with)", () => {
     const { slug, editToken } = await createViaApi("<title>RB</title><body>one</body>");
     // Make a second version so there is an earlier one to roll back to.
     await editPOST(editReq(slug, { content: "<body>two</body>" }, { token: editToken }), params(slug));
-    const versionsRes = await itemGET(new Request(`http://x/api/sites/${slug}`), params(slug));
+    const versionsRes = await itemGET(new Request(`http://x/api/sites/${slug}`,{headers:{"x-edit-token":editToken}}), params(slug));
     const { site } = await versionsRes.json();
     // The current version id is on site.currentVersionId; roll back to it (still a valid, owned version).
     const targetVersionId = site.currentVersionId as string;
@@ -145,10 +145,10 @@ describe("edit token — mutations are gated (403 without, 200 with)", () => {
   });
 });
 
-describe("fork stays open and mints a fresh token", () => {
-  it("forks with no token at all and returns a NEW editToken (different from the source)", async () => {
+describe("authorized fork mints a fresh token", () => {
+  it("forks with source access and returns an independent anonymous token", async () => {
     const source = await createViaApi("<title>Src</title><body>x</body>");
-    const res = await forkPOST(new Request("http://x/", { method: "POST" }), params(source.slug));
+    const res = await forkPOST(new Request("http://x/", { method: "POST", headers:{"x-edit-token":source.editToken} }), params(source.slug));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.slug).toBeTruthy();
@@ -160,8 +160,8 @@ describe("fork stays open and mints a fresh token", () => {
 
 describe("public GET payloads never leak the edit token", () => {
   it("GET /api/sites/:slug omits edit_token from the site payload", async () => {
-    const { slug } = await createViaApi("<title>Leak</title><body>x</body>");
-    const res = await itemGET(new Request(`http://x/api/sites/${slug}`), params(slug));
+    const { slug, editToken } = await createViaApi("<title>Leak</title><body>x</body>");
+    const res = await itemGET(new Request(`http://x/api/sites/${slug}`,{headers:{"x-edit-token":editToken}}), params(slug));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.editToken).toBeUndefined();

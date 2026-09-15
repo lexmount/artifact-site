@@ -171,7 +171,7 @@ describe("public and unlisted are untouched", () => {
     const view = (await getSiteView(site.slug))!;
 
     expect(await canReadSite(req(`/s/${site.slug}`, strangerCreds), view.site)).toBe(true);
-    expect((await itemGET(req(`/api/sites/${site.slug}`, strangerCreds), params(site.slug))).status).toBe(200);
+    expect((await itemGET(req(`/api/sites/${site.slug}`, strangerCreds), params(site.slug))).status).toBe(403);
     expect((await previewGET(
       req(`/api/preview/${site.slug}`, strangerCreds),
       { params: Promise.resolve({ slug: site.slug, path: undefined }) },

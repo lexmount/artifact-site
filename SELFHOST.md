@@ -37,7 +37,7 @@ make doctor           # see what it complains about
 make build up         # build image → preflight → start containers → wait for health
 ```
 
-The example defaults to a localhost-only anonymous trial with private visibility. Creators can view their work and grant access through share links. `ARTIFACT_ENFORCE_OWNERSHIP=on` takes effect once OIDC is configured; without OIDC, anonymous editing remains available via edit tokens. Keep an existing deployment's `.env` when upgrading.
+The example defaults to a localhost-only anonymous trial with private visibility. Creators can view their work and grant access through share links. RBAC is always enforced; `ARTIFACT_ENFORCE_OWNERSHIP` is deprecated and ignored. Anonymous sites accept their creating browser or management token, subject to the anonymous policy; account-owned sites use account roles. Upgrade all replicas together; old authorization binaries must not keep serving writes. Existing personal and MCP OAuth credentials remain valid. Keep an existing deployment's `.env` when upgrading.
 
 The three decisions that matter most in `.env`:
 
@@ -204,3 +204,9 @@ still requires a same-origin Origin header, including when called by an operator
 Preview credentials work without additional configuration. On first use, the server creates a random key in the shared database; every replica adopts the same key and restarts retain it. `PREVIEW_SIGNING_SECRET` is an optional initial seed only: once a key is stored, the database takes precedence over the environment.
 
 Platform administrators can rotate the key in **Administration → Settings → Preview access key**. The console displays the last generation time, never the secret. Rotation is audited and immediately invalidates old preview credentials across all replicas; viewers refresh to obtain new credentials. Share links and login sessions remain valid. Public current-version previews use stable credential-free asset URLs. Include the database in normal backups; restoring an old database also restores its preview key.
+
+### Audit retention
+
+Platform administrators configure **Administration → Settings → Audit log retention (days)** for all three audit tables. The default is **0 (keep forever)**; valid values are 0–3650 whole days. A console value is persisted in the global `settings` table and overrides `ARTIFACT_AUDIT_RETENTION_DAYS`; “Use environment” removes the override. Every change is audited. Settings-change and maintenance entries follow the same retention window as other administrator logs. Cleanup reads the current persisted value inside its deletion transaction, without the policy cache, and serializes with settings updates across replicas.
+
+The request-driven maintenance tick runs at most once an hour per process when create or search routes are used. Each tick drains expired records in batches of up to 1,000 **per table**, until no batch is full or a 20-second budget is consumed. Each batch has its own transaction, releases the RBAC lock and re-reads retention; queued policy changes can stop or adjust subsequent batches. The budget is soft: an in-flight batch finishes before stopping. Idle deployments do not run a timer; remaining backlogs resume on the next tick, so retention is a target rather than an exact expiration deadline. **Administration → System → Prune expired audit logs** runs the same budgeted job on demand (`POST /api/admin/maintenance` with `{"task":"prune-audit"}`). Only the `reconcile` maintenance task supports `dryRun: true`; all other tasks reject it before execution. Records exactly at the cutoff are retained. Increasing retention or setting it to 0 cannot recover deleted records; database backups have their own retention policy.

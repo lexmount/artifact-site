@@ -102,16 +102,14 @@ describe("unlisted is still reachable by direct link", () => {
     expect(view?.site.visibility).toBe("unlisted");
   });
 
-  it("GET /api/sites/:slug returns 200 with no credentials at all", async () => {
+  it("GET /api/sites/:slug denies source download to a view-only stranger", async () => {
     const hidden = await makeSite("Unlisted", "unlisted");
     const res = await itemGET(
       new Request(`http://test.local/api/sites/${hidden.slug}`),
       { params: Promise.resolve({ slug: hidden.slug }) },
     );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { slug: string; content: string };
-    expect(body.slug).toBe(hidden.slug);
-    expect(body.content).toContain("Unlisted");
+    expect(res.status).toBe(403);
+
   });
 
   it("the served page itself still renders", async () => {

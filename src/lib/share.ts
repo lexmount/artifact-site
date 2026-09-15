@@ -1,3 +1,5 @@
+import { managementReason } from "@/lib/management-reason";
+import { roleAllows } from "@/lib/rbac";
 import { tenantActive, accountSiteRole, managementRole, recordRbacAudit } from "@/lib/rbac-access";
 import { rbacQuery, getSite, getVersion } from "@/lib/db";
 // Read access control: who may SEE a site's content.
@@ -16,7 +18,7 @@ import { isSecureRequest } from "@/lib/http";
 import { getShareByTokenHash, getUser, hasRecentShareView, hasRecentSiteView, recordShareView, recordSiteView, shareAdmits } from "@/lib/db";
 import { resolveSession } from "@/lib/session";
 import { recordAdminRead, resolveAdmin } from "@/lib/admin";
-import { resolveViewer, resolveCapability, atLeast, isAnonymousCreator } from "@/lib/authz";
+import { resolveAuthority, resolveViewer, resolveCapability, isAnonymousCreator } from "@/lib/authz";
 import type { Session, Share, ShareRow, Site } from "@/lib/types";
 
 /** Cookie carrying proof that a passcode was entered, scoped to one share. */
@@ -152,20 +154,12 @@ export function hasPasscodeCookie(request: Request, share: ShareRow): boolean {
 
 // --- the site-level read gate -------------------------------------------------
 
-/**
- * Forking is not reading, and must not ride on a read grant. A fork is a NEW site owned by whoever
- * pressed the button: they can flip it public, share it onward, and keep it long after the original
- * share is revoked. So a "Signed-in users" share — meant to say "anyone signed in may look" — would
- * otherwise hand every signed-in user a permanent copy of a private artifact's whole file tree.
- * A private site is therefore forkable only by someone who could manage it anyway. Public and
- * unlisted sites are untouched, which is every site that exists today.
- */
+/** A fork permanently copies original files, so it requires source-export authority. */
 export async function canForkSite(request: Request, site: Site, session?: Session | null): Promise<boolean> {
-  if (site.deletedAt || !(await tenantActive(site.tenantId))) return false;
-  if (site.visibility !== "private" && !site.takenDownAt) return true;
+  if (site.deletedAt || site.takenDownAt || !(await tenantActive(site.tenantId))) return false;
   const resolved = session === undefined ? await resolveSession(request) : session;
-  const viewer = resolveViewer(request, resolved);
-  return atLeast(await resolveCapability(viewer, site), "manage");
+  const { role } = await resolveAuthority(resolveViewer(request, resolved), site);
+  return roleAllows(role, "site.source.export") && await canReadVersion(request,site,site.currentVersionId,resolved);
 }
 
 /**
@@ -179,18 +173,15 @@ export type ReadAccess = "public" | "capability" | "share" | "admin";
 export async function readAccess(request: Request, site: Site, session?: Session | null, audit = true): Promise<ReadAccess | null> {
   if (!(await tenantActive(site.tenantId)) || site.deletedAt) return null;
   const resolved = session === undefined ? await resolveSession(request) : session;
-  const role = await accountSiteRole(site,resolved);
-  const manager = await managementRole(request,site,resolved);
-  if (manager) {
-    if (audit) await recordRbacAudit(rbacQuery,site.tenantId,resolved?.userId ?? null,"site.read",site.id,request.headers.get("x-management-reason")!);
+  const authority = await resolveAuthority(resolveViewer(request, resolved), site);
+  if (authority.source === "management") {
+    if (audit) await recordRbacAudit(rbacQuery,site.tenantId,resolved?.userId ?? null,"site.read",site.id,(managementReason(request) ?? ""));
     return "admin";
   }
-  if (role) return "capability";
-  if (!shareTokenFromRequest(request) && await resolveCapability(resolveViewer(request,resolved),site) === "owner") return "capability";
-  if (isAnonymousCreator(resolveViewer(request,resolved),site)) return "capability";
+  if (["account", "operator", "anonymous-cookie", "anonymous-token"].includes(authority.source)) return "capability";
   if (site.takenDownAt) return adminRead(request,resolved,site,audit);
   if (site.visibility !== "private") return "public";
-  if (await requestShareAccess(request,site,resolved)) return "share";
+  if (authority.source === "share") return "share";
   return adminRead(request,resolved,site,audit);
 }
 

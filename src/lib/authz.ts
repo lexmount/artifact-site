@@ -1,32 +1,23 @@
-// Graded write authorization. Every mutating route resolves a Capability and declares the level
-// it needs. This exists because a boolean gate cannot express the one boundary the whole sharing
-// model rests on: "may edit the content, must not delete the site". The previous design had four
-// routes — rename, delete, edit, rollback — calling one identical assertCanEdit(request, site),
-// so any tier allowed to edit was also allowed to delete.
-//
-// Background: docs/RBAC.md.
+import { managementReason } from "@/lib/management-reason";
+// Resolve credentials into the shared role catalog; expose explicit action gates and UI permissions.
+// Capability ranks remain a compatibility projection for existing internal callers. See docs/RBAC.md.
 import { config } from "@/lib/config";
 import { policy } from "@/lib/settings";
 import { EditForbiddenError, editTokenFromRequest, isAdmin } from "@/lib/auth";
 import { safeEqual } from "@/lib/crypto";
 import { rbacQuery } from "@/lib/db";
 import { accountSiteRole, managementRole, tenantActive, recordRbacAudit } from "@/lib/rbac-access";
-import { roleAllows, type Permission } from "@/lib/rbac";
+import { PERMISSIONS, roleAllows, type ResourceRole, type Permission } from "@/lib/rbac";
 import { forwardedProto } from "@/lib/http";
 import { resolveSession } from "@/lib/session";
 import { anonIdFromRequest } from "@/lib/anon";
 import type { Actor, Capability, Session, Site } from "@/lib/types";
 
-/** Only unowned pre-identity rows may use their legacy receipt under enforcement. */
-function isPreIdentity(site: Site): boolean {
-  return !site.claimToken && !site.anonOwnerId;
-}
-
 const RANK: Record<Capability, number> = { none: 0, content: 1, manage: 2, owner: 3 };
 
 /** The browser that created this still-unclaimed site, by the cookie it was given at creation. */
-export function isAnonymousCreator(viewer: Pick<Viewer, "anonId">, site: Pick<Site, "ownerId" | "anonOwnerId">): boolean {
-  return site.ownerId == null && Boolean(site.anonOwnerId) && Boolean(viewer.anonId) && safeEqual(viewer.anonId!, site.anonOwnerId!);
+export function isAnonymousCreator(viewer: Pick<Viewer, "anonId">, site: Pick<Site, "ownerId" | "anonOwnerId" | "tenantId">): boolean {
+  return site.tenantId === "anonymous" && site.ownerId == null && Boolean(site.anonOwnerId) && Boolean(viewer.anonId) && safeEqual(viewer.anonId!, site.anonOwnerId!);
 }
 
 /** Capabilities are totally ordered — `owner` implies everything below it. */
@@ -43,7 +34,7 @@ export interface Viewer {
   anonId: string | null;
   /** PUBLISH_API_TOKEN bearer — the machine/admin override. */
   isAdmin: boolean;
-  /** LEGACY per-site token. Only consulted while `enforceOwnership` is off (see below). */
+  /** LEGACY per-site token. Accepted only for reports in the anonymous tenant with no account owner. */
   editToken: string;
 }
 
@@ -78,7 +69,7 @@ export function requestFromHeaders(bag: HeaderBag, path: string, editToken?: str
   // reason in the docblock above: this rebuilds what production (TLS) would have seen.
   const proto = forwardedProto(bag);
   const headers = new Headers();
-  for (const name of ["cookie", "authorization", "x-forwarded-proto", "x-artifact-share", "x-management-reason"]) {
+  for (const name of ["cookie", "authorization", "x-forwarded-proto", "x-artifact-share", "x-management-reason", "x-management-reason-encoding"]) {
     const value = bag.get(name);
     if (value) headers.set(name, value);
   }
@@ -108,31 +99,47 @@ export function viewerRequestFromHeaders(bag: HeaderBag, path: string): Request 
   return new Request(base.url, { headers: merged });
 }
 
-/** Resolve account roles, explicit management, link grants and anonymous creator rights. */
-export async function resolveCapability(viewer: Viewer, site: Site): Promise<Capability> {
-  if (!(await tenantActive(site.tenantId))) return "none";
-  if (viewer.isAdmin) return "owner";
+export type CredentialSource = "account" | "operator" | "management" | "anonymous-cookie" | "anonymous-token" | "share" | "none";
+export interface Authority { role: ResourceRole | null; source: CredentialSource }
+
+/** Every credential enters the same role catalog. Presence alone never grants authority. */
+export async function resolveAuthority(viewer: Viewer, site: Site): Promise<Authority> {
+  const denied: Authority = { role: null, source: "none" };
+  if (site.deletedAt || !(await tenantActive(site.tenantId))) return denied;
+  if (viewer.isAdmin) return { role: "platform-admin", source: "operator" };
   const role = await accountSiteRole(site, viewer.session);
-  if (role === "owner") return "owner";
-  if (role === "site-admin") return "manage";
-  if (role === "editor") return "content";
-  if (viewer.request && await managementRole(viewer.request, site, viewer.session)) return "owner";
-  if (viewer.request && viewer.session) {
+  if (role) return { role, source: "account" };
+  if (viewer.request) {
+    const manager = await managementRole(viewer.request, site, viewer.session);
+    if (manager) return { role: manager, source: "management" };
+  }
+  // Anonymous management is never ownership evidence and never applies to account-tenant orphans.
+  const anonymous = !site.ownerId && site.tenantId === "anonymous";
+  if (anonymous && viewer.editToken && safeEqual(viewer.editToken, site.editToken)) {
+    return { role: policy.anonymousSites === "read-only" ? "viewer" : "owner", source: "anonymous-token" };
+  }
+  if (anonymous && isAnonymousCreator(viewer, site)) {
+    return { role: policy.anonymousSites === "read-only" ? "viewer" : "owner", source: "anonymous-cookie" };
+  }
+  if (viewer.request) {
     const { requestShareAccess } = await import("@/lib/share");
     const share = await requestShareAccess(viewer.request, site, viewer.session);
-    if (share?.mode === "edit" && !share.versionId) return "content";
+    if (share) return { role: share.mode === "edit" && !share.versionId && viewer.session ? "editor" : share.mode === "comment" ? "commenter" : "viewer", source: "share" };
   }
-  if (!viewer.session && isAnonymousCreator(viewer, site)) {
-    return policy.anonymousSites === "read-only" ? "none" : "owner";
-  }
-  // Legacy credentials remain restricted to pre-identity anonymous artifacts.
-  if (!site.ownerId && (!config.enforceOwnership || isPreIdentity(site)) && viewer.editToken && safeEqual(viewer.editToken, site.editToken)) return "owner";
+  return denied;
+}
+
+/** Compatibility projection for internal callers; the role catalog remains authoritative. */
+export async function resolveCapability(viewer: Viewer, site: Site): Promise<Capability> {
+  const { role } = await resolveAuthority(viewer, site);
+  if (roleAllows(role, "site.delete")) return "owner";
+  if (roleAllows(role, "site.rename")) return "manage";
+  if (roleAllows(role, "site.content.edit")) return "content";
   return "none";
 }
 
 /** Human-readable 403 reason, so the UI can tell "sign in" apart from "you lack access". */
 function reasonFor(viewer: Viewer, site: Site, required: Capability): string {
-  if (!config.enforceOwnership) return "You do not have edit access to this site (an editable link is required)";
   if (!viewer.session) {
     if (isAnonymousCreator(viewer, site)) return "Sign in and explicitly claim this site in Workspaces";
     return "Please sign in first";
@@ -186,11 +193,9 @@ export async function requireActor(
   const viewer = resolveViewer(request, session === undefined ? await resolveSession(request) : session);
   const cap = await resolveCapability(viewer, site);
   if (!atLeast(cap, required)) throw new EditForbiddenError(reasonFor(viewer, site, required));
-  // Taken down: the owner keeps reading (and may fork the content elsewhere) but nothing changes
-  // under this address until an administrator restores it.
-  if (site.takenDownAt && !viewer.isAdmin) throw new EditForbiddenError("This site has been taken down by an administrator");
+  if (site.takenDownAt && !viewer.isAdmin && !["GET", "HEAD", "OPTIONS"].includes(request.method)) throw new EditForbiddenError("This site has been taken down by an administrator");
   if (await managementRole(request, site, viewer.session)) {
-    await recordRbacAudit(rbacQuery,site.tenantId,viewer.session?.userId ?? null,"site.management",site.id,request.headers.get("x-management-reason")!);
+    await recordRbacAudit(rbacQuery,site.tenantId,viewer.session?.userId ?? null,"site.management",site.id,(managementReason(request) ?? ""));
   }
   return { capability: cap, actor: resolveActor(viewer), viewer };
 }
@@ -207,17 +212,17 @@ export interface SitePermissions {
   canManageSharing: boolean;
   canManageCollaborators: boolean;
   canDelete: boolean;
+  canManageAdmins?: boolean;
+  canReadSource?: boolean;
   // Open claiming is disabled; ownership transfer has its own authorization boundary.
   /** Why the write affordances are off, so the UI can say "sign in" vs "ask the owner". */
   reason: string | null;
   /** True when signing in is what would actually unlock this — lets the UI offer a login button
    *  instead of hiding the control, without the client having to infer it from `reason`. */
   needsLogin: boolean;
-  /** True for a pre-identity row still running on its legacy edit token — the UI can invite the
-   *  holder to sign in and take proper ownership instead of silently staying in limbo. */
+  /** @deprecated Always false; anonymous credentials never imply a claim. */
   legacyGrandfathered: boolean;
-  /** Whether ownership is being enforced at all. While off, the legacy link-sharing affordances
-   *  still make sense; once on they contradict the model and must not be offered. */
+  /** @deprecated Always true; RBAC has no rollout switch. */
   enforced: boolean;
 }
 
@@ -227,34 +232,38 @@ export async function describePermissions(
   session?: Session | null,
 ): Promise<SitePermissions> {
   const viewer = resolveViewer(request, session === undefined ? await resolveSession(request) : session);
-  const cap = await resolveCapability(viewer, site);
+  const { role } = await resolveAuthority(viewer, site);
+  const writable = !site.takenDownAt || viewer.isAdmin;
+  const allows = (permission: Permission) => roleAllows(role, permission);
   return {
-    canEditContent: atLeast(cap, "content"),
-    canRename: atLeast(cap, "manage"),
-    canRollback: atLeast(cap, "manage"),
-    canManageSharing: atLeast(cap, "manage"),
-    canManageCollaborators: atLeast(cap, "manage"),
-    canDelete: atLeast(cap, "owner"),
-    reason: cap === "none" ? reasonFor(viewer, site, "content") : null,
-    // Only offer a login when one can actually succeed — enforceOwnership already implies a
-    // configured IdP, but stating it here keeps the flag honest if the two ever decouple.
-    needsLogin: config.enforceOwnership && config.oidcEnabled && !viewer.session && cap === "none",
-    enforced: config.enforceOwnership,
-    legacyGrandfathered: config.enforceOwnership && isPreIdentity(site) && cap !== "none",
+    canEditContent: writable && allows("site.content.edit"),
+    canRename: writable && allows("site.rename"),
+    canRollback: writable && allows("site.version.rollback"),
+    canManageSharing: writable && allows("site.sharing.manage"),
+    canManageCollaborators: writable && allows("site.members.manage"),
+    canManageAdmins: writable && allows("site.admins.manage"),
+    canReadSource: allows("site.source.export"),
+    canDelete: writable && allows("site.delete"),
+    reason: site.takenDownAt && !viewer.isAdmin ? "This site has been taken down by an administrator" : allows("site.content.edit") ? null : reasonFor(viewer, site, "content"),
+    needsLogin: config.oidcEnabled && !viewer.session && !allows("site.content.edit"),
+    enforced: true,
+    legacyGrandfathered: false,
   };
 }
 
 /** Explicit action gate; compatibility capabilities remain an implementation detail. */
-export async function requirePermission(request: Request, site: Site, permission: Permission, session?: Session | null) {
-  const capabilities: Partial<Record<Permission, Capability>> = {
-    "site.delete": "owner", "site.owner.transfer": "owner", "site.admins.manage": "owner",
-    "site.rename": "manage", "site.version.rollback": "manage", "site.sharing.manage": "manage",
-    "site.members.manage": "manage", "site.audit.read": "manage",
-    "site.content.edit": "content", "site.history.read": "content", "site.source.export": "content",
-  };
-  const required = capabilities[permission];
-  if (!required) throw new EditForbiddenError("Unsupported permission gate");
-  return requireActor(request,site,required,session);
+export async function requirePermission(request: Request, site: Site, permission: Permission, session?: Session | null, audit = true) {
+  if (!PERMISSIONS.includes(permission)) throw new EditForbiddenError(`Unsupported permission gate: ${permission}`);
+  const viewer = resolveViewer(request, session === undefined ? await resolveSession(request) : session);
+  const authority = await resolveAuthority(viewer, permission === "site.audit.read" ? {...site,deletedAt:null} : site);
+  if (!roleAllows(authority.role, permission)) throw new EditForbiddenError(`Unsupported or denied permission: ${permission}`);
+  const read = ["site.read", "site.history.read", "site.source.export", "site.audit.read"].includes(permission);
+  if (!read && site.takenDownAt && !viewer.isAdmin) throw new EditForbiddenError("This site has been taken down by an administrator");
+  if (audit && authority.source === "management") {
+    await recordRbacAudit(rbacQuery, site.tenantId, viewer.session?.userId ?? null, "site.management", site.id, (managementReason(request) ?? ""));
+  }
+  return { capability: await resolveCapability(viewer, site), actor: resolveActor(viewer), viewer, ...authority };
+
 }
 /** Reserved policy for future comment routes. Caller must first authorize the exact site/share/version. */
 export function commentPermission(role: Parameters<typeof roleAllows>[0], action: Permission, own: boolean): boolean {

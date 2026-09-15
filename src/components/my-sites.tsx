@@ -1,10 +1,14 @@
 "use client";
 
+import SiteDownload from "@/components/site-download";
+
 // "My sites": a folder rail on the left (all / unfiled / the person's own folders, with counts),
 // the tools row (title search, sort, list or grid), then the sites — as rows with a "…" menu, or
 // as cards. Folders are a personal classification: they never change who may open a site.
+import { usePermissionsForSites } from "@/lib/site-permissions";
 import { useCallback, useMemo, useState, type SyntheticEvent } from "react";
 import Link from "next/link";
+import SiteLink from "@/components/site-link";
 import { Folder, Globe, Lock, EyeOff, LayoutGrid, List, Search } from "lucide-react";
 import type { SiteSummary } from "@/lib/types";
 import { loginHref, useAuth } from "@/lib/use-auth";
@@ -45,7 +49,7 @@ export function VisibilityCell({ site, t }: { site: SiteSummary; t: (k: string) 
  * `editable`: every row may be edited regardless of ownership — the "I can edit" list, where the
  * server already vetted the collaboration and the browser holds no token for it.
  */
-export default function MySites({ sites, serverOwned, onMutated, manage = true, editable = false }: { sites: SiteSummary[]; serverOwned?: ReadonlySet<string>; onMutated?: () => void; manage?: boolean; editable?: boolean }) {
+export default function MySites({ sites, onMutated, manage = true }: { sites: SiteSummary[]; serverOwned?: ReadonlySet<string>; onMutated?: () => void; manage?: boolean; editable?: boolean }) {
   const t = useT();
   const locale = useLocale();
   const { user, oidcEnabled } = useAuth();
@@ -63,12 +67,8 @@ export default function MySites({ sites, serverOwned, onMutated, manage = true, 
   const [railOpen, setRailOpen] = useState(false);
   const [, setNonce] = useState(0);
   const tokens = useOwnedTokens(sites.map((s) => s.slug));
-  // Owner affordances need EITHER a local token (anonymous creator) OR account ownership (serverOwned).
-  // Only OWNER tokens count: a `?t=` link files its token under `sites:sharedToken:` and is invisible
-  // here on purpose — opening a colleague's editable link lets you edit their site, it does not make
-  // the site yours, and it must not put their row, with its Delete action, into your "My sites".
-  const manageable = (slug: string): boolean => manage && (Boolean(tokens[slug]) || Boolean(serverOwned?.has(slug)));
-  const canEdit = (slug: string): boolean => editable || manageable(slug);
+  const manageable = (slug: string): boolean => manage && Boolean(permissions[slug]?.canDelete);
+  const canEdit = (slug: string): boolean => Boolean(permissions[slug]?.canEditContent);
   const { toast, copyLink, fork, remove } = useSiteActions(tokens, onMutated);
 
   const known = filter === FILTER_ALL || filter === FILTER_UNFILED || state.folders.some((f) => f.id === filter);
@@ -85,6 +85,7 @@ export default function MySites({ sites, serverOwned, onMutated, manage = true, 
   const pages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
   const current = Math.min(page, pages - 1);
   const pageItems = shown.slice(current * PAGE_SIZE, (current + 1) * PAGE_SIZE);
+  const permissions = usePermissionsForSites(pageItems.map(s=>s.slug),tokens);
 
   const report = useCallback((r: ShelfOutcome): ShelfOutcome => {
     if (r.outcome === "storage") setHint(t(STORAGE_HINT));
@@ -225,18 +226,20 @@ export default function MySites({ sites, serverOwned, onMutated, manage = true, 
           {hint && <p className="folder-note" role="status">{hint}</p>}
 
           {pageItems.length === 0 ? empty : view === "grid" ? (
-            <div className="result-grid">{pageItems.map((s) => <ArtifactCard key={s.slug} site={s} />)}</div>
+            <div className="result-grid">{pageItems.map((s) => <ArtifactCard key={s.slug} site={s} actions={permissions[s.slug]?.canReadSource ? <MoreMenu label={t("Actions for {title}", { title: s.title })} iconOnly>
+              <SiteDownload slug={s.slug} editToken={tokens[s.slug]} />
+            </MoreMenu> : undefined} />)}</div>
           ) : (
             <div className="site-list">
               <div className="list-header"><span>{t("Site")}</span><span>{t("Who can open")}</span><span>{t("Versions")}</span><span>{t("Updated")}</span><span /></div>
               {pageItems.map((s) => (
                 <div className="site-row" key={s.slug}>
                   <div className="site-name">
-                    <Link href={`/s/${s.slug}`} className="mini" aria-hidden="true" tabIndex={-1}>
+                    <SiteLink slug={s.slug} href={`/s/${s.slug}`} className="mini" aria-hidden="true" tabIndex={-1}>
                       <iframe src={`/api/preview/${s.slug}?thumb=1`} title="" loading="lazy" tabIndex={-1} inert sandbox="" />
-                    </Link>
+                    </SiteLink>
                     <div>
-                      <strong><Link href={`/s/${s.slug}`}>{s.title}</Link></strong>
+                      <strong><SiteLink slug={s.slug} href={`/s/${s.slug}`}>{s.title}</SiteLink></strong>
                       <small>{kindLabel(s.kind, t)}{s.takenDownAt ? ` · ${t("Taken down")}` : ""}</small>
                     </div>
                   </div>
@@ -245,10 +248,11 @@ export default function MySites({ sites, serverOwned, onMutated, manage = true, 
                   <span className="row-date">{relTime(s.updatedAt, t, locale)}</span>
                   <span className="row-menu-wrap">
                     <MoreMenu label={t("Actions for {title}", { title: s.title })} iconOnly buttonClassName="row-more" buttonContent="⋯">
-                      <Link role="menuitem" className="menu-item" href={`/s/${s.slug}`}>{t("Open")}</Link>
+                      <SiteLink slug={s.slug} role="menuitem" className="menu-item" href={`/s/${s.slug}`}>{t("Open")}</SiteLink>
                       <button type="button" role="menuitem" className="menu-item" onClick={() => void copyLink(s.slug)}>{t("Copy link")}</button>
-                      {canEdit(s.slug) && <Link role="menuitem" className="menu-item" href={`/s/${s.slug}/edit`}>{t("Edit")}</Link>}
-                      <button type="button" role="menuitem" className="menu-item" onClick={() => void fork(s.slug)}>{t("Save a copy")}</button>
+                      {permissions[s.slug]?.canReadSource && <SiteDownload slug={s.slug} editToken={tokens[s.slug]} />}
+                      {canEdit(s.slug) && <SiteLink slug={s.slug} role="menuitem" className="menu-item" href={`/s/${s.slug}/edit`}>{t("Edit")}</SiteLink>}
+                      <button type="button" role="menuitem" className="menu-item" disabled={!permissions[s.slug]?.canReadSource} onClick={() => void fork(s.slug)}>{t("Save a copy")}</button>
                       {/* Not a menu item on purpose: choosing a folder keeps the menu open, so the row does not vanish under the pointer. */}
                       <label className="row-menu-move">
                         <span>{t("Move to folder")}</span>

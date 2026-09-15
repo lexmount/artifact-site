@@ -133,6 +133,12 @@ export const config = {
   get anonymousSites(): "full" | "read-only" {
     return (process.env.ARTIFACT_ANONYMOUS_SITES || "").trim().toLowerCase() === "read-only" ? "read-only" : "full";
   },
+  /** Audit retention: 0 keeps records forever. Invalid values fail safe to no deletion. */
+  get auditRetentionDays(): number {
+    const raw = process.env.ARTIFACT_AUDIT_RETENTION_DAYS ?? "0";
+    const days = /^\d+$/.test(raw) ? Number(raw) : NaN;
+    return Number.isInteger(days) && days >= 0 && days <= 3650 ? days : 0;
+  },
   /** How long a site published without an account lives after its last change; 0 = forever (the default). Claiming it ends the clock. */
   get anonSiteTtlMs(): number {
     return intFromEnv("ARTIFACT_ANON_SITE_TTL_DAYS", 0) * 24 * 60 * 60 * 1000;
@@ -269,28 +275,8 @@ export const config = {
     if (raw === "open" || raw === "login" || raw === "token") return raw;
     return this.publishApiToken ? "token" : "open";
   },
-  /**
-   * Two-phase rollout switch. OFF (default) keeps the legacy edit-token authorization so old and
-   * new replicas behave identically during a rolling upgrade — flipping it while replicas are
-   * mixed would make "revoke access" a silent no-op on half the traffic. Turn ON only once every
-   * replica runs the new image AND an IdP is configured (see below).
-   */
-  get enforceOwnership(): boolean {
-    const requested = (process.env.ARTIFACT_ENFORCE_OWNERSHIP || "").toLowerCase() === "on";
-    if (!requested) return false;
-    // Enforcement with no configured IdP is a lockout, not a policy: it demands an identity that
-    // nobody can obtain, so every site becomes permanently uneditable except from the browser that
-    // created it — with no recourse, since an open deployment has no admin token either. Degrade
-    // to the pre-identity behaviour and say so, rather than shipping a login button that 400s.
-    if (!this.oidcEnabled) {
-      warnOnce(
-        "ARTIFACT_ENFORCE_OWNERSHIP=on is ignored: OIDC is not configured yet (ARTIFACT_OIDC_ISSUER / _CLIENT_ID / _CLIENT_SECRET are required). " +
-        "Enforcing ownership before anyone can sign in would lock every site, so the old edit-token behaviour stays in place for now.",
-      );
-      return false;
-    }
-    return true;
-  },
+  /** @deprecated RBAC is always enforced; retained as a read-only compatibility value. */
+  get enforceOwnership(): boolean { return true; },
   /**
    * Which metadata store to use. Postgres is the only production store; "sqlite" exists solely
    * as the test suite's backend (no external service needed to run `npm test`) and is refused

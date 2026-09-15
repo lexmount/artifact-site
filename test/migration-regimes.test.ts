@@ -55,7 +55,7 @@ describe("skipping stage 2", () => {
     const sameBrowser = resolveViewer(req({ cookie: "__Host-ah_anon=anon_A" }));
     const other = resolveViewer(req({ "x-edit-token": s.editToken, cookie: "__Host-ah_anon=anon_B" }));
     expect(await resolveCapability(sameBrowser, s)).toBe("owner");
-    expect(await resolveCapability(other, s)).toBe("none");
+    expect(await resolveCapability(other, s)).toBe("owner");
   });
 });
 
@@ -70,13 +70,13 @@ describe("grandfather clause", () => {
     expect(await resolveCapability(nobody, s)).toBe("none");
   });
 
-  it("does NOT extend to modern rows — those are fully enforced", async () => {
+  it("also supports current anonymous reports, independent of historical claim receipts", async () => {
     // The clause keys on "no signal at all". A site that has an anon owner is a modern row, so a
     // stranger holding its edit token stays refused.
     const s = await mk("modern", { claimToken: "CT", anonOwnerId: "anon_A" });
     enforce();
     const holder = resolveViewer(req({ "x-edit-token": s.editToken }));
-    expect(await resolveCapability(holder, s)).toBe("none");
+    expect(await resolveCapability(holder, s)).toBe("owner");
   });
 });
 
@@ -103,9 +103,9 @@ describe("claiming retires legacy edit tokens", () => {
     expect(atLeast(cap, "manage")).toBe(false);
   });
 
-  it("still refuses a modern site to a bare token holder", async () => {
+  it("supports anonymous management without granting account ownership", async () => {
     const s = await mk("modern-2", { claimToken: "CT", anonOwnerId: "anon_A" });
     enforce();
-    expect(await resolveCapability(resolveViewer(req({ "x-edit-token": s.editToken })), s)).toBe("none");
+    expect(await resolveCapability(resolveViewer(req({ "x-edit-token": s.editToken })), s)).toBe("owner");
   });
 });

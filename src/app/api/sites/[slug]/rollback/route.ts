@@ -1,3 +1,4 @@
+import { assertMutationOrigin } from "@/lib/request-auth";
 // /api/sites/:slug/rollback — POST { versionId } → roll back. Forward-only restore: mints a NEW version
 // whose tree copies the chosen earlier one and makes it current; history is never mutated. A
 // versionId that is unknown or belongs to another site → 404 (same as an unknown slug).
@@ -11,8 +12,6 @@
 import type { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActor } from "@/lib/authz";
-import { AuthError } from "@/lib/auth";
-import { csrfSafe } from "@/lib/session";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { getSiteView, rollbackTo, siteUrl } from "@/lib/sites";
 import { apiAuditContext } from "@/lib/audit";
@@ -30,8 +29,8 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site or version not found" }, 404);
-    const { actor, viewer } = await requireActor(request, view.site, "manage"); // rollback rewrites which version is served
-    if (!viewer.editToken && !viewer.isAdmin && !csrfSafe(request)) throw new AuthError("Cross-site request rejected");
+    const { actor } = await requireActor(request, view.site, "manage"); // rollback rewrites which version is served
+    await assertMutationOrigin(request, view.site);
     const { versionId } = rollbackSchema.parse(await request.json());
     const result = await rollbackTo(slug, versionId, apiAuditContext(request, actor));
     if (!result) return json({ error: "site or version not found" }, 404);

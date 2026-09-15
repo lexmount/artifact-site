@@ -44,6 +44,9 @@ export async function migrateRbac(q: RbacQuery): Promise<void> {
     reason TEXT NOT NULL,
     created_at BIGINT NOT NULL
   )`);
+  for (const table of ["audit_log", "admin_log", "rbac_audit"]) {
+    await q(`CREATE INDEX IF NOT EXISTS idx_${table}_retention ON ${table}(created_at,id)`);
+  }
   await q(`CREATE TABLE IF NOT EXISTS rbac_migrations (
     id TEXT PRIMARY KEY
   )`);
@@ -70,6 +73,11 @@ export async function migrateRbac(q: RbacQuery): Promise<void> {
   await q(
     `CREATE INDEX IF NOT EXISTS idx_site_members_user ON site_members(user_id,site_id)`,
   );
+  if (!(await q("SELECT id FROM rbac_migrations WHERE id='retire-owned-edit-tokens'")).length) {
+    await q("UPDATE sites SET edit_token='',claim_token=NULL WHERE owner_id IS NOT NULL");
+    await q("INSERT INTO rbac_migrations(id) VALUES('retire-owned-edit-tokens')");
+  }
+
 }
 
 /** A removed member must not be re-added at the next login. NULL marks only new accounts. */

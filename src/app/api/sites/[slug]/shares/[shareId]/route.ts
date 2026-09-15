@@ -1,9 +1,8 @@
+import { withPermissionCommit } from "@/lib/authorized-commit";
+import { assertMutationOrigin } from "@/lib/request-auth";
 // One share link — retune it, or take it away. Owner-only, like the collection route.
 import type { NextResponse } from "next/server";
-import { rbacQuery, revokeShare } from "@/lib/db";
 import { apiAuditContext, recordSiteAudit } from "@/lib/audit";
-import { csrfSafe } from "@/lib/session";
-import { AuthError } from "@/lib/auth";
 import { createPasscode, hashPasscode } from "@/lib/share";
 import { errorResponse, json } from "../../../../_util";
 import { parseShareAuthorization, loadGrants, parseExpiry, parsePasscode, parsePolicy, resolveOwnedShare, summarize } from "../_shared";
@@ -24,11 +23,11 @@ export async function PATCH(
   context: { params: Promise<{ slug: string; shareId: string }> },
 ): Promise<NextResponse> {
   try {
-    if (!csrfSafe(request)) throw new AuthError("Cross-site request rejected");
     const { slug, shareId } = await context.params;
     const resolved = await resolveOwnedShare(request, slug, shareId);
     if (!resolved.ok) return resolved.response;
     const { site, share, actor } = resolved;
+    await assertMutationOrigin(request, site);
 
     // A revoked link cannot be brought back — nothing un-sets revoked_at, and it should stay that
     // way: "revoke" has to be final or it is not a revocation. Say so instead of accepting the edit
@@ -61,7 +60,7 @@ export async function PATCH(
 
     const authorization = await parseShareAuthorization(body,site.id,share);
     const allowAi = typeof body.allowAi === "boolean" ? body.allowAi : share.allowAi;
-    const changed = await rbacQuery("UPDATE site_shares SET mode=$1,version_id=$2,policy=$3,passcode_hash=$4,expires_at=$5,allow_ai=CASE WHEN $6=1 THEN true ELSE false END WHERE id=$7 AND revoked_at IS NULL RETURNING id", [authorization.mode,authorization.versionId,policy,passcodeHash,expiresAt,allowAi ? 1 : 0,share.id]);
+    const changed = await withPermissionCommit(request,site.id,"site.sharing.manage", q => q("UPDATE site_shares SET mode=$1,version_id=$2,policy=$3,passcode_hash=$4,expires_at=$5,allow_ai=CASE WHEN $6=1 THEN true ELSE false END WHERE id=$7 AND revoked_at IS NULL RETURNING id", [authorization.mode,authorization.versionId,policy,passcodeHash,expiresAt,allowAi ? 1 : 0,share.id]));
     if (!changed.length) return json({ error: "Share was revoked" }, 409);
     await recordSiteAudit(site.id, "share", apiAuditContext(request, actor)); // best-effort, non-atomic
 
@@ -83,14 +82,14 @@ export async function DELETE(
   context: { params: Promise<{ slug: string; shareId: string }> },
 ): Promise<NextResponse> {
   try {
-    if (!csrfSafe(request)) throw new AuthError("Cross-site request rejected");
     const { slug, shareId } = await context.params;
     const resolved = await resolveOwnedShare(request, slug, shareId);
     if (!resolved.ok) return resolved.response;
     const { site, share, actor } = resolved;
+    await assertMutationOrigin(request, site);
 
     const revokedAt = Date.now();
-    await revokeShare(share.id, revokedAt); // idempotent: the UPDATE is guarded on revoked_at IS NULL
+    await withPermissionCommit(request,site.id,"site.sharing.manage", q => q("UPDATE site_shares SET revoked_at=$1 WHERE id=$2 AND revoked_at IS NULL",[revokedAt,share.id])); // idempotent: the UPDATE is guarded on revoked_at IS NULL
     await recordSiteAudit(site.id, "share", apiAuditContext(request, actor)); // best-effort, non-atomic
     return json({ ok: true, id: share.id, revokedAt: share.revokedAt ?? revokedAt }, 200);
   } catch (error) {

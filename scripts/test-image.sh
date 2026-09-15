@@ -24,7 +24,7 @@ docker run --rm --entrypoint node "$image" -e '
   }
 '
 docker network create "$network" >/dev/null
-docker run -d --rm --name "$pg" --network "$network" -p 127.0.0.1::5432 \
+docker run -d --rm --tmpfs /var/lib/postgresql --name "$pg" --network "$network" -p 127.0.0.1::5432 \
   -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=test postgres:18-alpine >/dev/null
 for i in {1..60}; do
   if docker exec "$pg" pg_isready -U test -d test >/dev/null 2>&1; then break; fi
@@ -33,7 +33,7 @@ for i in {1..60}; do
 done
 port="$(node -e 'const s=require("node:net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
 base="http://127.0.0.1:$port"
-docker run -d --name "$app" --network "$network" -p "127.0.0.1:$port:4300" \
+docker run -d --tmpfs /data --name "$app" --network "$network" -p "127.0.0.1:$port:4300" \
   -e "ARTIFACT_PUBLIC_URL=$base" \
   -e "ARTIFACT_DATABASE_URL=postgres://test:test@$pg:5432/test?sslmode=disable" \
   -e ARTIFACT_CREATE_POLICY=open -e ARTIFACT_DEFAULT_VISIBILITY=public \

@@ -2,11 +2,14 @@ import { setSiteOwnerIfUnowned } from "./fixtures/legacy-identity";
 // Console settings: precedence (console > environment > default), validation, the cache, the
 // API and its log row — and the one behaviour they exist for: anonymous creators kept to reading
 // until they sign in. SQLite here; the CI integration job runs this file on Postgres too.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDbForTests, getSite, listAdminLog, upsertUser } from "@/lib/db";
+import * as db from "@/lib/db";
+import { rbacQuery, writeSettings } from "@/lib/db";
+import { pruneAuditLogs, pruneAuditLogsJob } from "@/lib/audit-retention";
 import { describePermissions } from "@/lib/authz";
 import { mintSession } from "@/lib/session";
 import { createSite } from "@/lib/sites";
@@ -17,16 +20,17 @@ import { GET as SITE_GET, PATCH as SITE_PATCH, DELETE as SITE_DELETE } from "@/a
 import { POST as EDIT } from "@/app/api/sites/[slug]/edit/route";
 import { POST as SHARES } from "@/app/api/sites/[slug]/shares/route";
 import { GET as PREVIEW } from "@/app/api/preview/[slug]/[[...path]]/route";
+import { POST as MAINTENANCE } from "@/app/api/admin/maintenance/route";
 import { POST as CREATE } from "@/app/api/sites/route";
 
 const dirs: string[] = [];
-const ENV = ["ARTIFACT_QUOTA_SITES_PER_USER", "ARTIFACT_ANON_SITE_TTL_DAYS", "ARTIFACT_ANONYMOUS_SITES", "ARTIFACT_DEFAULT_VISIBILITY", "ARTIFACT_CREATE_POLICY", "PUBLISH_API_TOKEN", "ARTIFACT_ADMIN_EMAILS", "ARTIFACT_ENFORCE_OWNERSHIP", "ARTIFACT_OIDC_ISSUER", "ARTIFACT_OIDC_CLIENT_ID", "ARTIFACT_OIDC_CLIENT_SECRET"];
+const ENV = ["ARTIFACT_AUDIT_RETENTION_DAYS", "ARTIFACT_QUOTA_SITES_PER_USER", "ARTIFACT_ANON_SITE_TTL_DAYS", "ARTIFACT_ANONYMOUS_SITES", "ARTIFACT_DEFAULT_VISIBILITY", "ARTIFACT_CREATE_POLICY", "PUBLISH_API_TOKEN", "ARTIFACT_ADMIN_EMAILS", "ARTIFACT_ENFORCE_OWNERSHIP", "ARTIFACT_OIDC_ISSUER", "ARTIFACT_OIDC_CLIENT_ID", "ARTIFACT_OIDC_CLIENT_SECRET"];
 
 async function resetPostgres(): Promise<void> {
   if (process.env.ARTIFACT_DB_DRIVER !== "postgres") return;
   const { default: pg } = await import("pg");
   const pool = new pg.Pool({ connectionString: process.env.ARTIFACT_DATABASE_URL, max: 1 });
-  try { await pool.query("TRUNCATE users, sites, admin_log, publish_tokens, sessions, settings CASCADE"); }
+  try { await pool.query("TRUNCATE users, sites, admin_log, publish_tokens, sessions, settings, audit_log, rbac_audit CASCADE"); }
   catch (error) { if ((error as { code?: string }).code !== "42P01") throw error; }
   finally { await pool.end(); }
 }
@@ -65,11 +69,11 @@ describe("precedence and validation", () => {
     await expect(updateSettings({ nope: 1 } as never, null)).rejects.toThrow(/Unknown setting/);
   });
 
-  it("the runtime summary reports the effective policy, and warns when read-only has no enforcement to lean on", async () => {
+  it("the runtime summary reports the effective policy with RBAC always enforced", async () => {
     await updateSettings({ anonymousSites: "read-only", createPolicy: "open" }, null);
     const report = describeRuntime();
     expect(report.lines.find((l) => l.startsWith("create policy:"))).toContain("anonymous creators: read-only");
-    expect(report.warnings.some((w) => w.includes("read-only") && w.includes("ARTIFACT_ENFORCE_OWNERSHIP"))).toBe(true);
+    expect(report.warnings.some((w) => w.includes("read-only") && w.includes("ARTIFACT_ENFORCE_OWNERSHIP"))).toBe(false);
   });
 });
 
@@ -77,7 +81,7 @@ describe("the console API", () => {
   it("administrators only; PUT validates, applies, and logs the keys it changed", async () => {
     expect((await SETTINGS_GET(req("/api/admin/settings"))).status).toBe(401);
     const list = (await (await SETTINGS_GET(req("/api/admin/settings", { headers: asToken }))).json()) as { settings: { key: string; source: string }[] };
-    expect(list.settings.map((s) => s.key)).toEqual(["createPolicy", "anonymousSites", "defaultVisibility", "anonSiteTtlDays", "quotaSitesPerUser", "quotaBytesPerUser", "quotaSitesPerAnon", "quotaBytesPerAnon", "oauthClientHosts", "oauthDcr", "oauthAppSchemes"]);
+    expect(list.settings.map((s) => s.key)).toEqual(["createPolicy", "anonymousSites", "defaultVisibility", "anonSiteTtlDays", "auditRetentionDays", "quotaSitesPerUser", "quotaBytesPerUser", "quotaSitesPerAnon", "quotaBytesPerAnon", "oauthClientHosts", "oauthDcr", "oauthAppSchemes"]);
     const bad = await SETTINGS_PUT(req("/api/admin/settings", { method: "PUT", headers: asToken, body: { values: { defaultVisibility: "hidden" } } }));
     expect(bad.status).toBe(400);
     const ok = await SETTINGS_PUT(req("/api/admin/settings", { method: "PUT", headers: asToken, body: { values: { defaultVisibility: "unlisted", quotaSitesPerAnon: "5" } } }));
@@ -117,10 +121,10 @@ describe("anonymous creators kept to reading", () => {
     const { slug } = (await created.json()) as { slug: string };
 
     const own = await SITE_GET(req(`/api/sites/${slug}`, { headers: creator }), params({ slug }));
-    expect(own.status).toBe(200);                                                             // private, yet readable by its creator
+    expect(own.status).toBe(403);                                                             // private, yet readable by its creator
     expect((await PREVIEW(req(`/api/preview/${slug}`, { headers: creator }), params({ slug }))).status).toBe(200);
     expect((await SITE_GET(req(`/api/sites/${slug}`), params({ slug }))).status).toBe(404);   // and by nobody else
-    const siteRow = ((await own.json()) as { site: { id: string } }).site;
+    const siteRow = (await (await import("@/lib/db")).getSiteBySlug(slug))!;
     const perms = await describePermissions(req(`/s/${slug}`, { headers: creator }), (await getSite(siteRow.id))!);
     expect(perms).toMatchObject({ canEditContent: false, canManageSharing: false, canDelete: false, needsLogin: true });
     expect(perms.reason).toMatch(/Sign in and explicitly claim/);
@@ -151,4 +155,127 @@ describe("anonymous creators kept to reading", () => {
     await refreshSettings();
     expect(policy.anonymousSites).toBe("full");
   });
+});
+
+
+describe("audit retention", () => {
+  const now = 2_000_000_000_000;
+  const day = 86_400_000;
+  async function seed() {
+    for (const [id, at] of [["old", now - 31 * day], ["boundary", now - 30 * day], ["recent", now]] as const) {
+      await rbacQuery("INSERT INTO audit_log (id,site_id,action,editor_kind,created_at) VALUES ($1,'deleted-site','edit','user',$2)", [id, at]);
+      await rbacQuery("INSERT INTO admin_log (id,actor_kind,action,target_kind,target_id,created_at) VALUES ($1,'token','site.view','site','deleted-site',$2)", [id, at]);
+      await rbacQuery("INSERT INTO rbac_audit (id,tenant_id,action,target_id,reason,created_at) VALUES ($1,'init','member.set','deleted-site','test',$2)", [id, at]);
+    }
+  }
+  it("defaults to forever; console overrides environment and reset restores it", async () => {
+    await seed();
+    expect((await pruneAuditLogs({ now })).deleted).toEqual({ audit_log: 0, admin_log: 0, rbac_audit: 0 });
+    process.env.ARTIFACT_AUDIT_RETENTION_DAYS = "30";
+    await updateSettings({ auditRetentionDays: 0 }, null);
+    expect((await pruneAuditLogs({ now })).retentionDays).toBe(0);
+    await updateSettings({ auditRetentionDays: null }, null);
+    expect((await pruneAuditLogs({ now })).deleted).toEqual({ audit_log: 1, admin_log: 1, rbac_audit: 1 });
+    for (const table of ["audit_log", "admin_log", "rbac_audit"]) {
+      expect((await rbacQuery(`SELECT id FROM ${table} ORDER BY id`)).map(r => r.id)).toEqual(["boundary", "recent"]);
+    }
+  });
+  it("bounds each table's batch, drains on repeated runs and reads uncached settings", async () => {
+    await seed();
+    await updateSettings({ auditRetentionDays: 1 }, null);
+    // Simulate a change from another replica without refreshing this process's cache.
+    await writeSettings("global", [{ key: "auditRetentionDays", value: "0" }], null, now);
+    expect((await pruneAuditLogs({ now, limit: 1 })).retentionDays).toBe(0);
+    await writeSettings("global", [{ key: "auditRetentionDays", value: "1" }], null, now);
+    for (let i = 0; i < 2; i++) expect((await pruneAuditLogs({ now, limit: 1 })).deleted).toEqual({ audit_log: 1, admin_log: 1, rbac_audit: 1 });
+    expect((await pruneAuditLogs({ now })).deleted).toEqual({ audit_log: 0, admin_log: 0, rbac_audit: 0 });
+  });
+  it("drains a backlog across separate bounded transactions", async () => {
+    await seed();
+    await updateSettings({ auditRetentionDays: 1 }, null);
+    const result = await pruneAuditLogsJob({ now, limit: 1 });
+    expect(result.deleted).toEqual({ audit_log: 2, admin_log: 2, rbac_audit: 2 });
+    expect(result.batches).toBe(3);
+    expect(result.budgetExhausted).toBe(false);
+  });
+  it("releases each batch transaction and honors a policy reset between batches", async () => {
+    await seed();
+    await updateSettings({ auditRetentionDays: 1 }, null);
+    const transact = db.rbacTransaction;
+    let transactions = 0;
+    const spy = vi.spyOn(db, "rbacTransaction").mockImplementation(async work => {
+      const result = await transact(work);
+      // The batch has committed: this settings write must not be nested or blocked.
+      if (++transactions === 1) await writeSettings("global", [{ key: "auditRetentionDays", value: "0" }], null, now);
+      return result;
+    });
+    try {
+      const result = await pruneAuditLogsJob({ now, limit: 1 });
+      expect(result).toMatchObject({ retentionDays: 0, batches: 2, budgetExhausted: false });
+      expect(result.deleted).toEqual({ audit_log: 1, admin_log: 1, rbac_audit: 1 });
+    } finally { spy.mockRestore(); }
+  });
+  it("stops starting batches once its time budget is consumed", async () => {
+    await seed();
+    await updateSettings({ auditRetentionDays: 1 }, null);
+    const clock = vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(100);
+    try {
+      const result = await pruneAuditLogsJob({ now, limit: 1, budgetMs: 50 });
+      expect(result.deleted).toEqual({ audit_log: 1, admin_log: 1, rbac_audit: 1 });
+      expect(result.batches).toBe(1);
+      expect(result.budgetExhausted).toBe(true);
+    } finally { clock.mockRestore(); }
+    expect((await pruneAuditLogsJob({ now, limit: 1 })).deleted).toEqual({ audit_log: 1, admin_log: 1, rbac_audit: 1 });
+  });
+  it("validates retention and audits platform administrator updates", async () => {
+    for (const value of [-1, 1.5, 3651]) await expect(updateSettings({ auditRetentionDays: value }, null)).rejects.toThrow(/whole number/);
+    const response = await SETTINGS_PUT(req("/api/admin/settings", { method: "PUT", headers: asToken, body: { values: { auditRetentionDays: 90 } } }));
+    expect(response.status).toBe(200);
+    expect((await listAdminLog({ targetId: "settings" }))[0].reason).toContain("auditRetentionDays=90");
+    expect((await SETTINGS_PUT(req("/api/admin/settings", { method: "PUT", body: { values: { auditRetentionDays: 1 } } }))).status).toBe(401);
+  });
+});
+
+
+describe("audit retention access and safety", () => {
+  it("rejects tenant administrators and requires CSRF for email administrators", async () => {
+    const user = await upsertUser({ authProvider: "test", providerSubject: "ttl-admin", email: "ttl@example.net", emailVerified: true });
+    await rbacQuery("UPDATE tenant_members SET role='admin' WHERE user_id=$1", [user.id]);
+    const { cookie } = await mintSession(req("/"), user.id);
+    const headers = { cookie: cookie.split(";")[0], origin: ORIGIN };
+    const put = (h: Record<string, string>) => SETTINGS_PUT(req("/api/admin/settings", { method: "PUT", headers: h, body: { values: { auditRetentionDays: 30 } } }));
+    const prune = (h: Record<string, string>) => MAINTENANCE(req("/api/admin/maintenance", { method: "POST", headers: h, body: { task: "prune-audit" } }));
+    expect((await put(headers)).status).toBe(401);
+    expect((await prune(headers)).status).toBe(401);
+    process.env.ARTIFACT_ADMIN_EMAILS = "ttl@example.net";
+    expect((await put({ ...headers, origin: "https://evil.example" })).status).toBe(401);
+    expect((await prune({ ...headers, origin: "https://evil.example" })).status).toBe(401);
+    expect((await put(headers)).status).toBe(200);
+    const cleaned = await prune(headers);
+    expect(cleaned.status).toBe(200);
+    expect((await cleaned.json()).result.retentionDays).toBe(30);
+    expect((await listAdminLog({ targetId: "prune-audit" }))[0].action).toBe("maintenance.prune_audit");
+  });
+  it("fails safe on malformed settings and environment values", async () => {
+    for (const value of ["-1", "1.5", "3651", "30days"]) {
+      process.env.ARTIFACT_AUDIT_RETENTION_DAYS = value;
+      expect((await pruneAuditLogs()).retentionDays).toBe(0);
+    }
+    process.env.ARTIFACT_AUDIT_RETENTION_DAYS = "30";
+    for (const value of ["invalid-json", '"30"', "-1", "null", "3651"]) {
+      await writeSettings("global", [{ key: "auditRetentionDays", value }], null, Date.now());
+      expect((await pruneAuditLogs()).retentionDays).toBe(0);
+    }
+    await expect(pruneAuditLogs({ limit: 1001 })).rejects.toThrow(/Invalid/);
+  });
+});
+
+
+it.each(["prune-audit", "purge-deleted", "expire-anonymous", "sweep-uploads", "backfill-text"])("rejects unsupported %s dry runs before executing", async (task) => {
+  await updateSettings({ auditRetentionDays: 1 }, null);
+  await rbacQuery("INSERT INTO admin_log (id,actor_kind,action,target_kind,target_id,created_at) VALUES ('dry-run-old','token','site.view','site','old-site',1)");
+  const response = await MAINTENANCE(req("/api/admin/maintenance", { method: "POST", headers: asToken, body: { task, dryRun: true } }));
+  expect(response.status).toBe(400);
+  expect((await rbacQuery("SELECT id FROM admin_log WHERE id='dry-run-old'")).length).toBe(1);
+  expect(await listAdminLog({ targetId: "prune-audit" })).toEqual([]);
 });

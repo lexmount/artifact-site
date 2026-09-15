@@ -154,3 +154,17 @@ it.each(["__Host-ah_anon", "ah_anon"])("preserves the server-issued %s identity 
   await c.commitUpload("ver_test");
   expect(cookies).toEqual([null, `${cookieName}=anon_test`, `${cookieName}=anon_test`]);
 });
+
+it("preserves bearer identity while forwarding tenant and share context", async () => {
+  const seen: Headers[] = [];
+  const c = new ArtifactSiteClient({baseUrl:"https://context.example",token:"existing-token",tenantId:"tenant-a",shareToken:"shared-report",fetch:async (_url,init)=>{
+    seen.push(new Headers(init?.headers));return Response.json({});
+  }});
+  await c.getSite("report");
+  await c.createShare("report",{policy:"people",mode:"view",versionId:"version-a"});
+  for(const h of seen){
+    expect(h.get("authorization")).toBe("Bearer existing-token");
+    expect(h.get("x-artifact-tenant")).toBe("tenant-a");
+    expect(h.get("x-artifact-share")).toBe("shared-report");
+  }
+});

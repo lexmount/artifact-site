@@ -1,3 +1,4 @@
+import { tenantActive } from "@/lib/rbac-access";
 // /v/<token> — the page a READER lands on. The address a share link points at, and the only surface
 // on this platform whose visitor may have no account, no anonymous cookie and no prior relationship
 // with the site at all.
@@ -69,7 +70,7 @@ const PROTECTED_DESCRIPTION: Record<Exclude<SharePolicy, "public">, string> = {
  *  (a pass-through outside a request scope, i.e. when tests invoke the page directly). */
 const resolveTarget = cache(async (siteId: string, versionId?: string | null): Promise<{ site: Site; version: Version } | null> => {
   const site = await getSite(siteId);
-  if (!site || site.deletedAt || !site.currentVersionId) return null;
+  if (!site || site.deletedAt || site.takenDownAt || !(await tenantActive(site.tenantId)) || !site.currentVersionId) return null;
   const version = await getVersion(versionId || site.currentVersionId);
   return version && version.siteId===site.id ? { site, version } : null;
 });

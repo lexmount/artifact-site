@@ -1,3 +1,4 @@
+import { managementReason } from "@/lib/management-reason";
 import "server-only";
 import { createId, getUser, rbacQuery, rbacTransaction } from "@/lib/db";
 import { resolveAdmin } from "@/lib/admin";
@@ -62,8 +63,8 @@ export async function managementRole(
   site: Site,
   session: Session | null,
 ): Promise<ResourceRole | null> {
-  const reason = request.headers.get("x-management-reason")?.trim();
-  if (!reason || reason.length > 500) return null;
+  const reason = managementReason(request);
+  if (!reason) return null;
   const platform = await resolveAdmin(request, session);
   if (platform) return "platform-admin";
   if (
@@ -90,8 +91,9 @@ export async function recordRbacAudit(
 export async function requireTenantManager(
   request: Request,
   tenantId: string,
+  existingSession?: Session | null,
 ): Promise<Session | null> {
-  const session = await resolveSession(request);
+  const session = existingSession === undefined ? await resolveSession(request) : existingSession;
   if (
     !(await resolveAdmin(request, session)) &&
     (!session ||
@@ -138,7 +140,9 @@ export async function changeTenantMember(
   // Resolve identity before acquiring the global RBAC lock; role reads use its transaction.
   const session = await resolveSession(request);
   const platform = await resolveAdmin(request, session);
+  const { assertSessionCurrent } = await import("@/lib/authorized-commit");
   await rbacTransaction(async (q) => {
+    await assertSessionCurrent(q, session);
     const [manager] = session
       ? await q(
           "SELECT m.role FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.user_id=$2 AND u.disabled_at IS NULL",

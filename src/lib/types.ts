@@ -475,7 +475,7 @@ export type AdminAction =
   | "user.disable" | "user.enable"
   | "site.assign_owner" | "site.take_down" | "site.restore" | "site.delete" | "site.undelete" | "site.view"
   | "maintenance.purge_deleted" | "maintenance.sweep_uploads" | "maintenance.reconcile" | "maintenance.expire_anonymous"
-  | "maintenance.backfill_text"
+  | "maintenance.backfill_text" | "maintenance.prune_audit"
   | "settings.update";
 
 /** One administrative act. Separate from the per-site audit trail: half of these have no site. */

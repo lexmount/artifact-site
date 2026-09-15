@@ -8,17 +8,7 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 
 const STORE_EVENT = "sites:store"; // shared with local-store: broadcasts localStorage writes
 
-/**
- * Tokens are filed by PROVENANCE, and the split is a security boundary, not bookkeeping.
- *
- * `sites:editToken:` holds tokens for sites THIS browser created (upload / fork). Those are the
- * only ones that may be redeemed for ownership at sign-in.
- *
- * `sites:sharedToken:` holds tokens that arrived on someone else's `?t=` editable link. They still
- * grant editing — that is what the link is for — but they are evidence of an invitation, not of
- * authorship. Filing them together with the first kind is what let opening a colleague's link and
- * later signing in silently transfer their (still unowned) site into your account.
- */
+/** Legacy storage keys are retained for discovery. Neither key nor token proves ownership. */
 export function editTokenKey(slug: string): string {
   return `sites:editToken:${slug}`;
 }
@@ -26,7 +16,7 @@ function sharedTokenKey(slug: string): string {
   return `sites:sharedToken:${slug}`;
 }
 
-/** Persist a token for a site THIS browser created. Redeemable for ownership. Client-only. */
+/** Persist a token for a site THIS browser created. Never redeemable for ownership. Client-only. */
 export function rememberEditToken(slug: string, token: string): void {
   try {
     localStorage.setItem(editTokenKey(slug), token);
@@ -80,6 +70,8 @@ export function useEditToken(slug: string): { token: string | null; resolved: bo
   // Side-effect only (no setState): persist a ?t= link's token and drop it from the URL.
   // Filed as SHARED — the link proves someone invited you to edit, not that you made the site.
   useEffect(() => {
+    const receipt = queryToken || readStored(slug);
+    if (receipt) void fetch(`/api/sites/${slug}/permissions`, { method: "POST", headers: { "x-edit-token": receipt } }).catch(() => {});
     if (!queryToken) return;
     rememberSharedToken(slug, queryToken);
     try {
@@ -109,15 +101,7 @@ export function useOwnedTokens(slugs: string[]): Record<string, string> {
   return useSyncExternalStore(subscribe, snapshot, () => cache.current.map);
 }
 
-/**
- * Every (slug, token) pair for sites this browser CREATED. Used once, right after sign-in, to
- * settle ownership of sites made before the account existed — including those predating the
- * identity migration, for which this is the only surviving evidence of authorship.
- *
- * Deliberately skips `sites:sharedToken:`. Those came from someone else's editable link, and a
- * site's author must not lose it merely because a colleague opened the link they were sent and
- * happened to sign in first.
- */
+/** Local discovery records only; claiming uses the creating browser cookie on the server. */
 export function allStoredEditTokens(): Array<{ slug: string; editToken: string }> {
   const out: Array<{ slug: string; editToken: string }> = [];
   try {
@@ -132,7 +116,7 @@ export function allStoredEditTokens(): Array<{ slug: string; editToken: string }
   return out;
 }
 
-/** How many sites this browser would hand over on sign-in — the number the gate dialog states. */
+/** @deprecated Signing in never adopts sites automatically. */
 export function countAdoptableSites(): number {
-  return allStoredEditTokens().length;
+  return 0;
 }

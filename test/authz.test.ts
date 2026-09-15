@@ -59,10 +59,10 @@ describe("atLeast", () => {
 });
 
 describe("legacy mode (ARTIFACT_ENFORCE_OWNERSHIP off)", () => {
-  it("keeps today's behaviour: the edit token grants everything", async () => {
+  it("an off switch cannot enable tokens on account-tenant orphans", async () => {
     const s = site();
     const withToken = resolveViewer(req({ "x-edit-token": "legacy-token" }));
-    expect(await resolveCapability(withToken, s)).toBe("owner");
+    expect(await resolveCapability(withToken, s)).toBe("none");
 
     const without = resolveViewer(req());
     expect(await resolveCapability(without, s)).toBe("none");
@@ -149,10 +149,10 @@ describe("enforcement requires a configured IdP", () => {
     for (const k of ["ARTIFACT_OIDC_ISSUER", "ARTIFACT_OIDC_CLIENT_ID", "ARTIFACT_OIDC_CLIENT_SECRET"]) delete process.env[k];
   });
 
-  it("is ignored while OIDC is unconfigured — legacy edit tokens still work", async () => {
+  it("RBAC still rejects account-tenant tokens without OIDC", async () => {
     const s = site();
     const viewer = resolveViewer(req({ "x-edit-token": "legacy-token" }));
-    expect(await resolveCapability(viewer, s)).toBe("owner");
+    expect(await resolveCapability(viewer, s)).toBe("none");
   });
 
   it("takes effect once OIDC is configured", async () => {

@@ -82,7 +82,10 @@ export interface PreviewGrant {
   anonOwnerHash: string | null;
   fingerprint: string;
   management?: "platform-admin" | "tenant-admin";
+  /** Old unbound grants are rejected; retained only to decode pre-upgrade payloads. */
   legacy?: boolean;
+  sessionId?: string;
+  editTokenHash?: string;
   operator?: string;
 }
 export async function mintScopedPreviewKey(

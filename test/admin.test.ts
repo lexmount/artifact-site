@@ -194,7 +194,7 @@ describe("taking a site down", () => {
 
     const up = await PATCH_SITE(req(`/api/admin/sites/${site.slug}`, { method: "PATCH", headers: asToken, body: { takenDown: false } }), params({ slug: site.slug }));
     expect(up.status).toBe(200);
-    expect((await SITE_GET(req(`/api/sites/${site.slug}`), params({ slug: site.slug }))).status).toBe(200);
+    expect((await SITE_GET(req(`/api/sites/${site.slug}`), params({ slug: site.slug }))).status).toBe(403);
     expect((await listSites()).some((s) => s.slug === site.slug)).toBe(true);
     expect((await listAdminLog({ targetId: site.id })).map((e) => e.action)).toEqual(["site.restore", "site.take_down"]);
   });
@@ -216,7 +216,7 @@ describe("an administrator may read any site — on the record", () => {
     const { site } = await createSite({ mode: "paste", html: "<title>P</title><body>secret</body>" }, { ownerId: owner.user.id });
     await updateSiteSharing(site.id, "private", "owner");
     expect((await SITE_GET(req(`/api/sites/${site.slug}`, { headers: { cookie: member.cookie } }), params({ slug: site.slug }))).status).toBe(404);
-    expect((await SITE_GET(req(`/api/sites/${site.slug}`, { headers: { cookie: admin.cookie } }), params({ slug: site.slug }))).status).toBe(200);
+    expect((await SITE_GET(req(`/api/sites/${site.slug}`, { headers: { cookie: admin.cookie } }), params({ slug: site.slug }))).status).toBe(403);
     expect((await PREVIEW(req(`/api/preview/${site.slug}`, { headers: { cookie: admin.cookie } }), params({ slug: site.slug }))).status).toBe(200);
     expect(await readAccess(req(`/s/${site.slug}`, { headers: { cookie: admin.cookie } }), (await getSiteBySlug(site.slug))!)).toBe("admin");
     expect(await readAccess(req(`/s/${site.slug}`, { headers: { cookie: owner.cookie } }), (await getSiteBySlug(site.slug))!)).toBe("capability");
@@ -242,7 +242,7 @@ describe("an administrator may read any site — on the record", () => {
 
     // The administrator: the page, then the API and the preview (page + assets in real life) — one row.
     await open(admin.cookie);
-    expect((await SITE_GET(req(`/api/sites/${site.slug}`, { headers: { cookie: admin.cookie } }), params({ slug: site.slug }))).status).toBe(200);
+    expect((await SITE_GET(req(`/api/sites/${site.slug}`, { headers: { cookie: admin.cookie } }), params({ slug: site.slug }))).status).toBe(403);
     expect((await PREVIEW(req(`/api/preview/${site.slug}`, { headers: { cookie: admin.cookie } }), params({ slug: site.slug }))).status).toBe(200);
     expect((await VERSIONS(req(`/api/sites/${site.slug}/versions`, { headers: { cookie: admin.cookie } }), params({ slug: site.slug }))).status).toBe(200);
     const log = await listAdminLog({ targetId: site.id });

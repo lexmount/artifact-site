@@ -95,8 +95,8 @@ test: ## Unit tests (SQLite-backed; no external services needed)
 
 test-pg: ## Run the integration tests against a real Postgres (throwaway container, removed afterwards)
 	@set -e; name=artifact-site-testpg-$$$$; port=$$((20000 + RANDOM % 20000)); \
-	  docker run -d --rm --name $$name -e POSTGRES_USER=t -e POSTGRES_PASSWORD=t -e POSTGRES_DB=t -p 127.0.0.1:$$port:5432 $$($(DEPLOY)/env-get.sh POSTGRES_IMAGE postgres:18-alpine) >/dev/null; \
+	  docker run -d --rm --tmpfs /var/lib/postgresql --name $$name -e POSTGRES_USER=t -e POSTGRES_PASSWORD=t -e POSTGRES_DB=t -p 127.0.0.1:$$port:5432 $$($(DEPLOY)/env-get.sh POSTGRES_IMAGE postgres:18-alpine) >/dev/null; \
 	  trap "docker stop $$name >/dev/null" EXIT; \
 	  for i in $$(seq 1 30); do docker exec $$name pg_isready -U t -d t >/dev/null 2>&1 && break; sleep 1; done; \
 	  ARTIFACT_DATABASE_URL=postgres://t:t@127.0.0.1:$$port/t?sslmode=disable npx vitest run test/db-postgres.integration.test.ts; \
-	  ARTIFACT_DB_DRIVER=postgres ARTIFACT_DATABASE_URL=postgres://t:t@127.0.0.1:$$port/t?sslmode=disable npx vitest run test/admin.test.ts test/quota.test.ts test/settings.test.ts test/site-text.test.ts test/rbac.test.ts
+	  ARTIFACT_DB_DRIVER=postgres ARTIFACT_DATABASE_URL=postgres://t:t@127.0.0.1:$$port/t?sslmode=disable npx vitest run test/admin.test.ts test/quota.test.ts test/settings.test.ts test/site-text.test.ts test/rbac.test.ts test/rbac-convergence.test.ts

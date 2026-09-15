@@ -70,7 +70,7 @@ describe("fork — \"Save as new site\" duplicates into an independent site", ()
 
   it("POST /api/sites/:slug/fork → { slug, url, title, kind } for a NEW slug; unknown → 404", async () => {
     const source = await createSite({ mode: "paste", html: "<title>Route</title><body>x</body>" });
-    const res = await forkPOST(new Request("http://x/", { method: "POST" }), params(source.site.slug));
+    const res = await forkPOST(new Request("http://x/", { method: "POST",headers:{"x-edit-token":source.site.editToken} }), params(source.site.slug));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.slug).toBeTruthy();
@@ -79,7 +79,7 @@ describe("fork — \"Save as new site\" duplicates into an independent site", ()
     expect(body.title).toBe("Route (copy)");
     expect(body.kind).toBe("single");
 
-    const missing = await forkPOST(new Request("http://x/", { method: "POST" }), params("nope"));
+    const missing = await forkPOST(new Request("http://x/", { method: "POST",headers:{"x-edit-token":source.site.editToken} }), params("nope"));
     expect(missing.status).toBe(404);
   });
 });
@@ -140,7 +140,7 @@ describe("fork ownership — the copy belongs to whoever forked it", () => {
     const source = await sourceSite();
     const { user, cookieHeader } = await signIn("forker");
 
-    const res = await forkPOST(forkReq(source.slug, { cookie: cookieHeader }), params(source.slug));
+    const res = await forkPOST(forkReq(source.slug, { "x-edit-token":source.editToken, cookie: cookieHeader }), params(source.slug));
     expect(res.status).toBe(200);
     const { slug } = await res.json();
 
@@ -169,7 +169,7 @@ describe("fork ownership — the copy belongs to whoever forked it", () => {
     const { user: owner } = await signIn("source-owner");
     const { user: stranger, cookieHeader } = await signIn("stranger");
 
-    const res = await forkPOST(forkReq(source.slug, { cookie: cookieHeader }), params(source.slug));
+    const res = await forkPOST(forkReq(source.slug, { "x-edit-token":source.editToken, cookie: cookieHeader }), params(source.slug));
     const { slug } = await res.json();
     const copy = (await getSiteBySlug(slug))!;
     expect(copy.ownerId).toBe(stranger.id);
@@ -180,7 +180,7 @@ describe("fork ownership — the copy belongs to whoever forked it", () => {
     const source = await sourceSite("<title>Anon</title><body>x</body>");
 
     const res = await forkPOST(
-      forkReq(source.slug, { cookie: "__Host-ah_anon=anon_browser_1" }), params(source.slug),
+      forkReq(source.slug, { "x-edit-token":source.editToken, cookie: "__Host-ah_anon=anon_browser_1" }), params(source.slug),
     );
     expect(res.status).toBe(200);
     const { slug } = await res.json();
@@ -199,7 +199,7 @@ describe("fork ownership — the copy belongs to whoever forked it", () => {
 
   it("stamps the id it just minted when the forker has no cookie yet, and hands it back", async () => {
     const source = await sourceSite("<title>Fresh</title><body>x</body>");
-    const res = await forkPOST(forkReq(source.slug), params(source.slug));
+    const res = await forkPOST(forkReq(source.slug,{"x-edit-token":source.editToken}), params(source.slug));
     const { slug } = await res.json();
 
     const minted = /__Host-ah_anon=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1];
@@ -215,7 +215,7 @@ describe("fork ownership — the copy belongs to whoever forked it", () => {
   it("attributes the fork row to the real actor, matching what POST /api/sites records", async () => {
     const source = await sourceSite("<title>Trail</title><body>x</body>");
 
-    const anonRes = await forkPOST(forkReq(source.slug), params(source.slug));
+    const anonRes = await forkPOST(forkReq(source.slug,{"x-edit-token":source.editToken}), params(source.slug));
     const anonCopy = (await getSiteBySlug((await anonRes.json()).slug))!;
     const [anonRow] = await listAudit(anonCopy.id);
     expect(anonRow.action).toBe("fork");
@@ -224,7 +224,7 @@ describe("fork ownership — the copy belongs to whoever forked it", () => {
     expect(anonRow.actorUserId).toBeNull();
 
     const { user, cookieHeader } = await signIn("trail-user");
-    const userRes = await forkPOST(forkReq(source.slug, { cookie: cookieHeader }), params(source.slug));
+    const userRes = await forkPOST(forkReq(source.slug, { "x-edit-token":source.editToken, cookie: cookieHeader }), params(source.slug));
     const userCopy = (await getSiteBySlug((await userRes.json()).slug))!;
     const [userRow] = await listAudit(userCopy.id);
     expect(userRow.editorKind).toBe("user");

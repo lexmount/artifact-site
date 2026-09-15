@@ -1,3 +1,4 @@
+import { assertMutationOrigin } from "@/lib/request-auth";
 import { creationTenant } from "@/lib/rbac-access";
 // POST /api/uploads — open a chunked upload session.
 //
@@ -13,8 +14,8 @@ import { createUploadSession, ownerKeyFor, sweepExpiredSessions } from "@/lib/up
 import { getSiteView } from "@/lib/sites";
 import { requireActor } from "@/lib/authz";
 import { ensureAnonId } from "@/lib/anon";
-import { assertCanCreate, assertPresentedBearerAlive, AuthError } from "@/lib/auth";
-import { csrfSafe, resolveSession } from "@/lib/session";
+import { assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
+import { resolveSession } from "@/lib/session";
 import { errorResponse, json } from "../_util";
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -37,14 +38,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Uploading a new version to an existing site needs the same tier of permission as /edit; creating a new site follows the deployment create policy.
       const view = await getSiteView(body.slug);
       if (!view) return json({ error: "site not found" }, 404);
-      const { viewer } = await requireActor(request, view.site, "content");
-      // Same CSRF rule as the one-shot /versions route: an Origin is demanded only when authorization
-      // rode credentials the browser attached by itself. Opening a session for a NEW site stays
-      // ungated, like POST /api/sites — it rides nobody's identity.
-      const ambientlyAuthed = !viewer.editToken && !viewer.isAdmin;
-      if (ambientlyAuthed && !csrfSafe(request)) throw new AuthError("Cross-site request rejected");
+      await requireActor(request, view.site, "content");
+      // Every cookie-authenticated upload step uses the same origin check.
+      await assertMutationOrigin(request, view.site);
       session = await createUploadSession({ siteId: view.site.id, targetSlug: body.slug, title: body.title, ownerKey });
     } else {
+      await assertMutationOrigin(request);
       await assertCanCreate(request);
       session = await createUploadSession({ tenantId: await creationTenant((await resolveSession(request))?.userId ?? null,request.headers.get("x-artifact-tenant") || undefined), title: body.title, ownerKey });
     }

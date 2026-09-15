@@ -611,19 +611,21 @@ describe("GET /api/sites/:slug/text", () => {
     const owner = await user();
     const { site } = await createSite({ mode: "folder", files: folderFiles({ "index.html": page("App", "<p>ui</p>"), "app.js": "console.log('hi')", "logo.png": "\x89PNG" }) }, { ownerId: owner });
     await updateSiteSharing(site.id, "public", "owner");
-    const js = (await (await read(site.slug, {}, "?file=app.js")).json()) as { text: string; file: string };
+    const credentials = await bearerFor(owner);
+    expect((await read(site.slug, {}, "?file=app.js")).status).toBe(403);
+    const js = (await (await read(site.slug, credentials, "?file=app.js")).json()) as { text: string; file: string };
     expect(js).toMatchObject({ file: "app.js", text: "console.log('hi')" });
-    expect((await read(site.slug, {}, "?file=logo.png")).status).toBe(415);
+    expect((await read(site.slug, credentials, "?file=logo.png")).status).toBe(415);
     // Over the 2 MB cap: refused from the range read's total, never read whole.
     const storage = getStorage();
     const big = await createSite({ mode: "folder", files: folderFiles({ "index.html": page("Big", "<p>x</p>"), "data.csv": "a,b\n".repeat(600_000) }) }, { ownerId: owner });
     await updateSiteSharing(big.site.id, "public", "owner");
     const readSpy = vi.spyOn(storage, "read");
     try {
-      expect((await read(big.site.slug, {}, "?file=data.csv")).status).toBe(413);
+      expect((await read(big.site.slug, credentials, "?file=data.csv")).status).toBe(413);
       expect(readSpy).not.toHaveBeenCalled();
     } finally { readSpy.mockRestore(); }
-    expect((await read(site.slug, {}, "?file=missing.txt")).status).toBe(404);
-    expect((await read(site.slug, {}, "?file=../index.html")).status).toBe(404);
+    expect((await read(site.slug, credentials, "?file=missing.txt")).status).toBe(404);
+    expect((await read(site.slug, credentials, "?file=../index.html")).status).toBe(404);
   });
 });

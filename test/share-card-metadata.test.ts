@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { closeDbForTests } from "@/lib/db";
 import { createSite } from "@/lib/sites";
 import { extractDescription } from "@/lib/upload";
-import { platformCopy as rootMetadata } from "@/app/layout";
+import { platformCopy as rootMetadata } from "@/lib/platform-copy";
 import { generateMetadata } from "@/app/s/[slug]/page";
 
 // generateMetadata resolves this deployment's origin, which needs a request scope Next only provides
