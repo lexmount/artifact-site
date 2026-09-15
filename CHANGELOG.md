@@ -7,6 +7,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ### Added
 
+- README in 简体中文, 日本語, Deutsch, Français and Español under `docs/`, with a banner that
+  follows GitHub's colour scheme.
 - **OAuth for MCP clients.** ChatGPT, Claude and any client that implements MCP authorization
   can connect to `/mcp` by signing in instead of pasting a token: this server is now its own
   OAuth 2.1 authorization server — authorization code with PKCE (S256), refresh tokens with
