@@ -1,4 +1,4 @@
-import { canReadVersion, requestShareAccess } from "@/lib/share";
+import { canReadSite, canReadVersion, requestShareAccess } from "@/lib/share";
 // Editor route /s/[slug]/edit — reads a version's source off disk (there is no raw-file API; the
 // server component reads the immutable version tree directly) and hands it to the client Editor.
 // Single sites edit the whole entry doc; folder sites pick one text file to edit.
@@ -43,7 +43,8 @@ async function readText(siteId: string, versionId: string, relpath: string): Pro
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
   const [view, t] = await Promise.all([getSiteView(slug), getT()]);
-  return { title: view ? t("Edit {title} — artifact-site", { title: view.site.title }) : t("Site not found — artifact-site") };
+  const readable = view && await canReadSite(requestFromHeaders(await headers(), `/s/${slug}/edit`), view.site);
+  return { title: readable ? t("Edit {title} — artifact-site", { title: view.site.title }) : t("Site not found — artifact-site"), description: null };
 }
 
 export default async function EditorPage({ params, searchParams }: {

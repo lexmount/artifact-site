@@ -145,17 +145,18 @@ curl -sS -X POST "$BASE/api/sites" \
 
 The site belongs to the user from birth, later changes use the same token, and **no site-level credential needs to be stored**.
 
-Anonymous publishing (when the user declines to bind): creating a site needs no credential, but the response sets an anonymous identity cookie, **the only credential that can modify this site afterwards**; lose it and the site can never be changed again (see section 2). With curl, save it with `-c ah-cookies.txt`.
+Anonymous publishing (when the user declines to bind): creating a site needs no credential, but the response sets an anonymous identity cookie, a credential that can manage this anonymous site, subject to the anonymous policy. The returned anonymous management token is also valid until ownership is assigned (see section 2). With curl, save it with `-c ah-cookies.txt`.
 
 Quotes and newlines in the HTML must be JSON-escaped; **generate `body.json` with a script, do not build the string by hand**.
 
-The response has at least these 6 fields:
+Account-owned creation returns:
 
 ```json
 {"slug":"k4wey6sCyFcm","url":"/s/k4wey6sCyFcm","title":"Quarterly report",
- "kind":"single","editToken":"…","claimToken":"…"}
+ "kind":"single"}
 ```
 
+- Anonymous creation additionally returns `editToken`; owned sites return no site-level token or claim receipt. A management token is never proof of ownership.
 - `url` is a **relative path**; build the link yourself: `$BASE` + `url`
 - `kind` decides how later changes work (see section 2): `paste`/HTML `file` → `single`, `folder`/`zip` → `folder`, document `file` → `document` (**not editable online**; an update = re-upload, see section 3)
 - There is no `versionId` field (that one is in the edit response)
@@ -227,10 +228,10 @@ The conclusions first (the two cookie rows are the most counter-intuitive):
 | **The publish token** (`Bearer $TOKEN`, the site belongs to this user) | ✅ No `Origin` needed, no cookie needed |
 | The cookie from creation **+ an `Origin` request header** | ✅ |
 | The cookie from creation, but no `Origin` | ❌ 401 |
-| Only the `editToken` | ⚠️ **403** on deployments with ownership enforcement on |
+| Exact anonymous `editToken` in `X-Edit-Token` | ✅ Only while unowned in the anonymous tenant and anonymous editing is enabled |
 | Nothing at all | ❌ 403 |
 
-`editToken` is the old mechanism. Once a deployment turns on ownership enforcement (`ARTIFACT_ENFORCE_OWNERSHIP=on`, the recommended setting wherever sign-in exists), carrying it still gets a 403.
+RBAC is always enforced. Account-owned sites ignore `editToken`; use the existing personal/MCP OAuth identity and site membership or an editable share. Query/cookie tokens require `Origin`; a validated `X-Edit-Token` header does not.
 
 **Changing content** (produces a new immutable version; old versions can still be rolled back to). The shape of the request body is decided by `kind`; the wrong shape is a 400. **`kind=document` does not use `/edit`** (that is a 400) — re-upload the whole file to `/versions`, see below:
 
@@ -253,15 +254,11 @@ curl -sS -H "authorization: Bearer $TOKEN" \
   -F mode=file -F 'file=@quarterly-report-v2.pptx'
 ```
 
-The same usage applies to: rename `PATCH /api/sites/<slug>` `{"title":"…"}`, delete `DELETE /api/sites/<slug>`, roll back `POST /api/sites/<slug>/rollback` `{"versionId":"…"}`, save a copy `POST /api/sites/<slug>/fork`. A delete is soft: the files are kept for a retention window (30 days by default) and an administrator can restore the site. **Cookie-based mutating requests must carry `Origin`** (leaving it out is always a 401); the token form does not need it. The token can only change sites **owned by this user** — changing someone else's site or an anonymous site is still a 403; do not treat it as a master key.
+The same usage applies to: rename `PATCH /api/sites/<slug>` `{"title":"…"}`, delete `DELETE /api/sites/<slug>`, roll back `POST /api/sites/<slug>/rollback` `{"versionId":"…"}`, save a copy `POST /api/sites/<slug>/fork`. A delete is soft: the files are kept for a retention window (30 days by default) and an administrator can restore the site. **Cookie-based mutating requests must carry `Origin`** (leaving it out is always a 401); the token form does not need it. The token acts with this user's current site roles or editable share access; signing in alone grants no edit permission.
 
-Read-only calls need no credential: `GET /api/sites/<slug>`, `GET /api/sites/<slug>/versions`.
+Rendered preview and extracted text follow read visibility. `GET /api/sites/<slug>`, `text?file=`, export and fork expose source and require editor-or-higher access. History and fixed-version requests remain scoped to the exact site/share. Supply `X-Artifact-Share` when acting through a share.
 
-**When the original cookie is unavailable**, do not try to work around it — publish a new site and give the user the new link.
-
-⚠️ Stop saying "the old link still works": on a deployment where new sites default to private, once the cookie is lost that site **cannot be opened by anyone**,
-including you and the user, and `editToken` cannot rescue it either (on deployments with ownership enforcement it does not even grant read access). Share links already sent out
-keep working, but you can never change it or revoke it again. So **the creation response and the cookie file must be saved on the spot**. `POST /api/sites/<slug>/fork` can also copy it into a new site that you own (the cookie form likewise needs `-b` + `Origin`).
+If an anonymous creation cookie is lost, the saved management token may still manage an unowned anonymous site. If both are lost, ask an administrator to assign ownership; do not promise recovery through an old share link. Existing share links retain their own permissions and revocation rules.
 
 **None of this trouble exists once an identity is bound**: the token lives in `~/.config/artifact-site/tokens/<host>` (or `ARTIFACT_SITE_TOKEN`), stays valid across sessions for a long time, and a site owned by the user can be changed at any time. So prefer the device authorisation of section 1; the cookie is only the fallback when the user declines to bind.
 
@@ -401,7 +398,7 @@ The response body is JSON `{"error":"…"}`. **Read the message before deciding*
 |---|---|
 | 400 | The most common, with many causes: wrong mode/fields, no entry HTML found, unsafe path (`node_modules`, `.git`, dot-leading segment), corrupt zip. **Limit violations can land here too** — the messages are `site too large` / `too many files` / `file too large`. Fix according to the message, do not retry. |
 | 401 | The cookie form without `Origin` (or a value differing from `$BASE`); add `-H "origin: $BASE"`. A 401 in the token form = the token was not recognised (check that `Bearer ahp_…` is complete) **or has been revoked** — follow the error message and walk the user through the device authorisation again; do not sneak past with an anonymous publish (the site would not belong to the user). |
-| 403 | No permission to change: wrong cookie, or only an `editToken` on a deployment with ownership enforcement. See section 2. |
+| 403 | No permission to change: wrong cookie, insufficient site role, or an `editToken` on an account-owned site. See section 2. |
 | 413 | **JSON body** = the app refused an inline request body exceeding `ARTIFACT_INLINE_UPLOAD_MAX_BYTES` (default 24 MiB), checked against both Content-Length and actual bytes read; **HTML error page** = the gateway refused it (the request never reached the app; the operator needs to raise the gateway's request body limit). |
 | 429 | Rate limited. **There is no `Retry-After` in the response**; back off and retry on your own. |
 | 5xx | Retry once; on repeated failure give the user the status code and response body instead of retrying over and over. |
@@ -440,19 +437,9 @@ Do not paste the `editToken` into the conversation body — it is equivalent to 
 
 **A site published with a personal token is under that user's account from birth; skip this section.** Anonymous publications, operator-token publications and historical unowned sites may need ownership assignment or transfer — ask proactively when delivering: "Do you want to attach this site to your account?" If not, stop here; if yes, use the creating session to transfer ownership, or ask an administrator to assign an unowned site as described below. **Do not improvise with "fork a copy and delete the old site"**: a fork copies only the current version, the history is cut off, the slug changes, and every link already sent out becomes invalid.
 
-**If you still have the creating session: transfer to the user’s account**
+**Claim from the creating browser in Workspaces.** Sign in there, select an active destination tenant, then explicitly claim the anonymous artifacts. This uses the original anonymous cookie plus the account session; neither a token nor a localStorage key is ownership proof. If the creating cookie is unavailable, ask an administrator to assign the unowned site.
 
-```bash
-curl -sS -b ah-cookies.txt -H "origin: $BASE" \
-  -X POST "$BASE/api/sites/<slug>/ownership" \
-  -H 'content-type: application/json' \
-  -d '{"email":"login email of the user on the platform"}'
-```
-
-- **Read the email back to confirm it** — a transfer hands over control, and if it goes to the wrong person you no longer have the right to transfer it back.
-- 404 (`user_not_found`) = this email has never logged in to the platform (or the email is unverified). Have the user log in at `$BASE` once, then re-run the same command.
-- **Do it after everything else is finished**: on a deployment with ownership enforcement, the moment the transfer takes effect your cookie and `editToken` can no longer touch this site — finish the changes, let the user accept them, and transfer last.
-- Success returns `{"ok":true,"ownerId":"…"}`. The delivery checklist is then shorter: give the link and the `slug`; the credential file is void after the transfer; tell the user the site is in their "My sites" and further changes are made by the user in the page editor.
+An account owner can transfer an already-owned site through `POST /api/sites/<slug>/ownership` with `{"email":"verified account email"}`. The destination must be an active member of the same tenant. Transfer retires anonymous tokens without changing the slug, versions, visibility or shares. Disown is disabled (`410`).
 
 Open claiming by site address is disabled. Do not send `/me#claim=…` links or call
 `POST /api/sites/:slug/claim` (410). Personal-token publications already belong to that user.

@@ -54,8 +54,8 @@ describe("the editor header is the only toolbar", () => {
     expect(right).toContain('className="ve-secondary" type="button" onClick={enterVisual}');
     const menu = block(right, "<MoreMenu", "</MoreMenu>");
     expect(menu).toContain('label={t("More")} iconOnly');
-    for (const item of ['{t("Open in new tab")}', '{t("Share editable link")}', '{t("Save as new site")}', '{t("Switch version")}']) expect(menu).toContain(item);
-    expect(menu.match(/role="menuitem"/g)?.length).toBe(4);
+    for (const item of ['{t("Open in new tab")}', '{t("Save as new site")}', '{t("Switch version")}']) expect(menu).toContain(item);
+    expect(menu.match(/role="menuitem"/g)?.length).toBe(3);
     expect(header).not.toContain('className="btn sm ghost"'); // nothing in the bar outside the menu but the two designed buttons
   });
 

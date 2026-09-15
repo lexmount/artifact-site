@@ -316,6 +316,9 @@ export interface InsertVersionInput { id: string; siteId: string; entry: string;
 
 /** An audit row to write. `createdAt` is stamped inside the transaction so it matches the version. */
 export interface InsertAuditInput {
+  /** Request-local proof; never persisted or returned by the store. */
+  authorizationRequest?: Request;
+  sourceSiteId?: string;
   id: string;
   siteId: string;
   versionId: string | null;
@@ -701,11 +704,15 @@ export async function closeDbForTests(): Promise<void> {
 }
 
 // --- delegating API (same names as before, now async) ------------------------
+// Lock-only wrappers below deliberately call store methods on their own connection.
+// They serialize revocation with publication, but do not make those autocommit writes
+// atomic with the surrounding transaction. Atomic multi-statement writes must use q.
 
 export async function insertSite(input: InsertSiteInput): Promise<void> {
   return (await getStore()).insertSite(input);
 }
 export async function insertSiteWithVersion(site: InsertSiteInput, version: InsertVersionInput, audit?: InsertAuditInput): Promise<void> {
+  if (audit?.authorizationRequest) return (await import("@/lib/authorized-commit")).commitAuthorizedCreation(site, version, audit);
   return (await getStore()).insertSiteWithVersion(site, version, audit);
 }
 // The three wrappers below are every door through which a site's CURRENT version can change
@@ -713,7 +720,9 @@ export async function insertSiteWithVersion(site: InsertSiteInput, version: Inse
 // after the commit reports success, never inside its failure story — is what lets an open viewer
 // page learn "this artifact just moved" without any writer having to remember to say so.
 export async function addVersionAsCurrent(siteId: string, version: InsertVersionInput, audit?: InsertAuditInput): Promise<boolean> {
-  const ok = await (await getStore()).addVersionAsCurrent(siteId, version, audit);
+  const ok = audit?.authorizationRequest
+    ? (await (await import("@/lib/authorized-commit")).commitAuthorizedVersion(siteId, version, audit)) === "applied"
+    : await (await getStore()).addVersionAsCurrent(siteId, version, audit);
   if (ok) notifySiteVersion(siteId, version.id);
   return ok;
 }
@@ -723,7 +732,9 @@ export async function addVersionAsCurrentIfCurrentIs(
   version: InsertVersionInput,
   audit?: InsertAuditInput,
 ): Promise<VersionCommit> {
-  const commit = await (await getStore()).addVersionAsCurrentIfCurrentIs(siteId, expectedCurrentVersionId, version, audit);
+  const commit = audit?.authorizationRequest
+    ? await (await import("@/lib/authorized-commit")).commitAuthorizedVersion(siteId, version, audit, expectedCurrentVersionId)
+    : await (await getStore()).addVersionAsCurrentIfCurrentIs(siteId, expectedCurrentVersionId, version, audit);
   if (commit === "applied") notifySiteVersion(siteId, version.id);
   return commit;
 }
@@ -747,7 +758,7 @@ export async function updateSiteTitle(id: string, title: string): Promise<void> 
   return (await getStore()).updateSiteTitle(id, title);
 }
 export async function setEditToken(id: string, token: string): Promise<void> {
-  return (await getStore()).setEditToken(id, token);
+  return rbacTransaction(async () => (await getStore()).setEditToken(id, token));
 }
 export async function softDeleteSite(id: string): Promise<void> {
   return (await getStore()).softDeleteSite(id);
@@ -949,13 +960,13 @@ export async function touchSession(id: string, expiresAt: number, lastSeenAt: nu
   return (await getStore()).touchSession(id, expiresAt, lastSeenAt);
 }
 export async function revokeSession(id: string): Promise<void> {
-  return (await getStore()).revokeSession(id);
+  return rbacTransaction(async () => (await getStore()).revokeSession(id));
 }
 export async function revokeUserSessions(userId: string, exceptId: string | null = null): Promise<number> {
-  return (await getStore()).revokeUserSessions(userId, exceptId);
+  return rbacTransaction(async () => (await getStore()).revokeUserSessions(userId, exceptId));
 }
 export async function revokeSessionsByOidcSid(sid: string): Promise<number> {
-  return (await getStore()).revokeSessionsByOidcSid(sid);
+  return rbacTransaction(async () => (await getStore()).revokeSessionsByOidcSid(sid));
 }
 export async function createOidcFlow(input: CreateOidcFlowInput): Promise<void> {
   return (await getStore()).createOidcFlow(input);
@@ -1014,7 +1025,7 @@ export async function listPublishTokens(userId: string): Promise<PublishToken[]>
   return (await getStore()).listPublishTokens(userId);
 }
 export async function revokePublishToken(id: string, userId: string): Promise<boolean> {
-  return (await getStore()).revokePublishToken(id, userId);
+  return rbacTransaction(async () => (await getStore()).revokePublishToken(id, userId));
 }
 // OAuth (lib/oauth) — see the interface for the contract of each.
 export async function insertOauthClient(c: OauthClientRecord): Promise<void> { return (await getStore()).insertOauthClient(c); }
@@ -1035,15 +1046,15 @@ export async function touchOauthToken(id: string, now: number = Date.now()): Pro
 export async function consumeOauthRefreshToken(id: string, now: number = Date.now()): Promise<{ token: OauthToken; reused: boolean } | null> {
   return (await getStore()).consumeOauthRefreshToken(id, now);
 }
-export async function revokeOauthToken(id: string, now: number = Date.now()): Promise<boolean> { return (await getStore()).revokeOauthToken(id, now); }
+export async function revokeOauthToken(id: string, now: number = Date.now()): Promise<boolean> { return rbacTransaction(async () => (await getStore()).revokeOauthToken(id, now)); }
 export async function revokeOauthGrant(grantId: string, now: number = Date.now(), userId: string | null = null): Promise<number> {
-  return (await getStore()).revokeOauthGrant(grantId, now, userId);
+  return rbacTransaction(async () => (await getStore()).revokeOauthGrant(grantId, now, userId));
 }
 export async function revokeOauthGrantsForClient(userId: string, clientId: string, now: number, exceptGrantId: string): Promise<number> {
-  return (await getStore()).revokeOauthGrantsForClient(userId, clientId, now, exceptGrantId);
+  return rbacTransaction(async () => (await getStore()).revokeOauthGrantsForClient(userId, clientId, now, exceptGrantId));
 }
 export async function listOauthConnections(userId: string, now: number = Date.now()): Promise<OauthConnection[]> { return (await getStore()).listOauthConnections(userId, now); }
-export async function revokeOauthTokensForUser(userId: string, now: number = Date.now()): Promise<number> { return (await getStore()).revokeOauthTokensForUser(userId, now); }
+export async function revokeOauthTokensForUser(userId: string, now: number = Date.now()): Promise<number> { return rbacTransaction(async () => (await getStore()).revokeOauthTokensForUser(userId, now)); }
 export async function pruneOauth(now: number = Date.now()): Promise<number> { return (await getStore()).pruneOauth(now); }
 export async function claimSiteAudited(siteId: string, ownerId: string, audit: InsertAuditInput, adminLog?: AdminLogEntry): Promise<boolean> {
   return (await getStore()).claimSiteAudited(siteId, ownerId, audit, adminLog);
@@ -1142,13 +1153,13 @@ export function likeContains(q: string): string {
 
 // --- administration wrappers --------------------------------------------------
 export async function setUserDisabled(id: string, at: number | null, reason: string | null): Promise<boolean> {
-  return (await getStore()).setUserDisabled(id, at, reason);
+  return rbacTransaction(async () => (await getStore()).setUserDisabled(id, at, reason));
 }
 export async function revokePublishTokensForUser(userId: string): Promise<number> {
-  return (await getStore()).revokePublishTokensForUser(userId);
+  return rbacTransaction(async () => (await getStore()).revokePublishTokensForUser(userId));
 }
 export async function setSiteTakenDown(id: string, at: number | null, reason: string | null): Promise<boolean> {
-  return (await getStore()).setSiteTakenDown(id, at, reason);
+  return rbacTransaction(async () => (await getStore()).setSiteTakenDown(id, at, reason));
 }
 export async function restoreDeletedSite(id: string): Promise<boolean> {
   return (await getStore()).restoreDeletedSite(id);

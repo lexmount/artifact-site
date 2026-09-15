@@ -28,7 +28,7 @@ export async function POST(request: Request, context: { params: Promise<{ versio
     const { versionId } = await context.params;
     const session = await getUploadSession(versionId, await ownerKeyFor(request));
     if (!session) return json({ error: "The upload session does not exist or has expired; please start again" }, 404);
-    if (isCrossSiteForTarget(request, session)) return json({ error: CROSS_SITE_REJECTED }, 401);
+    if (await isCrossSiteForTarget(request, session)) return json({ error: CROSS_SITE_REJECTED }, 401);
     if (!session.files.length) return json({ error: "No files have been uploaded yet" }, 400);
 
     const expected = parseExpectedVersion(request);

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 // The read credential for a private site's sub-resources (carried in the URL path).
 //
 // The symptom to prevent: the artifact runs in an opaque-origin sandbox iframe, so the browser
@@ -22,7 +23,7 @@ import {
 import { GET as previewGET } from "@/app/api/preview/[slug]/[[...path]]/route";
 import type { Site } from "@/lib/types";
 
-const mintPreviewKey = (site: Site, now = Date.now()) => mintScopedPreviewKey(site, {versionId:site.currentVersionId,shareId:null,userId:null,anonOwnerHash:null,fingerprint:"",legacy:true},now);
+const mintPreviewKey = (site: Site, now = Date.now()) => mintScopedPreviewKey(site, {versionId:site.currentVersionId,shareId:null,userId:null,anonOwnerHash:null,fingerprint:"",editTokenHash:createHash("sha256").update(site.editToken).digest("hex")},now);
 const verifyPreviewKey = async (key: string, site: Site) => (await readScopedPreviewKey(key,site)) !== null;
 
 const ORIGIN = "https://x";

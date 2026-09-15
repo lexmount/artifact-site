@@ -1,3 +1,4 @@
+import { assertMutationOrigin } from "@/lib/request-auth";
 // /api/sites/:slug/versions
 //   GET   the version timeline (newest first, each flagged current). Read-only, open.
 //   POST  whole-thing re-upload → a new immutable version becomes current.
@@ -9,10 +10,8 @@
 //         "content", CSRF only for ambient (cookie) credentials.
 import type { NextResponse } from "next/server";
 import { ensureAnonId } from "@/lib/anon";
-import { AuthError } from "@/lib/auth";
 import { requireActor } from "@/lib/authz";
 import { checkRateLimit } from "@/lib/ratelimit";
-import { csrfSafe } from "@/lib/session";
 import { readableVersionFilter, canReadSite } from "@/lib/share";
 import { getSiteView, listVersions, replaceDocument, replaceSiteContent, siteUrl } from "@/lib/sites";
 import { auditRequestMeta, type AuditContext } from "@/lib/audit";
@@ -55,14 +54,14 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     if (!view) return json({ error: "site not found" }, 404);
 
     const { anonId, cookie } = ensureAnonId(request);
-    const { actor, viewer } = await requireActor(request, view.site, "content"); // same bar as editing
+    const { actor } = await requireActor(request, view.site, "content"); // same bar as editing
     // CSRF only for ambient credentials — token/Bearer callers set headers deliberately (an
     // attacker's page cannot), and demanding same-origin would 401 every non-browser client.
-    const ambientlyAuthed = !viewer.editToken && !viewer.isAdmin;
-    if (ambientlyAuthed && !csrfSafe(request)) throw new AuthError("Cross-site request rejected");
+      await assertMutationOrigin(request, view.site);
 
     const input = await parseUploadInput(request);
     const ctx: AuditContext = {
+      authorizationRequest: request,
       actor: { ...actor, anonId: actor.anonId ?? anonId },
       method: "api",
       ...auditRequestMeta(request),

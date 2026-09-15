@@ -194,6 +194,13 @@ describe("artifact-site CLI", () => {
     expect(await cli("list")).toBe(3);
   });
 
+  it("--version prints the package version and exits 0", async () => {
+    expect(await cli("--version")).toBe(0);
+    const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+    expect(out.at(-1)).toBe(pkg.version);
+    expect(pkg.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
   it("--help exits 0", async () => {
     expect(await cli("--help")).toBe(0);
     const help = out.join("\n");

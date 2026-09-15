@@ -15,7 +15,7 @@ import { flushAfterResponseForTests } from "@/lib/after-response";
 import { createSite } from "@/lib/sites";
 import { mintSession } from "@/lib/session";
 import { buildPasscodeCookie, createPasscode, createShareToken, hashPasscode, hashToken } from "@/lib/share";
-import { platformCopy as rootMetadata } from "@/app/layout";
+import { platformCopy as rootMetadata } from "@/lib/platform-copy";
 import type { Share, SharePolicy, Site } from "@/lib/types";
 
 const ORIGIN = "https://artifacts.example.net";

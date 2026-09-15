@@ -131,10 +131,14 @@ fi
 for k in ARTIFACT_MAX_BYTES ARTIFACT_MAX_FILES ARTIFACT_MAX_FILE_BYTES ARTIFACT_INLINE_UPLOAD_MAX_BYTES \
          ARTIFACT_RATE_LIMIT_BURST ARTIFACT_RATE_LIMIT_PER_MIN ARTIFACT_RATE_LIMIT_MAX_KEYS \
          ARTIFACT_S3_CACHE_BYTES ARTIFACT_CONVERT_TIMEOUT_MS ARTIFACT_CONVERT_CONCURRENCY ARTIFACT_DELETED_RETENTION_DAYS ARTIFACT_QUOTA_SITES_PER_USER ARTIFACT_QUOTA_BYTES_PER_USER \
-         ARTIFACT_QUOTA_SITES_PER_ANON ARTIFACT_QUOTA_BYTES_PER_ANON ARTIFACT_ANON_SITE_TTL_DAYS ARTIFACT_PORT POSTGRES_PORT; do
+         ARTIFACT_QUOTA_SITES_PER_ANON ARTIFACT_QUOTA_BYTES_PER_ANON ARTIFACT_ANON_SITE_TTL_DAYS ARTIFACT_AUDIT_RETENTION_DAYS ARTIFACT_PORT POSTGRES_PORT; do
   v="${!k:-}"
   if [ -n "$v" ] && ! [[ "$v" =~ ^[0-9]+$ ]]; then err "$k=$v is not a plain number. Numeric variables accept only byte counts / integers; a value like 50MB is silently ignored."; fi
 done
+
+if [[ "${ARTIFACT_AUDIT_RETENTION_DAYS:-0}" =~ ^[0-9]+$ ]] && [ "${ARTIFACT_AUDIT_RETENTION_DAYS:-0}" -gt 3650 ]; then
+  err "ARTIFACT_AUDIT_RETENTION_DAYS must be between 0 and 3650; invalid values disable audit cleanup."
+fi
 
 # ---- who may create ------------------------------------------------------------------------
 policy="${ARTIFACT_CREATE_POLICY:-}"
@@ -151,8 +155,8 @@ case "$policy" in
     if [ -n "${PUBLISH_API_TOKEN:-}" ]; then ok "create policy: token (drag-and-drop uploads in the web UI will get 401; only scripts/agents can publish)"; else err "ARTIFACT_CREATE_POLICY=token but PUBLISH_API_TOKEN is empty."; fi ;;
   *) err "ARTIFACT_CREATE_POLICY=$policy is not recognised; valid values are open / login / token." ;;
 esac
-if [ "${ARTIFACT_ENFORCE_OWNERSHIP:-}" = "on" ] && [ $oidc_ok -eq 0 ]; then
-  wrn "ARTIFACT_ENFORCE_OWNERSHIP=on but OIDC is not configured; the app ignores it and keeps the edit-token behaviour."
+if [ -n "${ARTIFACT_ENFORCE_OWNERSHIP:-}" ]; then
+  info "ARTIFACT_ENFORCE_OWNERSHIP is deprecated and ignored; RBAC is always enforced."
 fi
 if [ $oidc_ok -eq 1 ] && [ -z "$url" ]; then err "ARTIFACT_PUBLIC_URL is required when OIDC is configured; the callback URL is derived from it."; fi
 case "${ARTIFACT_DEFAULT_VISIBILITY:-}" in

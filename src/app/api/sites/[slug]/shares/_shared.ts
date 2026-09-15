@@ -33,6 +33,7 @@ export class ShareInputError extends Error {
 }
 
 export function parsePolicy(raw: unknown, fallback: SharePolicy): SharePolicy {
+  if (raw === "email") raw = "people"; // Compatibility with published CLI/MCP versions.
   if (raw === undefined || raw === null) return fallback;
   if (typeof raw !== "string" || !SHARE_POLICIES.includes(raw as SharePolicy)) {
     throw new ShareInputError(`policy must be one of ${SHARE_POLICIES.join(" / ")}`);

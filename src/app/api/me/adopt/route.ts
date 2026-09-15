@@ -1,15 +1,16 @@
+import { assertSessionCurrent } from "@/lib/authorized-commit";
 import { rbacQuery, rbacTransaction } from "@/lib/db";
 import { anonIdFromRequest } from "@/lib/anon";
 import { AuthError, EditForbiddenError } from "@/lib/auth";
 import { csrfSafe, resolveSession } from "@/lib/session";
-import { recordRbacAudit } from "@/lib/rbac-access";
+import { recordRbacAudit, tenantActive } from "@/lib/rbac-access";
 import { errorResponse, json } from "../../_util";
 export async function GET(request: Request) {
   try {
     const session = await resolveSession(request);
     if (!session) throw new AuthError("Please sign in first");
     const anonId = anonIdFromRequest(request);
-    const sites = anonId
+    const sites = anonId && await tenantActive("anonymous")
       ? await rbacQuery(
           "SELECT slug,title FROM sites WHERE anon_owner_id=$1 AND owner_id IS NULL AND tenant_id='anonymous' AND deleted_at IS NULL",
           [anonId],
@@ -34,6 +35,8 @@ export async function POST(request: Request) {
         "Use the browser that created these artifacts",
       );
     const slugs = await rbacTransaction(async (q) => {
+      await assertSessionCurrent(q, session);
+      if (!await tenantActive("anonymous")) throw new EditForbiddenError("The anonymous tenant is disabled");
       const [member] = await q(
         "SELECT m.user_id FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.tenant_id=$2 AND t.disabled_at IS NULL",
         [session.userId, body.tenantId],
@@ -43,7 +46,7 @@ export async function POST(request: Request) {
           "Active membership in the destination tenant is required",
         );
       const rows = await q(
-        "UPDATE sites SET owner_id=$1,tenant_id=$2,anon_owner_id=NULL,updated_at=$3 WHERE tenant_id='anonymous' AND anon_owner_id=$4 AND owner_id IS NULL AND deleted_at IS NULL AND taken_down_at IS NULL RETURNING id,slug",
+        "UPDATE sites SET owner_id=$1,tenant_id=$2,edit_token='',claim_token=NULL,anon_owner_id=NULL,updated_at=$3 WHERE tenant_id='anonymous' AND anon_owner_id=$4 AND owner_id IS NULL AND deleted_at IS NULL AND taken_down_at IS NULL RETURNING id,slug",
         [session.userId, body.tenantId, Date.now(), anonId],
       );
       for (const site of rows) {

@@ -1,3 +1,4 @@
+import { anonymousEditToken } from "@/lib/anonymous-access";
 // Thin publish-layer auth gate (K5) — PUBLISH_API_TOKEN unset ⇒ open (dev/tests);
 // set ⇒ every mutation route requires a Bearer token (timing-safe compare) or 401.
 import { config } from "@/lib/config";
@@ -56,7 +57,7 @@ export function editTokenFromRequest(request: Request): string {
   const header = request.headers.get("x-edit-token");
   if (header) return header.trim();
   try {
-    return new URL(request.url).searchParams.get("t")?.trim() ?? "";
+    return new URL(request.url).searchParams.get("t")?.trim() || anonymousEditToken(request);
   } catch {
     return "";
   }
@@ -78,7 +79,7 @@ export function assertAdmin(request: Request): void {
 
 /**
  * Creation gate. Anonymous creation is the product's hero flow, so `open` is the normal setting —
- * the site it produces is unowned and read-only until its creator signs in and claims it. `login`
+ * anonymous management remains subject to the anonymous policy. `login`
  * and `token` exist for deployments that need to close that door; see config.createPolicy for why
  * the default is fail-closed rather than open.
  */

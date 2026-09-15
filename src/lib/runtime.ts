@@ -77,7 +77,6 @@ export function describeRuntime(): RuntimeReport {
 
   const policy = effective.createPolicy;
   lines.push(`create policy: ${policy}; anonymous creators: ${effective.anonymousSites}; default visibility: ${effective.defaultVisibility}; ownership enforced: ${config.enforceOwnership ? "yes" : "no"} (policy values may be overridden from the console; see /admin/settings)`);
-  if (effective.anonymousSites === "read-only" && !config.enforceOwnership) warnings.push("Anonymous creators are set to read-only, but ownership enforcement is off, so the setting has no effect: set ARTIFACT_ENFORCE_OWNERSHIP=on.");
   if (policy === "open" && publicUrl) {
     warnings.push("The create policy is open: anyone who can reach the service can upload. Fine for internal use; for public deployments set ARTIFACT_CREATE_POLICY=login or token.");
   }

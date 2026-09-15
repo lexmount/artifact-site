@@ -104,7 +104,9 @@ describe("the anonymous-owner id never appears in a public response", () => {
   it("a public GET /api/sites/:slug response body does not contain the anonOwnerId value", async () => {
     const { slug, anonOwnerId } = await victimCreatesAnonymously();
 
-    const res = await itemGET(publicRead(slug), params(slug));
+    expect((await itemGET(publicRead(slug), params(slug))).status).toBe(403);
+    const token = (await getSiteBySlug(slug))!.editToken;
+    const res = await itemGET(new Request(publicRead(slug), {headers:{"x-edit-token":token}}), params(slug));
     expect(res.status).toBe(200);
     const raw = await res.text();
 

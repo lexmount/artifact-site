@@ -1,12 +1,15 @@
+import { withPermissionCommit } from "@/lib/authorized-commit";
+import { assertMutationOrigin } from "@/lib/request-auth";
 // The guest list of a `people` share. Owner-only, like everything else under /shares.
 import type { NextResponse } from "next/server";
 import { addShareGrant, getUser, getUserByVerifiedEmail, removeShareGrant } from "@/lib/db";
 import { apiAuditContext, recordSiteAudit } from "@/lib/audit";
-import { csrfSafe, resolveSession } from "@/lib/session";
-import { AuthError } from "@/lib/auth";
+import { resolveSession } from "@/lib/session";
 import { errorResponse, json } from "../../../../../_util";
 import { loadGrants, parseEmail, resolveOwnedShare, ShareInputError } from "../../_shared";
 
+// Grant store calls use autocommit under the RBAC lock; the audit is best-effort afterwards.
+// The lock serializes the permission recheck with the grant write, not their rollback.
 /**
  * Add someone. `{ userId }` names an account outright; `{ email }` is looked up first and stored as
  * an account when it resolves.
@@ -26,11 +29,11 @@ export async function POST(
   context: { params: Promise<{ slug: string; shareId: string }> },
 ): Promise<NextResponse> {
   try {
-    if (!csrfSafe(request)) throw new AuthError("Cross-site request rejected");
     const { slug, shareId } = await context.params;
     const resolved = await resolveOwnedShare(request, slug, shareId);
     if (!resolved.ok) return resolved.response;
     const { site, share, actor } = resolved;
+    await assertMutationOrigin(request, site);
 
     const body = (await request.json().catch(() => ({}))) as { email?: unknown; userId?: unknown };
     const grantedBy = (await resolveSession(request))?.userId ?? null;
@@ -42,7 +45,7 @@ export async function POST(
       // recognised as junk.
       const user = await getUser(userId);
       if (!user) return json({ error: "User not found", code: "user_not_found" }, 404);
-      await addShareGrant(share.id, { userId }, grantedBy);
+      await withPermissionCommit(request,site.id,"site.sharing.manage", async () => addShareGrant(share.id, { userId }, grantedBy));
       await recordSiteAudit(site.id, "share", apiAuditContext(request, actor));
       return json({
         status: "linked",
@@ -61,7 +64,7 @@ export async function POST(
     if (user) {
       // Store the ACCOUNT, not the address, once we know who it is: an account id survives the
       // person changing their e-mail, and it is what shareAdmits can match without a second lookup.
-      await addShareGrant(share.id, { userId: user.id }, grantedBy);
+      await withPermissionCommit(request,site.id,"site.sharing.manage", async () => addShareGrant(share.id, { userId: user.id }, grantedBy));
       await recordSiteAudit(site.id, "share", apiAuditContext(request, actor));
       return json({
         status: "linked",
@@ -69,7 +72,7 @@ export async function POST(
       }, 200);
     }
 
-    await addShareGrant(share.id, { email }, grantedBy);
+    await withPermissionCommit(request,site.id,"site.sharing.manage", async () => addShareGrant(share.id, { email }, grantedBy));
     await recordSiteAudit(site.id, "share", apiAuditContext(request, actor));
     return json({
       status: "pending",
@@ -88,11 +91,11 @@ export async function DELETE(
   context: { params: Promise<{ slug: string; shareId: string }> },
 ): Promise<NextResponse> {
   try {
-    if (!csrfSafe(request)) throw new AuthError("Cross-site request rejected");
     const { slug, shareId } = await context.params;
     const resolved = await resolveOwnedShare(request, slug, shareId);
     if (!resolved.ok) return resolved.response;
     const { site, share, actor } = resolved;
+    await assertMutationOrigin(request, site);
 
     const params = new URL(request.url).searchParams;
     const userId = params.get("userId")?.trim() || "";
@@ -101,7 +104,7 @@ export async function DELETE(
 
     // Same canonicalisation as on the way in, so an address added as "A@B.com" can be removed by
     // typing it back in any case.
-    await removeShareGrant(share.id, userId ? { userId } : { email: parseEmail(rawEmail) });
+    await withPermissionCommit(request,site.id,"site.sharing.manage", async () => removeShareGrant(share.id, userId ? { userId } : { email: parseEmail(rawEmail) }));
     await recordSiteAudit(site.id, "share", apiAuditContext(request, actor));
     return json({ ok: true, grants: await loadGrants(share.id) }, 200);
   } catch (error) {

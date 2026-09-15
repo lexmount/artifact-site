@@ -1,3 +1,8 @@
+import { requirePermission } from "@/lib/authz";
+import { getSiteView } from "@/lib/sites";
+import { assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
+import { resolveSession } from "@/lib/session";
+import { creationTenant } from "@/lib/rbac-access";
 // PUT /api/uploads/<versionId>/files/<relpath> — **stream** one file into the version.
 //
 // The request body is the file's raw bytes, not multipart: multipart has to be parsed into FormData
@@ -18,7 +23,16 @@ export async function PUT(request: Request, context: { params: Promise<{ version
     // An identity mismatch is treated as "no such session" — do not reveal to an outsider holding the versionId that it exists.
     const session = await getUploadSession(versionId, await ownerKeyFor(request));
     if (!session) return json({ error: "The upload session does not exist or has expired; please start again" }, 404);
-    if (isCrossSiteForTarget(request, session)) return json({ error: CROSS_SITE_REJECTED }, 401);
+    if (await isCrossSiteForTarget(request, session)) return json({ error: CROSS_SITE_REJECTED }, 401);
+    await assertPresentedBearerAlive(request, await resolveSession(request));
+    if (session.targetSlug) {
+      const view = await getSiteView(session.targetSlug);
+      if (!view) return json({ error: "site not found" }, 404);
+      await requirePermission(request, view.site, "site.content.edit", undefined, false);
+    } else {
+      await assertCanCreate(request);
+      await creationTenant((await resolveSession(request))?.userId ?? null, session.tenantId);
+    }
     if (!request.body) return json({ error: "The request has no body" }, 400);
 
     // Content-Length is only a pre-check, used to reject the obviously oversized before writing; the

@@ -1,3 +1,4 @@
+import { assertMutationOrigin } from "@/lib/request-auth";
 // /api/sites/:slug/edit — POST an in-browser save → a new immutable version becomes current.
 //   single site: { content }            replaces the whole entry document
 //   folder site: { path, content }      copies the prior tree, overwrites/adds one file
@@ -13,8 +14,6 @@ import { checkRateLimit } from "@/lib/ratelimit";
 import { editSite, getSiteView, siteUrl } from "@/lib/sites";
 import { auditRequestMeta, type AuditContext } from "@/lib/audit";
 import { ensureAnonId } from "@/lib/anon";
-import { AuthError } from "@/lib/auth";
-import { csrfSafe } from "@/lib/session";
 import type { EditInput } from "@/lib/types";
 import { readBodyWithinUploadLimit, errorResponse, json, parseExpectedVersion, versionConflictResponse } from "../../../_util";
 
@@ -36,19 +35,19 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     // Give an anonymous editor (e.g. a shared-link holder with no cookie yet) a persistent handle,
     // so the trail can name the same browser across edits and a later claim can join it to a user.
     const { anonId, cookie } = ensureAnonId(request);
-    const { actor, viewer } = await requireActor(request, view.site, "content"); // content edits only
+    const { actor } = await requireActor(request, view.site, "content"); // content edits only
 
     // CSRF applies only to AMBIENT credentials — a cookie the browser attaches cross-site on its
     // own. When the edit is authorized by a per-site token or the admin Bearer, the caller had to
     // set that header deliberately (an attacker's page can't), so same-origin is not required and
     // demanding it would 401 every non-browser API client. Authorization ran first, so a request
     // with no credentials at all was already refused (403) and never reaches this check.
-    const ambientlyAuthed = !viewer.editToken && !viewer.isAdmin;
-    if (ambientlyAuthed && !csrfSafe(request)) throw new AuthError("Cross-site request rejected");
+      await assertMutationOrigin(request, view.site);
 
     const { content, path, method } = editSchema.parse(await (await readBodyWithinUploadLimit(request)).json());
     const edit: EditInput = path === undefined ? { content } : { path, content };
     const ctx: AuditContext = {
+      authorizationRequest: request,
       actor: { ...actor, anonId: actor.anonId ?? anonId },
       method: method ?? "source",
       ...auditRequestMeta(request),

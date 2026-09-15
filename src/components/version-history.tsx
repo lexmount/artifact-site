@@ -1,4 +1,9 @@
 "use client";
+import { useSitePermissions } from "@/lib/site-permissions";
+import { siteFetch as fetch } from "@/lib/share-context";
+
+
+import SiteDownload from "@/components/site-download";
 
 // Version history — a right-side drawer reachable from the viewer/editor. Lazily loads
 // GET /api/sites/<slug>/versions on open and renders the immutable timeline (newest first).
@@ -29,7 +34,8 @@ export function drawerHost(doc?: { body?: HTMLElement | null } | null): HTMLElem
   return doc?.body ?? null;
 }
 
-export default function VersionHistory({ slug, editToken, onRolledBack, onOpenChange, variant = "button" }: {
+export default function VersionHistory({ slug, editToken, onRolledBack, onOpenChange, canDownload = false, variant = "button" }: {
+  canDownload?: boolean;
   slug: string; editToken?: string | null; onRolledBack?: () => void;
   /** "menu-item" renders the trigger as a row of the viewer's More menu instead of a bar button. */
   variant?: "button" | "menu-item";
@@ -38,6 +44,7 @@ export default function VersionHistory({ slug, editToken, onRolledBack, onOpenCh
 }) {
   const t = useT();
   const locale = useLocale();
+  const permissions = useSitePermissions(slug);
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<VersionInfo[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -79,7 +86,7 @@ export default function VersionHistory({ slug, editToken, onRolledBack, onOpenCh
   }, [open, onOpenChange]);
 
   async function rollback(version: VersionInfo) {
-    if (version.current || rolling) return;
+    if (!permissions?.canRollback || version.current || rolling) return;
     if (!window.confirm(t("Roll back to this version? A new version is added at the top of the history; neither the history nor the current content is lost."))) return;
     setRolling(version.id);
     setError(null);
@@ -140,6 +147,7 @@ export default function VersionHistory({ slug, editToken, onRolledBack, onOpenCh
                     <span>{countText(t, v.fileCount, "{n} file", "{n} files")}</span>
                   </div>
                   <div className="ver-row-actions">
+                    {canDownload && <SiteDownload slug={slug} versionId={v.id} editToken={editToken} menuItem={false} />}
                     <a className="btn sm ghost" href={`/api/preview/${slug}/?v=${v.id}`} target="_blank" rel="noreferrer">
                       <Eye size={13} /> {t("Preview this version")}
                     </a>
@@ -148,7 +156,7 @@ export default function VersionHistory({ slug, editToken, onRolledBack, onOpenCh
                         "why can't I click this" is precisely the question that most needs answering
                         here. */}
                     <span title={v.current ? t("This is already the current version") : undefined}>
-                      <button type="button" className="btn sm" disabled={v.current || rolling === v.id} onClick={() => rollback(v)}>
+                      <button type="button" className="btn sm" disabled={!permissions?.canRollback || v.current || rolling === v.id} onClick={() => rollback(v)}>
                         {rolling === v.id ? <Loader2 size={13} className="spin" /> : <RotateCcw size={13} />} {t("Roll back to this version")}
                       </button>
                     </span>

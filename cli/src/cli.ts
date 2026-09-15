@@ -1,6 +1,7 @@
 // `artifact-site` command line. Thin: argument parsing, output formatting, exit codes. All real
 // work is in client.ts / publish.ts / login.ts shared by all CLI commands.
 import { readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { Command, InvalidArgumentError } from "commander";
 import { ApiError, ArtifactSiteClient, type Me, type SharePolicy } from "./client.js";
 import { clearToken, readStoredConfig, readToken, resolveBaseUrl, writeStoredConfig } from "./config.js";
@@ -41,17 +42,30 @@ export class CliError extends Error {
   constructor(message: string, readonly exitCode = 1) { super(message); this.name = "CliError"; }
 }
 
-const POLICIES: SharePolicy[] = ["public", "login", "email", "passcode"];
+const POLICIES: SharePolicy[] = ["public", "login", "people", "email", "passcode"];
 function parsePolicy(v: string): SharePolicy | false {
+  if (v === "email") return "people";
   if (v === "none" || v === "false" || v === "off") return false;
   if ((POLICIES as string[]).includes(v)) return v as SharePolicy;
   throw new InvalidArgumentError(`policy must be one of ${POLICIES.join(", ")} or none`);
 }
 
+/** The package's own version, for `--version` — read from package.json so it cannot drift from what npm published. */
+function packageVersion(): string {
+  try {
+    return String(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
+  } catch {
+    return "unknown";
+  }
+}
+
 export function buildProgram(io: Io = defaultIo, makeClient: (base: string, token: string | null) => ArtifactSiteClient = (baseUrl, token) => new ArtifactSiteClient({ baseUrl, token })): Command {
   const program = new Command("artifact-site")
+    .version(packageVersion(), "-v, --version", "print the CLI version")
     .description("Manage your remote Artifact Site library of pages, reports, charts and documents: find previous work, read it, publish updates and share links.")
     .option("--base <url>", "artifact-site base URL (or ARTIFACT_SITE_URL / the stored config)")
+    .option("--tenant <id>", "destination tenant (or ARTIFACT_SITE_TENANT)")
+    .option("--share-token <token>", "share context (or ARTIFACT_SITE_SHARE_TOKEN)")
     .option("--json", "machine-readable output")
     .configureOutput({ writeOut: (s) => io.out(s.replace(/\n$/, "")), writeErr: (s) => io.err(s.replace(/\n$/, "")) })
     .exitOverride()
@@ -78,7 +92,7 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
     const b = base();
     const token = readToken(b);
     if (requireAuth && !token) throw new CliError("Not signed in: run `artifact-site login` (or set ARTIFACT_SITE_TOKEN)", 3);
-    return makeClient(b, token);
+    return makeClient(b, token).setContext({tenantId:program.opts().tenant ?? process.env.ARTIFACT_SITE_TENANT,shareToken:program.opts().shareToken ?? process.env.ARTIFACT_SITE_SHARE_TOKEN});
   };
   const emit = (data: unknown, human: () => void) => { if (json()) io.out(JSON.stringify(data, null, 2)); else human(); };
 
@@ -244,11 +258,13 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
     .description("Create a share link for a site")
     .argument("<slug>")
     .option("-p, --policy <policy>", "public | login | email | passcode", (v) => { const p = parsePolicy(v); if (!p) throw new InvalidArgumentError("policy is required"); return p; }, "public")
+    .option("--mode <mode>", "view | comment | edit", (v) => { if (!["view","comment","edit"].includes(v)) throw new InvalidArgumentError("invalid share mode"); return v; }, "view")
+    .option("--version-id <id>", "pin a view/comment link to this version")
     .option("-l, --label <label>", "a label to tell links apart")
     .option("--expires <days>", "7, 30 or 90", (v) => { const n = Number(v); if (![7, 30, 90].includes(n)) throw new InvalidArgumentError("expires must be 7, 30 or 90"); return n; })
     .option("--passcode <code>", "choose the passcode (policy passcode); omitted = generated")
-    .action(async (slug: string, opts: { policy: SharePolicy; label?: string; expires?: number; passcode?: string }) => {
-      const r = await client().createShare(slug, { policy: opts.policy, label: opts.label, expiresInDays: opts.expires, passcode: opts.passcode });
+    .action(async (slug: string, opts: { mode?: "view" | "comment" | "edit"; versionId?: string; policy: SharePolicy; label?: string; expires?: number; passcode?: string }) => {
+      const r = await client().createShare(slug, { mode: opts.mode, versionId: opts.versionId, policy: opts.policy, label: opts.label, expiresInDays: opts.expires, passcode: opts.passcode });
       emit(r, () => io.out(`${r.url}${r.passcode ? `  (passcode ${r.passcode})` : ""}`));
     });
 

@@ -688,7 +688,7 @@ export class SqliteStore implements MetadataStore {
   }
 
   async backfillEditTokens(): Promise<number> {
-    const rows = this.db.prepare("SELECT id FROM sites WHERE edit_token IS NULL OR edit_token = ''").all() as Row[];
+    const rows = this.db.prepare("SELECT id FROM sites WHERE (edit_token IS NULL OR edit_token = '') AND owner_id IS NULL AND tenant_id='anonymous'").all() as Row[];
     const stmt = this.db.prepare("UPDATE sites SET edit_token=? WHERE id=?");
     for (const row of rows) stmt.run(createEditToken(), row.id as string);
     return rows.length;
@@ -948,7 +948,7 @@ export class SqliteStore implements MetadataStore {
     const now = Date.now();
     this.db.exec("BEGIN");
     try {
-      const r = this.db.prepare("UPDATE sites SET owner_id=?, tenant_id=CASE WHEN tenant_id='anonymous' THEN 'init' ELSE tenant_id END, updated_at=? WHERE id=? AND owner_id IS NULL AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members tm JOIN users u ON u.id=tm.user_id JOIN tenants t ON t.id=tm.tenant_id WHERE tm.user_id=? AND tm.tenant_id=CASE WHEN sites.tenant_id='anonymous' THEN 'init' ELSE sites.tenant_id END AND u.disabled_at IS NULL AND t.disabled_at IS NULL)")
+      const r = this.db.prepare("UPDATE sites SET owner_id=?, edit_token='', claim_token=NULL, anon_owner_id=NULL, tenant_id=CASE WHEN tenant_id='anonymous' THEN 'init' ELSE tenant_id END, updated_at=? WHERE id=? AND owner_id IS NULL AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members tm JOIN users u ON u.id=tm.user_id JOIN tenants t ON t.id=tm.tenant_id WHERE tm.user_id=? AND tm.tenant_id=CASE WHEN sites.tenant_id='anonymous' THEN 'init' ELSE sites.tenant_id END AND u.disabled_at IS NULL AND t.disabled_at IS NULL)")
         .run(ownerId, now, siteId, ownerId);
       if (Number(r.changes ?? 0) === 0) {
         this.db.exec("ROLLBACK");
@@ -977,7 +977,7 @@ export class SqliteStore implements MetadataStore {
   // Reset edit_policy alongside the owner. Leaving 'login' on an unowned site would keep it
   // writable by every authenticated user with nobody left who can change that back — the owner
   // was the only role permitted to touch sharing settings.
-    this.db.prepare("UPDATE sites SET owner_id=NULL, edit_policy='owner', updated_at=? WHERE id=?").run(Date.now(), siteId);
+    this.db.prepare("UPDATE sites SET owner_id=NULL, edit_token='', claim_token=NULL, edit_policy='owner', updated_at=? WHERE id=?").run(Date.now(), siteId);
   }
 
   async listSitesByOwner(ownerId: string): Promise<SiteSummary[]> {

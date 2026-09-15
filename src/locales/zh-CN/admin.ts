@@ -3,6 +3,10 @@ import type { Messages } from "@/lib/i18n";
 /** The administration console (/admin, src/components/admin) and the take-down surfaces it adds
  *  to the site page, the share page and the site cards. Keys are the English source strings. */
 export const admin: Messages = {
+  "Pruned expired audit logs": "已清理过期审计日志",
+  "Audit log retention (days)": "审计日志保留天数",
+  "0 = keep forever. Applies to site, administrator and permission audit logs. Expired records are permanently deleted in maintenance batches; increasing retention cannot restore them.": "0 表示永久保留。适用于站点操作、管理员操作和权限审计日志。维护任务会分批永久删除过期记录；延长保留时间无法恢复已删除记录。",
+  "Prune expired audit logs": "清理过期审计日志",
   "Preview access key": "预览访问密钥",
   "Generated automatically and shared by all instances. The secret is never displayed.": "自动生成并由所有实例共享，密钥内容不会显示。",
   "Last generated": "上次生成时间",

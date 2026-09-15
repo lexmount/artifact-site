@@ -1,4 +1,9 @@
 "use client";
+import { siteFetch as fetch } from "@/lib/share-context";
+import { useSitePermissions } from "@/lib/site-permissions";
+
+
+import SiteDownload from "@/components/site-download";
 
 // Viewer chrome for /s/[slug]: the site runs FULL-SCREEN in a sandboxed iframe, and the chrome
 // (inline-editable title · meta · copy-link · save-as-new-site · version history · sharing · edit · device toggle ·
@@ -20,7 +25,7 @@ import AuthButton from "@/components/auth-button";
 import LockedAction from "@/components/locked-action";
 import MoreMenu from "@/components/more-menu";
 import LoginGate, { type GateAction } from "@/components/login-gate";
-import { useStoredToken, rememberEditToken, countAdoptableSites } from "@/lib/edit-token";
+import { useStoredToken, rememberEditToken } from "@/lib/edit-token";
 import { ARTIFACT_REFRESH_EVENT } from "@/components/site-version-watcher";
 import { useLocale, useT } from "@/components/locale-provider";
 import { loginHref } from "@/lib/use-auth";
@@ -84,7 +89,8 @@ export default function SiteViewer(props: {
   expiresAt?: number | null;
   canSignIn?: boolean;
 }) {
-  const { slug, kind, published, permissions } = props;
+  const { slug, kind, published } = props;
+  const permissions = useSitePermissions(slug, props.permissions)!;
   const router = useRouter();
   const t = useT();
   const locale = useLocale();
@@ -106,26 +112,14 @@ export default function SiteViewer(props: {
   const [forking, setForking] = useState(false);
   const [replacing, setReplacing] = useState(false);
   const docInput = useRef<HTMLInputElement | null>(null);
-  // Ownership: this browser owns the site iff it holds the per-site edit token (kept in localStorage
-  // at create/fork, or granted via a shared editable link). Owners get edit/rename/history/share.
+  // A local anonymous receipt is submitted to the server; it never enables UI actions by itself.
   const editToken = useStoredToken(slug);
-  const isOwner = Boolean(editToken);
-  const [gate, setGate] = useState<GateAction | null>(null);
-  const [adoptable, setAdoptable] = useState<number | null>(null);
 
-  /**
-   * Whether to offer the editor.
-   *
-   * With enforcement ON the server's flag is the whole answer, and the client must not second-guess
-   * it. With enforcement OFF the server CANNOT answer: authority is the per-site edit token, that
-   * token lives in localStorage, and the Request this page hands to describePermissions carries only
-   * cookies — so canEditContent comes back false for everyone, including the site's own author.
-   * (That is why the button vanished for owners after identity landed.) Falling back to the locally
-   * held token restores the pre-identity behaviour without weakening anything: this only decides
-   * whether a link is drawn; every mutation still presents the token and is checked server-side.
-   */
+  const [gate, setGate] = useState<GateAction | null>(null);
+
   // Document sites have no edit semantics (the wrapper page is generated, the original is binary), so the entry point is not drawn at all; the server refuses too (editSite).
-  const mayEdit = kind !== "document" && (permissions.enforced ? permissions.canEditContent : isOwner);
+  const canDownload = Boolean(permissions.canReadSource);
+  const mayEdit = kind !== "document" && permissions.canEditContent;
 
   const titleInput = useRef<HTMLInputElement | null>(null);
   // Seed the toast from the ?published flag; the effect below auto-clears whatever is shown.
@@ -205,6 +199,7 @@ export default function SiteViewer(props: {
     if (effect === "reveal") revealBar();
     else if (effect === "hide" && modeAutoHides(barMode)) scheduleHide(); // manual mode: the bar stays after the drawer closes
   }, [revealBar, scheduleHide, barMode]);
+  const onDownloadOpen = useCallback((open: boolean) => setDrawerOpen("download", open), [setDrawerOpen]);
   const onHistoryOpen = useCallback((open: boolean) => setDrawerOpen("history", open), [setDrawerOpen]);
   const onSharingOpen = useCallback((open: boolean) => setDrawerOpen("sharing", open), [setDrawerOpen]);
   const onMenuOpen = useCallback((open: boolean) => setDrawerOpen("menu", open), [setDrawerOpen]);
@@ -256,19 +251,8 @@ export default function SiteViewer(props: {
     if (editing) titleInput.current?.select();
   }, [editing]);
 
-  /** Open the gate, counting what sign-in would adopt at that moment — a site created seconds ago
-   *  must be in the number, so it is read here rather than captured at mount. */
   function openGate(action: GateAction) {
-    setAdoptable(countAdoptableSites());
     setGate(action);
-  }
-
-  // Share editable link — copy a link carrying the edit token; whoever opens it can edit this site.
-  async function shareEditable() {
-    if (!editToken) return;
-    const url = `${window.location.origin}/s/${slug}/edit?t=${editToken}`;
-    try { await navigator.clipboard.writeText(url); flash(t("Editable link copied · Anyone with this link can edit")); }
-    catch { flash(url); }
   }
 
   // Rename — inline title edit committed via PATCH /api/sites/<slug>.
@@ -327,7 +311,7 @@ export default function SiteViewer(props: {
     if (forking) return;
     setForking(true);
     try {
-      const res = await fetch(`/api/sites/${slug}/fork`, { method: "POST" });
+      const res = await fetch(`/api/sites/${slug}/fork`, { method: "POST", headers:editToken ? {"x-edit-token":editToken} : {} });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || t("Save as new site failed"));
       // We own the fork: remember its fresh edit token so we can edit the new copy.
@@ -430,7 +414,7 @@ export default function SiteViewer(props: {
           </Link>
           <div className="header-mid">
             <div className="header-title-edit">
-              {!isOwner ? (
+              {!permissions.canRename ? (
                 <span className="header-title" title={title}>{title}</span>
               ) : editing ? (
                 <input
@@ -483,19 +467,19 @@ export default function SiteViewer(props: {
             {!mayEdit && permissions.needsLogin && kind !== "document" && (
               <LockedAction label={t("Edit")} icon={<Pencil size={14} />} hint={t("Sign in required")} onOpen={() => openGate("edit")} />
             )}
-            {kind === "document" && (permissions.enforced ? permissions.canEditContent : isOwner) && (
+            {kind === "document" && permissions.canEditContent && (
               <button type="button" className="btn" onClick={() => docInput.current?.click()} disabled={replacing}
                 title={t("Re-upload the whole document: a new version is published at the same link, and earlier versions can be rolled back")}>
                 {replacing ? <Loader2 size={14} className="spin" /> : <FileUp size={14} aria-hidden="true" />} {t("Upload new version")}
               </button>
             )}
-            {permissions.canManageSharing && <SharePanel slug={slug} onOpenChange={onSharingOpen} canManageAdmins={permissions.canDelete} />}
+            {permissions.canManageSharing && <SharePanel slug={slug} onOpenChange={onSharingOpen} canManageAdmins={permissions.canManageAdmins} />}
             {!permissions.canManageSharing && permissions.needsLogin && (
               <LockedAction label={t("Sharing settings")} icon={<Share2 size={14} />} hint={t("Sign in required")} onOpen={() => openGate("share")} />
             )}
             {/* The hidden file input stays mounted here, not inside the menu: the "Upload new version" row opens it
                 and the menu closes on that click, which would unmount an input that lives in the menu. */}
-            {kind === "document" && (permissions.enforced ? permissions.canEditContent : isOwner) && (
+            {kind === "document" && permissions.canEditContent && (
               <input ref={docInput} type="file" accept=".pdf,.pptx,.ppt,.docx,.doc" hidden
                 onChange={(e) => replaceDocumentFile(e.target.files?.[0] ?? null)} />
             )}
@@ -517,17 +501,11 @@ export default function SiteViewer(props: {
                 <ExternalLink size={14} aria-hidden="true" /> {t("Open in new window")}
               </a>
               {/* Reading history needs no identity — the versions API is open, and only rollback is gated. */}
-              <VersionHistory variant="menu-item" slug={slug} editToken={editToken} onRolledBack={onRolledBack} onOpenChange={onHistoryOpen} />
-              <button type="button" role="menuitem" className="menu-item" onClick={fork} disabled={forking} title={t("Copy into a separate new site")}>
+              {canDownload && <SiteDownload slug={slug} editToken={editToken} onOpenChange={onDownloadOpen} />}
+              <VersionHistory variant="menu-item" canDownload={canDownload} slug={slug} editToken={editToken} onRolledBack={onRolledBack} onOpenChange={onHistoryOpen} />
+              <button type="button" role="menuitem" className="menu-item" onClick={fork} disabled={forking || !permissions.canReadSource} title={t("Copy into a separate new site")}>
                 {forking ? <Loader2 size={14} className="spin" /> : <Copy size={14} aria-hidden="true" />} {t("Save as new site")}
               </button>
-              {/* The broadcast edit link contradicts the ownership model — offer it only while
-                  enforcement is off, where it is still how editing actually works. */}
-              {isOwner && !permissions.enforced && kind !== "document" && (
-                <button type="button" role="menuitem" className="menu-item" onClick={shareEditable} title={t("Copy an editable link: anyone who has it can edit this site")}>
-                  <Share2 size={14} aria-hidden="true" /> {t("Share editable link")}
-                </button>
-              )}
               {/* The owner's view of the administration log: what staff did to this site, and when. */}
               {permissions.canManageSharing && <AdminActivity slug={slug} onOpenChange={onActivityOpen} />}
               <span className="menu-sep" role="separator" />
@@ -579,7 +557,6 @@ export default function SiteViewer(props: {
         <LoginGate
           action={gate}
           returnTo={gate === "edit" ? `/s/${slug}/edit` : `/s/${slug}`}
-          pendingAdoptions={adoptable}
           onClose={() => setGate(null)}
         />,
         portalHost,

@@ -18,6 +18,7 @@ const ACTION_LABELS: Record<AdminLogEntry["action"], string> = {
   "maintenance.sweep_uploads": "Swept upload sessions",
   "maintenance.reconcile": "Reconciled storage",
   "maintenance.expire_anonymous": "Expired anonymous sites",
+  "maintenance.prune_audit": "Pruned expired audit logs",
   "maintenance.backfill_text": "Backfilled search text",
   "settings.update": "Changed settings",
 };

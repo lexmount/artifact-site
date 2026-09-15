@@ -1,3 +1,6 @@
+import { getReadableView } from "@/lib/read-view";
+import { requirePermission } from "@/lib/authz";
+import { assertMutationOrigin } from "@/lib/request-auth";
 // /api/sites/:slug — the item endpoint.
 //   GET     viewer/editor data: site + current version + its file list + raw source of one file.
 //           ?file=<relpath> selects the file to return (default: the entry). Guarded read.
@@ -16,11 +19,9 @@
 import type { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActor } from "@/lib/authz";
-import { AuthError } from "@/lib/auth";
-import { csrfSafe } from "@/lib/session";
-import { canReadVersion, canReadSite } from "@/lib/share";
+
 import { deleteSite, getSiteView, publicSite, renameSite, siteUrl } from "@/lib/sites";
-import { apiAuditContext, recordSiteAudit } from "@/lib/audit";
+import { apiAuditContext } from "@/lib/audit";
 import { getStorage } from "@/lib/storage";
 import { errorResponse, json } from "../../_util";
 
@@ -29,16 +30,17 @@ const renameSchema = z.object({ title: z.string() });
 export async function GET(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
   try {
     const { slug } = await context.params;
-    const view = await getSiteView(slug);
+    const view = await getReadableView(request, slug);
     if (!view) return json({ error: "site not found" }, 404);
     // This response carries the entry file's full source, so it is a content outlet like
     // /api/preview and needs the same gate. 404 rather than 403: a private site does not confirm
     // its own existence to someone who cannot read it.
-    if (!(await canReadSite(request, view.site)) || !(await canReadVersion(request,view.site,view.version.id))) {
+    if (!view.readable) {
       // A taken-down site answers "gone" rather than hiding: the link was public and people hold it.
       if (view.site.takenDownAt) return json({ error: "This site has been taken down by an administrator", code: "taken_down" }, 410);
       return json({ error: "site not found" }, 404);
     }
+    await requirePermission(request, view.site, "site.source.export");
     const files = await getStorage().list(view.site.id, view.version.id);
 
     // Which file's source to return: an explicit ?file, else the entry.
@@ -69,13 +71,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ slug:
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    const { actor, viewer } = await requireActor(request, view.site, "manage"); // rename
+    const { actor } = await requireActor(request, view.site, "manage"); // rename
     // Authorization ran first, so a credential-less request was already refused and never gets here.
-    if (!viewer.editToken && !viewer.isAdmin && !csrfSafe(request)) throw new AuthError("Cross-site request rejected");
+    await assertMutationOrigin(request, view.site);
     const { title } = renameSchema.parse(await request.json());
-    const site = await renameSite(slug, title); // trims + validates length (throws → 400)
+    const site = await renameSite(slug, title, apiAuditContext(request, actor)); // trims + validates length (throws → 400)
     if (!site) return json({ error: "site not found" }, 404);
-    await recordSiteAudit(view.site.id, "rename", apiAuditContext(request, actor)); // best-effort, non-atomic
     return json({ slug: site.slug, title: site.title });
   } catch (error) {
     return errorResponse(error);
@@ -89,13 +90,12 @@ export async function DELETE(request: Request, context: { params: Promise<{ slug
     if (!view) return json({ error: "site not found" }, 404);
     // Delete is owner-only and never delegated: it removes the object-storage tree and is
     // effectively irreversible, unlike an edit which only appends a rollback-able version.
-    const { actor, viewer } = await requireActor(request, view.site, "owner");
-    if (!viewer.editToken && !viewer.isAdmin && !csrfSafe(request)) throw new AuthError("Cross-site request rejected");
+    const { actor } = await requireActor(request, view.site, "owner");
+    await assertMutationOrigin(request, view.site);
     // Record BEFORE the delete: this is the one irreversible action, and its site_id has no FK, so
     // the trail row survives even though the site is about to go. (Deletion is soft, but recording
     // first is the honest order for an irreversible op.)
-    await recordSiteAudit(view.site.id, "delete", apiAuditContext(request, actor));
-    const deleted = await deleteSite(slug);
+    const deleted = await deleteSite(slug, apiAuditContext(request, actor));
     if (!deleted) return json({ error: "site not found" }, 404);
     return json({ deleted: true, slug });
   } catch (error) {

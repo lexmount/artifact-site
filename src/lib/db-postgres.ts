@@ -582,7 +582,7 @@ export class PostgresStore implements MetadataStore {
       await migrateRbac(async (sql, params = []) => (await client.query(sql, [...params])).rows as Row[]);
       // Backfill edit tokens for any legacy rows (e.g. data imported from a SQLite dump). No-op on a
       // fresh DB. Done inside the lock so concurrent replicas can't double-mint.
-      const legacy = await client.query("SELECT id FROM sites WHERE edit_token IS NULL OR edit_token = ''");
+      const legacy = await client.query("SELECT id FROM sites WHERE (edit_token IS NULL OR edit_token = '') AND owner_id IS NULL AND tenant_id='anonymous'");
       for (const row of legacy.rows as Row[]) {
         await client.query("UPDATE sites SET edit_token=$1 WHERE id=$2", [createEditToken(), row.id as string]);
       }
@@ -816,7 +816,7 @@ export class PostgresStore implements MetadataStore {
   }
 
   async backfillEditTokens(): Promise<number> {
-    const { rows } = await this.pool.query("SELECT id FROM sites WHERE edit_token IS NULL OR edit_token = ''");
+    const { rows } = await this.pool.query("SELECT id FROM sites WHERE (edit_token IS NULL OR edit_token = '') AND owner_id IS NULL AND tenant_id='anonymous'");
     for (const row of rows as Row[]) {
       await this.pool.query("UPDATE sites SET edit_token=$1 WHERE id=$2", [createEditToken(), row.id as string]);
     }
@@ -1120,7 +1120,7 @@ export class PostgresStore implements MetadataStore {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(4127714)");
         const res = await client.query(
-          "UPDATE sites SET owner_id=$1, tenant_id=CASE WHEN tenant_id='anonymous' THEN 'init' ELSE tenant_id END, updated_at=$2 WHERE id=$3 AND owner_id IS NULL AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members tm JOIN users u ON u.id=tm.user_id JOIN tenants t ON t.id=tm.tenant_id WHERE tm.user_id=$1 AND tm.tenant_id=CASE WHEN sites.tenant_id='anonymous' THEN 'init' ELSE sites.tenant_id END AND u.disabled_at IS NULL AND t.disabled_at IS NULL)",
+          "UPDATE sites SET owner_id=$1, edit_token='', claim_token=NULL, anon_owner_id=NULL, tenant_id=CASE WHEN tenant_id='anonymous' THEN 'init' ELSE tenant_id END, updated_at=$2 WHERE id=$3 AND owner_id IS NULL AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members tm JOIN users u ON u.id=tm.user_id JOIN tenants t ON t.id=tm.tenant_id WHERE tm.user_id=$1 AND tm.tenant_id=CASE WHEN sites.tenant_id='anonymous' THEN 'init' ELSE sites.tenant_id END AND u.disabled_at IS NULL AND t.disabled_at IS NULL)",
           [ownerId, Date.now(), siteId]);
         if ((res.rowCount ?? 0) === 0) {
           await client.query("ROLLBACK");
@@ -1152,7 +1152,7 @@ export class PostgresStore implements MetadataStore {
   // Reset edit_policy alongside the owner. Leaving 'login' on an unowned site would keep it
   // writable by every authenticated user with nobody left who can change that back — the owner
   // was the only role permitted to touch sharing settings.
-    await this.pool.query("UPDATE sites SET owner_id=NULL, edit_policy='owner', updated_at=$1 WHERE id=$2", [Date.now(), siteId]);
+    await this.pool.query("UPDATE sites SET owner_id=NULL, edit_token='', claim_token=NULL, edit_policy='owner', updated_at=$1 WHERE id=$2", [Date.now(), siteId]);
   }
 
   async listSitesByOwner(ownerId: string): Promise<SiteSummary[]> {
@@ -1650,23 +1650,18 @@ export class PostgresStore implements MetadataStore {
   }
 
   async writeSettings(scope: string, writes: SettingWrite[], updatedBy: string | null, now: number): Promise<void> {
-    // One transaction: a batch from the console lands whole or not at all.
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    // Share the transaction lock with audit retention: a completed policy reset must
+    // never be followed by a deletion batch using the previous policy. This must not be
+    // called from inside another RBAC transaction (withRbacSlot rejects nesting). SQLite
+    // keeps its synchronous BEGIN because its operation queue already serializes writes.
+    await this.rbacTransaction(async (q) => {
       for (const w of writes) {
-        if (w.value === null) await client.query("DELETE FROM settings WHERE scope=$1 AND key=$2", [scope, w.key]);
-        else await client.query(
+        if (w.value === null) await q("DELETE FROM settings WHERE scope=$1 AND key=$2", [scope, w.key]);
+        else await q(
           "INSERT INTO settings (scope, key, value, updated_at, updated_by) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (scope, key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at, updated_by=EXCLUDED.updated_by",
           [scope, w.key, w.value, now, updatedBy]);
       }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async adminOverview(): Promise<AdminOverview> {

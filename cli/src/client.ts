@@ -6,7 +6,7 @@ import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 
 export type SiteKind = "single" | "folder" | "document";
-export type SharePolicy = "public" | "login" | "email" | "passcode";
+export type SharePolicy = "public" | "login" | "people" | "email" | "passcode";
 
 export interface CreatedSite {
   slug: string;
@@ -86,6 +86,8 @@ export class ApiError extends Error {
 }
 
 export interface ClientOptions {
+  tenantId?: string;
+  shareToken?: string;
   baseUrl: string;
   token?: string | null;
   fetch?: typeof fetch;
@@ -100,18 +102,24 @@ type Query = Record<string, string | undefined>;
 export class ArtifactSiteClient {
   readonly baseUrl: string;
   private readonly token: string | null;
+  private tenantId?: string;
+  private shareToken?: string;
   private anonCookie: string | undefined;
   private readonly fetchImpl: typeof fetch;
   private readonly retries: number;
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(opts: ClientOptions) {
+    this.tenantId = opts.tenantId;
+    this.shareToken = opts.shareToken;
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.token = opts.token ?? null;
     this.fetchImpl = opts.fetch ?? fetch;
     this.retries = opts.retries ?? 3;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
+
+  setContext(context: {tenantId?:string;shareToken?:string}): this { this.tenantId=context.tenantId; this.shareToken=context.shareToken; return this; }
 
   get authenticated(): boolean { return Boolean(this.token); }
 
@@ -198,7 +206,7 @@ export class ArtifactSiteClient {
 
   // ---- sharing -------------------------------------------------------------------------------
 
-  createShare(slug: string, opts: { policy: SharePolicy; label?: string; expiresInDays?: number; passcode?: string; allowAi?: boolean }): Promise<ShareResult> {
+  createShare(slug: string, opts: { mode?: "view" | "comment" | "edit"; versionId?: string; policy: SharePolicy; label?: string; expiresInDays?: number; passcode?: string; allowAi?: boolean }): Promise<ShareResult> {
     return this.json("POST", `/api/sites/${enc(slug)}/shares`, { body: opts });
   }
   listShares(slug: string): Promise<{ shares: ShareResult["share"][] }> { return this.json("GET", `/api/sites/${enc(slug)}/shares`); }
@@ -232,7 +240,7 @@ export class ArtifactSiteClient {
     // `Origin` is what the server's CSRF gate compares against ARTIFACT_PUBLIC_URL for callers it
     // treats as ambient (cookies, the admin token). Sending it always costs nothing and means every
     // credential form passes the gate the same way a browser tab would.
-    return { origin: this.baseUrl, ...(this.anonCookie ? { cookie: this.anonCookie } : {}), ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) };
+    return { ...(this.tenantId ? {"x-artifact-tenant":this.tenantId} : {}), ...(this.shareToken ? {"x-artifact-share":this.shareToken} : {}), origin: new URL(this.baseUrl).origin, ...(this.anonCookie ? { cookie: this.anonCookie } : {}), ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) };
   }
 
   private async request(method: string, path: string, opts: { body?: unknown; form?: FormData; raw?: Uint8Array; query?: Query } = {}): Promise<Response> {

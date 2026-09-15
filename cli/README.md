@@ -107,3 +107,14 @@ npm run build       # dist/ (the bin loads it)
 
 The fake server in `test/fake-server.ts` mirrors the API contract from `/for-agents.md`; when the
 platform changes a response shape, change it there and the tests will tell you what else moved.
+
+### RBAC context
+
+Existing saved personal tokens and login remain unchanged. Use `--tenant <id>` (or
+`ARTIFACT_SITE_TENANT`) when publishing into a tenant other than the account default.
+Use `--share-token <token>` (or `ARTIFACT_SITE_SHARE_TOKEN`) for access through a share;
+this does not grant tenant membership. `share --policy people` replaces the old `email`
+spelling, which is still accepted. `share --mode view|comment|edit --version-id <id>`
+controls the share role and optional fixed version (edit cannot be pinned).
+Source reads, export and fork require editor-or-higher access; plain report text follows
+read permissions. Public sharing creates a reader URL without changing site visibility.

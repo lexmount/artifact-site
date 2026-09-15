@@ -1,5 +1,7 @@
 "use client";
 
+import SiteDownload from "@/components/site-download";
+
 // Sites: search, filter by state, take down / restore, delete / undelete.
 import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -126,6 +128,7 @@ function SitesView() {
                           : (
                             <>
                               <Link role="menuitem" className="menu-item" href={`/s/${s.slug}`} target="_blank" rel="noreferrer"><ExternalLink size={14} aria-hidden="true" /> {t("Open")}</Link>
+                              <SiteDownload slug={s.slug} management />
                               {s.takenDownAt
                                 ? <button type="button" role="menuitem" className="menu-item" onClick={() => setAct({ kind: "restore", site: s })}>{t("Restore")}</button>
                                 : <button type="button" role="menuitem" className="menu-item danger" onClick={() => setAct({ kind: "takeDown", site: s })}>{t("Take down")}</button>}

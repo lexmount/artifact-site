@@ -1,3 +1,4 @@
+import { assertSessionCurrent } from "@/lib/authorized-commit";
 import type { NextResponse } from "next/server";
 import { toSite, getUserByVerifiedEmail, rbacQuery, rbacTransaction } from "@/lib/db";
 import { getSiteView } from "@/lib/sites";
@@ -62,6 +63,7 @@ export async function POST(
         404,
       );
     await rbacTransaction(async (q) => {
+      await assertSessionCurrent(q, session);
       const [row] = await q("SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL", [view.site.id]);
       if (!row) throw new EditForbiddenError("Site no longer exists");
       const site = toSite(row);
@@ -120,6 +122,7 @@ export async function DELETE(
     const userId = new URL(request.url).searchParams.get("userId") || "";
     if (!userId) return json({ error: "userId is required" }, 400);
     await rbacTransaction(async (q) => {
+      await assertSessionCurrent(q, session);
       const [row] = await q("SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL", [view.site.id]);
       if (!row) throw new EditForbiddenError("Site no longer exists");
       const site = toSite(row);

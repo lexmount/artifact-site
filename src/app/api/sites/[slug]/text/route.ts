@@ -1,3 +1,5 @@
+import { getReadableView } from "@/lib/read-view";
+import { requirePermission } from "@/lib/authz";
 // GET /api/sites/:slug/text — the current version as plain text, for an agent that wants to know
 // what a site says without downloading and parsing its tree. `?file=<relpath>` returns one file
 // of the tree verbatim instead (text types only). Same read gate as the site itself, so an
@@ -8,9 +10,9 @@
 import type { NextResponse } from "next/server";
 import { BadRequestError } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/ratelimit";
-import { canReadVersion, canReadSite } from "@/lib/share";
+
 import { cutText, MAX_TEXT_CHARS, siteTextOf } from "@/lib/site-text";
-import { getSiteView, siteUrl } from "@/lib/sites";
+import { siteUrl } from "@/lib/sites";
 import { getStorage } from "@/lib/storage";
 import { errorResponse, json } from "../../../_util";
 
@@ -22,13 +24,12 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
   try {
     checkRateLimit(request);
     const { slug } = await context.params;
-    const view = await getSiteView(slug);
+    const view = await getReadableView(request, slug);
     if (!view) return json({ error: "site not found" }, 404);
-    if (!(await canReadSite(request, view.site))) {
+    if (!view.readable) {
       if (view.site.takenDownAt) return json({ error: "This site has been taken down by an administrator", code: "taken_down" }, 410);
       return json({ error: "site not found" }, 404);
     }
-    if(!(await canReadVersion(request,view.site,view.version.id)))return json({error:"version not accessible"},404);
     const params = new URL(request.url).searchParams;
     const maxRaw = params.get("max_chars");
     const maxChars = maxRaw === null ? DEFAULT_MAX_CHARS : Number(maxRaw);
@@ -37,6 +38,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const file = params.get("file");
     let text: string;
     if (file !== null) {
+      await requirePermission(request, view.site, "site.source.export");
       const files = await getStorage().list(view.site.id, view.version.id);
       if (!files.includes(file)) return json({ error: `file not found: ${file}` }, 404);
       if (!TEXT_FILE.test(file)) return json({ error: "not a text file; download it from the site instead", code: "not_text" }, 415);

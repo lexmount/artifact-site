@@ -5,12 +5,30 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Enforce RBAC consistently across browser, API, CLI and MCP access. Fix title editing for account owners/admins, validate anonymous management tokens, retire owned-site tokens and disable disown without changing ownership, visibility or existing shares.
+- Recheck credentials and roles during upload staging and final publication; close CSRF token-presence bypasses, revoke derived preview grants, and protect private metadata and source/export access.
+- Preserve MCP/personal-token authentication, add tenant/share context and share mode/version controls to clients, and keep `email` as a compatible alias of the `people` share policy.
+
+
 ### Fixed
+
+- Public and unlisted artifact viewers now need editor-or-higher source-export permission to fork (Save a copy), download original files or export ZIPs. Rendered content remains readable.
 
 - Prevent concurrent RBAC operations from exhausting the PostgreSQL connection pool while
   waiting for the administration lock. Keep version access checks free of duplicate read audits.
 
 ### Added
+
+- CLI: `artifact-site --version` (and `-v`) prints the installed package's version.
+
+- Version-aware ZIP downloads in the viewer, personal site list/grid, editor, version history
+  and platform site administration. Administrative downloads require a reason and record an
+  export audit, with Unicode and multiline reasons supported. Owners and editors can export saved content after a takedown; deleted sites
+  remain unavailable. ZIPs include all saved files (including document originals), not editor drafts.
+
+- Platform-admin audit retention setting (0–3650 days, default 0 = forever) for site, admin and
+  RBAC logs, with time-budgeted maintenance cleanup, bounded transactions and a manual System action. Console settings
+  override `ARTIFACT_AUDIT_RETENTION_DAYS`; expired deletions are permanent.
 
 - Tenant-scoped RBAC with `init` and `anonymous` system tenants, tenant/site administrators,
   permanent editor memberships, independent view/comment/edit share modes and fixed-version links.

@@ -1,3 +1,4 @@
+import { assertSessionCurrent } from "@/lib/authorized-commit";
 import { rbacTransaction, rbacQuery } from "@/lib/db";
 import { requireAdminWrite } from "@/lib/admin";
 import { requireTenantManager, recordRbacAudit } from "@/lib/rbac-access";
@@ -22,6 +23,8 @@ export async function PATCH(request: Request, context: Context) {
     )
       return json({ error: "Invalid name" }, 400);
     await rbacTransaction(async (q) => {
+      await assertSessionCurrent(q, session);
+      await requireTenantManager(request,tenantId,session);
       if (body.name !== undefined)
         await q("UPDATE tenants SET name=$1 WHERE id=$2", [
           body.name.trim(),

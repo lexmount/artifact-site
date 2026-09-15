@@ -140,4 +140,75 @@ Preview grants use AES-256-GCM with a domain-separated HKDF key derived from the
 
 Production audit records live in PostgreSQL: `audit_log` records artifact mutations and their actors/version/request metadata, `admin_log` records platform management actions and administrative reads, and `rbac_audit` records tenant/permission management with tenant, actor, target, reason and timestamp. SQLite mirrors them for tests. These tables intentionally have no cascading site/user foreign keys; normal site deletion and file purging preserve the audit trail.
 
-There is currently no audit TTL, scheduled audit deletion, or configurable retention setting. API result limits (for example the latest 200 tenant audit entries) limit display only. The one-hour collapse of repeated email-administrator reads is deduplication, not retention, and is currently fixed in code. Deleted-site file retention and the 30-minute preview credential lifetime do not apply to audit records. Direct previews record access at their entry gate, without an additional `site.preview` event.
+Platform administrators configure **Administration → Settings → Audit log retention (days)** for all three audit tables. The default is **0 (keep forever)**; valid values are 0–3650 whole days. A console value is persisted in the global `settings` table and overrides `ARTIFACT_AUDIT_RETENTION_DAYS`; “Use environment” removes the override. Every change is audited. Settings-change and maintenance entries follow the same retention window as other administrator logs. Cleanup reads the current persisted value inside its deletion transaction, without the policy cache, and serializes with settings updates across replicas.
+
+The request-driven maintenance tick runs at most once an hour per process when create or search routes are used. Each tick drains expired records in batches of up to 1,000 **per table**, until no batch is full or a 20-second budget is consumed. Each batch has its own transaction, releases the RBAC lock and re-reads retention; queued policy changes can stop or adjust subsequent batches. The budget is soft: an in-flight batch finishes before stopping. Idle deployments do not run a timer; remaining backlogs resume on the next tick, so retention is a target rather than an exact expiration deadline. **Administration → System → Prune expired audit logs** runs the same budgeted job on demand (`POST /api/admin/maintenance` with `{"task":"prune-audit"}`). Only the `reconcile` maintenance task supports `dryRun: true`; all other tasks reject it before execution. Records exactly at the cutoff are retained. Increasing retention or setting it to 0 cannot recover deleted records; database backups have their own retention policy.
+
+API result limits (for example the latest 200 tenant audit entries) limit display only. The one-hour collapse of repeated email-administrator reads is deduplication, not retention, and is currently fixed in code. Deleted-site file retention and the 30-minute preview credential lifetime do not apply to audit records. Direct previews record access at their entry gate, without an additional `site.preview` event.
+
+## Unified enforcement and upgrade compatibility
+
+RBAC is always enforced. `ARTIFACT_ENFORCE_OWNERSHIP` is a deprecated, ignored
+configuration value; OIDC configuration no longer selects a different permission system.
+All authority (account, operator, explicit administrative management, anonymous management,
+and share access) resolves through the role catalog. UI actions use server-returned permissions.
+
+- An unowned site in the `anonymous` tenant accepts its creating browser cookie or its
+  exact management token, subject to the anonymous read-only policy. Neither a token nor
+  a localStorage key proves authorship. Account-tenant orphans never accept management tokens.
+- Account-owned sites never accept management tokens. New owned sites return no edit token
+  or claim receipt. The idempotent migration clears only their obsolete token columns;
+  ownership, tenant, visibility, versions, shares and memberships are unchanged.
+- Signing in does not claim sites. Claim explicitly in Workspaces with the creating browser
+  cookie, a signed-in account and active destination membership. Historical token-only sites
+  require administrator assignment. Claim/assignment/transfer permanently retires old tokens.
+- Ordinary disown (`DELETE /api/sites/:slug/ownership`) returns `410 disown_disabled`.
+  Transfer requires ownership permission and an active account in the same tenant.
+- Reading rendered content or extracted text does not grant source access. File-list/source
+  APIs, `text?file=`, ZIP export and fork require `site.source.export` (editor or higher).
+  Preview HTML/JS/assets must still be readable to render a page; this is not DRM.
+  `version_id` and fixed shares select exact readable versions rather than substituting latest.
+- Cookie/query credentials require a same-origin request for every mutation, including new
+  upload sessions and their PUT/commit steps. Only a validated explicit header credential
+  bypasses this origin check. An invalid token cannot exempt a valid account cookie.
+- Upload staging rechecks access on each request. Version publication rechecks current
+  credentials and permissions after storage work, under the RBAC transaction lock, with
+  version pointer and audit inserted atomically. Membership/ownership changes and credential
+  revocations serialize with that final check. Aborted storage remains subject to normal cleanup.
+- Private preview grants bind to their originating session or token. Credential/share revocation,
+  ownership change, tenant disablement and anonymous-token rotation are rechecked on resource
+  requests. Pre-upgrade unbound grants expire immediately; reloading the authorized page remints
+  a grant without asking the user to authorize MCP again.
+
+Personal `ahp_` tokens, MCP OAuth credentials, consent scopes, refresh and device login keep
+ their formats and stored identities. Valid owners/editors continue using existing credentials;
+ revoked credentials and read-only source requests are rejected consistently. CLI supports
+ `--tenant` / `ARTIFACT_SITE_TENANT` and `--share-token` / `ARTIFACT_SITE_SHARE_TOKEN`;
+ MCP tools accept optional `tenant_id` and `share_token`. The old `email` share-policy name
+ remains an alias of `people`; new share controls expose `mode` and fixed `versionId`.
+ A public share opens its `/v/` link without changing the canonical site's visibility.
+
+Deploy all serving replicas to the new authorization code before considering convergence
+complete. Do not leave old images serving writes: the deprecated switch cannot enforce this
+policy in those binaries. No account credential rotation or bulk ownership migration is required.
+
+
+### Publication lock and capacity
+
+Final publication checks and writes share the deployment-wide RBAC advisory lock with
+membership changes, credential revocation, tenant administration and audit-prune batches.
+Only one such transaction progresses at a time across replicas: approximate maximum
+throughput is the inverse of average lock-hold time, and contention adds queueing latency.
+There is no fixed requests-per-second promise; measure lock waits and transaction duration
+with the deployment's database latency and workload. Storage I/O and request parsing happen
+before acquiring the lock. Audit-prune batches release it between batches.
+
+This deliberately prioritizes revocation ordering. A site-row lock alone does not serialize
+publication against user disablement, token revocation or tenant membership changes, which
+update other rows. Replacing the global lock requires a coordinated lock protocol covering
+those credential and membership rows too, with consistent lock ordering.
+
+Anonymous receipt exchange uses one HttpOnly cookie, bounded to eight recently opened
+artifacts and 3,000 encoded bytes, with a one-hour lifetime. Listing artifacts only verifies
+headers and never mints cookies. Evicted receipts remain in local storage and can be exchanged
+again on opening an artifact; the creating-browser cookie remains the normal creator proof.

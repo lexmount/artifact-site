@@ -1,3 +1,4 @@
+import { assertMutationOrigin } from "@/lib/request-auth";
 // /api/sites — the collection endpoint.
 //   POST  drop → link. json or multipart (see _util for the wire format) → createSite.
 //   GET   the PUBLIC directory, newest activity first → listSites.
@@ -18,6 +19,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     checkRateLimit(request);
     maintenanceTick(); // at most once an hour per process; runs in the background
+    await assertMutationOrigin(request);
     await assertCanCreate(request);
     // Credential checks BEFORE the body is buffered: a revoked/unknown ahp_ bearer means the
     // caller EXPECTS ownership it will not get — 401 now, not a silently anonymous site, and not
@@ -37,11 +39,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       : { kind: "anon", userId: null, anonId };
     const { site } = await createSite(input, session ? { ownerId: session.userId, tenantId: request.headers.get("x-artifact-tenant") || undefined } : { anonOwnerId: anonId }, apiAuditContext(request, actor));
 
-    // Both secrets go ONLY to the creator, here, once. The client stashes them in localStorage.
-    // claimToken is the ownership receipt: it must never be rendered into a shareable link, which
-    // is precisely what lets it prove authorship later (see lib/authz.ts).
+    // Only anonymous publications return a management credential; account ownership needs none.
     const body: Record<string, unknown> = { slug: site.slug, url: siteUrl(site.slug), title: site.title,
-      kind: site.kind, editToken: site.editToken, claimToken: site.claimToken,
+      kind: site.kind, ...(!site.ownerId ? {editToken:site.editToken} : {}),
       // Anonymous sites live `ARTIFACT_ANON_SITE_TTL_DAYS` after their last change unless claimed; null = no clock.
       expiresAt: anonymousExpiresAt(site) };
     // The upgrade banner FOR MACHINE READERS. Agents running a stale installed SKILL.md publish

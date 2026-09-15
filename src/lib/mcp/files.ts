@@ -1,3 +1,8 @@
+import { requirePermission } from "@/lib/authz";
+import { assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
+import { resolveSession } from "@/lib/session";
+import { creationTenant } from "@/lib/rbac-access";
+import { getSiteView } from "@/lib/sites";
 import { randomUUID } from "node:crypto";
 import { compareUploadSessionFiles, createId, insertUploadSession, listUploadSessionsForTarget } from "@/lib/db";
 import { discardUploadSession, getUploadSession, ownerKeyFor, type UploadSession } from "@/lib/upload-session";
@@ -101,7 +106,21 @@ export async function cancelUpload(request: Request, id: string) {
 
 export async function writeFileChunk(request: Request, uploadId: string, path: string, index: number, base64: string, final: boolean) {
   const data = decodeChunk(base64); // Reject malformed bytes before allocating a draft.
-  const session = await startFile(await owner(request), uploadId, path);
+  const key = await owner(request);
+  const parent = await getUploadSession(uploadId, key);
+  if (!parent) throw missing();
+  const authRequest = apiRequest(request, "/api/uploads", "POST");
+  const identity = await resolveSession(authRequest);
+  await assertPresentedBearerAlive(authRequest, identity);
+  if (parent.targetSlug) {
+    const view = await getSiteView(parent.targetSlug);
+    if (!view) throw missing();
+    await requirePermission(authRequest, view.site, "site.content.edit", identity, false);
+  } else {
+    await assertCanCreate(authRequest);
+    await creationTenant(identity?.userId ?? null, parent.tenantId);
+  }
+  const session = await startFile(key, uploadId, path);
   const result = await putChunk(session, index, data);
   if (final) {
     await finishFile(request, session, index + 1);
@@ -137,7 +156,10 @@ export async function commitUpload(request: Request, versionId: string, title?: 
       const form = new FormData(); form.set("mode", /\.zip$/i.test(only.relpath) ? "zip" : "file");
       form.set("file", new Blob([Buffer.from(bytes)]), only.relpath.split("/").pop()!);
       if (title ?? session.title) form.set("title", (title ?? session.title)!);
-      const result = await callApi(request, session.targetSlug ? "update" : "publish", { slug: session.targetSlug ?? undefined, body: form, query: expectedVersion ? { expected_version: expectedVersion } : undefined });
+      const commitHeaders = new Headers(request.headers);
+      if (session.tenantId) commitHeaders.set("x-artifact-tenant", session.tenantId);
+      const commitRequest = new Request(request.url, { headers: commitHeaders });
+      const result = await callApi(commitRequest, session.targetSlug ? "update" : "publish", { slug: session.targetSlug ?? undefined, body: form, query: expectedVersion ? { expected_version: expectedVersion } : undefined });
       await discardUploadSession(versionId); await cleanup(); return result;
     }
     const result = await callApi(request, "upload_commit", { versionId, body: { title }, query: expectedVersion ? { expected_version: expectedVersion } : undefined });

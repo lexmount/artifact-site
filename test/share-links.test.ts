@@ -617,7 +617,7 @@ describe("fork does not ride along on read permission", () => {
     expect(res.status).toBe(200);
   });
 
-  it("forking a public site is entirely unaffected", async () => {
+  it("view-only public readers cannot copy source through fork", async () => {
     const owner = await signIn("Owner");
     const stranger = await signIn("Stranger");
     const site = await siteOwnedBy(owner);
@@ -627,6 +627,6 @@ describe("fork does not ride along on read permission", () => {
     await updateSiteSharing(site.id, "public", "owner");
 
     const res = await forkPOST(write(`/api/sites/${site.slug}/fork`, stranger.cookie, "POST"), params({ slug: site.slug }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
   });
 });

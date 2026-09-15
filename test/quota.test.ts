@@ -139,17 +139,17 @@ describe("storage cap — every path that adds a version", () => {
     const BASE = "http://localhost";
     const cookie = "ah_anon=anon_q";
     await createSite({ mode: "paste", html: html(3000) }, { anonOwnerId: "anon_q" });
-    const opened = await OPEN_UPLOAD(new Request(`${BASE}/api/uploads`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ title: "big" }) }));
+    const opened = await OPEN_UPLOAD(new Request(`${BASE}/api/uploads`, { method: "POST", headers: { origin: BASE, "content-type": "application/json", cookie }, body: JSON.stringify({ title: "big" }) }));
     expect(opened.status).toBe(201);
     const { versionId } = (await opened.json()) as { versionId: string };
     const bytes = new TextEncoder().encode(html(4000));
-    expect((await PUT_FILE(new Request(`${BASE}/api/uploads/${versionId}/files/index.html`, { method: "PUT", headers: { "content-type": "application/octet-stream", "content-length": String(bytes.byteLength), cookie }, body: bytes }), { params: Promise.resolve({ versionId, relpath: ["index.html"] }) })).status).toBe(200);
-    const done = await COMMIT(new Request(`${BASE}/api/uploads/${versionId}/commit`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: "{}" }), { params: Promise.resolve({ versionId }) });
+    expect((await PUT_FILE(new Request(`${BASE}/api/uploads/${versionId}/files/index.html`, { method: "PUT", headers: { origin: BASE, "content-type": "application/octet-stream", "content-length": String(bytes.byteLength), cookie }, body: bytes }), { params: Promise.resolve({ versionId, relpath: ["index.html"] }) })).status).toBe(200);
+    const done = await COMMIT(new Request(`${BASE}/api/uploads/${versionId}/commit`, { method: "POST", headers: { origin: BASE, "content-type": "application/json", cookie }, body: "{}" }), { params: Promise.resolve({ versionId }) });
     expect(done.status).toBe(403);
     expect(((await done.json()) as { code: string }).code).toBe("quota_exceeded");
     expect(await getUploadSession(versionId)).toBeNull(); // reclaimed with its bytes
 
-    const res = await CREATE(new Request(`${BASE}/api/sites`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ mode: "paste", html: html(4000) }) }));
+    const res = await CREATE(new Request(`${BASE}/api/sites`, { method: "POST", headers: { origin: BASE, "content-type": "application/json", cookie }, body: JSON.stringify({ mode: "paste", html: html(4000) }) }));
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string; code: string; details: { kind: string; limit: number } };
     expect(body.code).toBe("quota_exceeded");
@@ -175,7 +175,7 @@ describe("anonymous-site expiry", () => {
     // The creator sees the date, the API too; owned sites have no clock.
     expect(anonymousExpiresAt(old.site)).toBe(old.site.updatedAt + day);
     expect(anonymousExpiresAt(owned.site)).toBeNull();
-    const api = (await (await SITE_GET(new Request(`http://localhost/api/sites/${fresh.site.slug}`), { params: Promise.resolve({ slug: fresh.site.slug }) })).json()) as { site: { expiresAt: number | null } };
+    const api = (await (await SITE_GET(new Request(`http://localhost/api/sites/${fresh.site.slug}`,{headers:{"x-edit-token":fresh.site.editToken}}), { params: Promise.resolve({ slug: fresh.site.slug }) })).json()) as { site: { expiresAt: number | null } };
     expect(api.site.expiresAt).toBe(fresh.site.updatedAt + day);
 
     const ttl = day;
@@ -210,7 +210,7 @@ describe("anonymous-site expiry", () => {
     process.env.PUBLISH_API_TOKEN = "api-token";
     await createSite({ mode: "paste", html: html(10) }, { anonOwnerId: "anon_r" });
     // Nothing is old enough yet.
-    const res = await MAINTENANCE(new Request("http://localhost/api/admin/maintenance", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer api-token" }, body: JSON.stringify({ task: "expire-anonymous" }) }));
+    const res = await MAINTENANCE(new Request("http://localhost/api/admin/maintenance", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json", authorization: "Bearer api-token" }, body: JSON.stringify({ task: "expire-anonymous" }) }));
     expect(res.status).toBe(200);
     expect((await res.json()) as object).toEqual({ task: "expire-anonymous", result: { expired: 0 } });
   });

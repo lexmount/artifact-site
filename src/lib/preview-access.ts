@@ -1,3 +1,4 @@
+import { managementReason } from "@/lib/management-reason";
 import "server-only";
 import { createHash } from "node:crypto";
 import {
@@ -15,7 +16,7 @@ import {
   recordRbacAudit,
 } from "@/lib/rbac-access";
 import { readAccess, canReadVersion, requestShareAccess, isLive } from "@/lib/share";
-import { resolveCapability, resolveViewer } from "@/lib/authz";
+import { resolveAuthority, resolveViewer } from "@/lib/authz";
 import { config } from "@/lib/config";
 import { isAdmin } from "@/lib/auth";
 import { isAdminUser, resolveAdmin } from "@/lib/admin";
@@ -59,6 +60,9 @@ export async function authorizePreview(
     const version = await getVersion(grant.versionId);
     if (!version || version.siteId !== site.id) return null;
     if (grant.userId) {
+      if (!grant.sessionId) return null;
+      try { await (await import("@/lib/authorized-commit")).assertSessionCurrent(rbacQuery,{id:grant.sessionId,userId:grant.userId}); }
+      catch { return null; }
       const user = await getUser(grant.userId);
       if (!user || user.disabledAt) return null;
     }
@@ -101,7 +105,7 @@ export async function authorizePreview(
           : grant.management === "tenant-admin" &&
             user &&
             (await memberRole(site.tenantId, user.id)) === "admin";
-      const legacy = grant.legacy && !site.ownerId;
+      const legacy = Boolean(site.editToken) && !site.ownerId && site.tenantId === "anonymous" && grant.editTokenHash === anonymousFingerprint(site.editToken);
       if (
         !member &&
         !manager &&
@@ -113,6 +117,7 @@ export async function authorizePreview(
         !legacy &&
         !(
           grant.anonOwnerHash &&
+          site.tenantId === "anonymous" &&
           !site.ownerId &&
           site.anonOwnerId &&
           anonymousFingerprint(site.anonOwnerId) === grant.anonOwnerHash
@@ -141,15 +146,13 @@ export async function authorizePreview(
   // gate without a read audit. Preserve their audit, but never duplicate the admin gate's row.
   if (manager && access !== "admin")
     await recordRbacAudit(rbacQuery, site.tenantId, session?.userId ?? null,
-      "site.read", site.id, request.headers.get("x-management-reason") || "Administrative preview");
-  const legacy =
-    !site.ownerId &&
-    (await resolveCapability(resolveViewer(request, session), site)) ===
-      "owner";
+      "site.read", site.id, managementReason(request) ?? "Administrative preview");
+  const authority = await resolveAuthority(resolveViewer(request, session), site);
   const grant: PreviewGrant = {
     versionId,
     shareId: share?.id ?? null,
     userId: session?.userId ?? null,
+    ...(session ? {sessionId:session.id} : {}),
     anonOwnerHash: anonIdFromRequest(request)
       ? anonymousFingerprint(anonIdFromRequest(request)!)
       : null,
@@ -157,7 +160,7 @@ export async function authorizePreview(
     ...(manager === "platform-admin" || manager === "tenant-admin"
       ? { management: manager }
       : {}),
-    legacy,
+    ...(authority.source === "anonymous-token" ? { editTokenHash: anonymousFingerprint(site.editToken) } : {}),
     ...(isAdmin(request) ? { operator: operatorFingerprint() } : {}),
   };
   return { versionId, key: await mintScopedPreviewKey(site, grant) };

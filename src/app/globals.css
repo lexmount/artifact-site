@@ -1304,3 +1304,7 @@ input.field, textarea.field, .field input, .field textarea, .field select, .titl
 .tenant-settings select { max-width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
 .tenant-settings .share-people span { min-width: 0; overflow-wrap: anywhere; }
 .tenant-settings .share-people button { flex-shrink: 0; }
+
+/* Download controls reuse the existing menu and dialog vocabulary. */
+.artifact-card-actions { display: flex; justify-content: flex-end; }
+.admin-dialog select { max-width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: 400 14px/1.4 var(--font-ui); }

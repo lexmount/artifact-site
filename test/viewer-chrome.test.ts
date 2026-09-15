@@ -340,7 +340,7 @@ describe("C5 no action on the bar may go missing", () => {
     // This used to grep for words like "编辑" (Edit) and "复制链接" (Copy link) that are trivially present in the source file — which tested nothing.
     for (const [action, marker] of [
       ["设备切换", 'aria-label={t("Preview device")}'],
-      ["分享可编辑链接", "onClick={shareEditable}"],
+
       ["另存为新站点", "onClick={fork}"],
       ["版本历史", "<VersionHistory"],
       ["分享设置", "<SharePanel"],
@@ -378,9 +378,9 @@ describe("C5 no action on the bar may go missing", () => {
     const copy = block(share, "async function copyCanonical()", "\n  }");
     expect(copy).toContain("`${window.location.origin}/s/${slug}`");
     expect(copy).not.toContain("?t=");
-    // The token-bearing one is a separate button, and it is offered only when ownership enforcement is off.
-    const shareEditable = block(viewer, "async function shareEditable()", "\n  }");
-    expect(shareEditable).toContain("/edit?t=${editToken}");
+    expect(viewer).not.toContain("async function shareEditable");
+    expect(viewer).toContain("permissions.canRename");
+
   });
 
   it("identity is always the rightmost item on the action bar", () => {

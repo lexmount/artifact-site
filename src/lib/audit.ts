@@ -7,6 +7,7 @@ import type { Actor, AuditAction, EditMethod } from "@/lib/types";
 
 /** What a mutation needs to record about who did it and how — supplied by the route. */
 export interface AuditContext {
+  authorizationRequest?: Request;
   actor: Actor;
   method: EditMethod;
   ip: string | null;
@@ -40,7 +41,7 @@ export function auditRequestMeta(request: Request): { ip: string | null; userAge
 /** Build an AuditContext for a non-text action (create / fork / rollback / rename / delete / share)
  *  from a request and its resolved actor. `method: "api"` — none of these came through an editor. */
 export function apiAuditContext(request: Request, actor: Actor): AuditContext {
-  return { actor, method: "api", ...auditRequestMeta(request) };
+  return { actor, method: "api", ...auditRequestMeta(request), authorizationRequest: request };
 }
 
 /**
@@ -68,6 +69,7 @@ export function auditRow(ctx: AuditContext, siteId: string, versionId: string | 
     editorKind: ctx.actor.kind,
     actorUserId: ctx.actor.userId,
     actorAnonId: ctx.actor.anonId,
+    ...(ctx.authorizationRequest ? { authorizationRequest: ctx.authorizationRequest } : {}),
     method: ctx.method,
     ip: ctx.ip,
     userAgent: ctx.userAgent,

@@ -63,8 +63,8 @@ export type PublicSite = Omit<Site, "editToken" | "claimToken" | "anonOwnerId" |
  * Public projection — strips ALL THREE per-site secrets. Each one is, on its own, sufficient
  * authorization for some site:
  *
- *   claimToken   proof of authorship — whoever presents it can take over an unclaimed site
- *   editToken    the legacy bearer capability, still honoured on pre-identity rows
+ *   claimToken   retired receipt column; never accepted for claiming
+ *   editToken    anonymous management credential, never accepted on owned sites
  *   anonOwnerId  the creating browser's cookie value. lib/authz grants `owner` on an unclaimed
  *                site to whoever presents it (`safeEqual(viewer.anonId, site.anonOwnerId)`), and
  *                lib/anon reads that cookie verbatim — there is no signature to forge. So echoing
@@ -217,7 +217,7 @@ export async function commitUploadedVersion(
 
   // Create a new site
   const editToken = createEditToken();
-  const claimToken = createEditToken();
+
   const { anonId } = ensureAnonId(request);
   const session_ = await resolveSession(request);
   await assertQuotaRoom(session_ ? { userId: session_.userId } : anonId ? { anonId } : null, { sites: 1, bytes: byteSize });
@@ -228,12 +228,12 @@ export async function commitUploadedVersion(
   // Same audit path as createSite: a site built by chunked upload looks identical in the audit table to one from a one-shot upload.
   const audit = input.ctx ? auditRow(input.ctx, session.siteId, session.versionId, "create") : undefined;
   await insertSiteRetryingSlug(
-    { tenantId: await creationTenant(session_?.userId ?? null,session.tenantId), id: session.siteId, title, kind: input.document ? "document" : "folder", editToken, claimToken, anonOwnerId: session_ ? null : anonId, ownerId: session_?.userId ?? null, visibility: policy.defaultVisibility },
+    { tenantId: await creationTenant(session_?.userId ?? null,session.tenantId), id: session.siteId, title, kind: input.document ? "document" : "folder", editToken: session_ ? "" : editToken, claimToken: "", anonOwnerId: session_ ? null : anonId, ownerId: session_?.userId ?? null, visibility: policy.defaultVisibility },
     version, audit,
   );
   scheduleTextIndex(session.siteId, session.versionId);
   const site = (await getSite(session.siteId))!;
-  return { slug: site.slug, url: siteUrl(site.slug), title: site.title, kind: site.kind, versionId: session.versionId, editToken, expiresAt: anonymousExpiresAt(site) };
+  return { slug: site.slug, url: siteUrl(site.slug), title: site.title, kind: site.kind, versionId: session.versionId, ...(!site.ownerId ? {editToken} : {}), expiresAt: anonymousExpiresAt(site) };
 }
 
 /** Drop → link. Parse the input, write the first version to disk, then record the site. */
@@ -248,9 +248,6 @@ export async function createSite(
   const siteId = createId("site");
   const versionId = createId("ver");
   const editToken = createEditToken();
-  // Claim receipt: kept only in the creator's browser, never rendered into any link, so holding
-  // it is evidence of authorship in a way the broadcast edit token never was.
-  const claimToken = createEditToken();
   // Caps before any byte lands: the input already knows its size.
   await assertQuotaRoom(quotaOwnerFor(owner), { sites: 1, bytes: bytesOf(normalized.files) });
   // Files land first (with all path + limit guards); then site + version are recorded atomically.
@@ -259,7 +256,7 @@ export async function createSite(
   const audit = ctx ? auditRow(ctx, siteId, versionId, "create") : undefined;
   // Visibility is decided HERE, not by the column default, because it depends on which deployment
   // this is: the intranet opens up, the public internet stays shut until the owner says otherwise. See config.defaultVisibility.
-  await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: normalized.title, kind: normalized.kind, editToken, claimToken, anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility: policy.defaultVisibility }, version, audit);
+  await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: normalized.title, kind: normalized.kind, editToken: owner.ownerId ? "" : editToken, claimToken: "", anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility: policy.defaultVisibility }, version, audit);
   scheduleTextIndex(siteId, versionId); // searchable text follows the version; the response does not wait for it
   return { site: (await getSite(siteId))!, version: (await getVersion(versionId))! };
 }
@@ -504,10 +501,16 @@ export async function getSiteView(slug: string): Promise<{ site: Site; version: 
  * mistaken delete; `purgeDeletedSites` (lib/maintenance, run lazily from the create routes and
  * from the admin console) removes them once the window has passed. Returns false if already gone.
  */
-export async function deleteSite(slug: string): Promise<boolean> {
+export async function deleteSite(slug: string, ctx?: AuditContext): Promise<boolean> {
   const site = await getSiteBySlug(slug);
   if (!site || site.deletedAt) return false;
-  await softDeleteSite(site.id);
+  if (ctx?.authorizationRequest) {
+    const { withPermissionCommit, writeCommitAudit } = await import("@/lib/authorized-commit");
+    await withPermissionCommit(ctx.authorizationRequest,site.id,"site.delete",async q => {
+      await q("UPDATE sites SET deleted_at=$1,updated_at=$1 WHERE id=$2",[Date.now(),site.id]);
+      await writeCommitAudit(q,auditRow(ctx,site.id,null,"delete"));
+    });
+  } else await softDeleteSite(site.id);
   return true;
 }
 
@@ -537,7 +540,7 @@ export async function forkSite(
   // its OWN ownership markers — never the source's, which is why `owner` is a parameter and not
   // copied from `source`. Same two exclusive markers createSite takes (see there).
   const editToken = createEditToken();
-  const claimToken = createEditToken();
+
   // A fork is a new site holding a copy of the current version: both caps, before the copy (so an
   // obviously oversized one costs no I/O) and again on the measured copy, which is the number the
   // version is recorded with — the pre-check used the source's stored size.
@@ -552,7 +555,7 @@ export async function forkSite(
     throw error;
   }
   const version: InsertVersionInput = { id: versionId, siteId, entry: current.entry, fileCount, byteSize, source: "fork" };
-  const audit = ctx ? auditRow(ctx, siteId, versionId, "fork") : undefined;
+  const audit = ctx ? { ...auditRow(ctx, siteId, versionId, "fork"), sourceSiteId: source.id } : undefined;
   // Take the stricter of "the source site" and "this deployment's default for new sites", and fix it
   // at INSERT time. Two reasons:
   //   · The fork is a new site, and on the public internet a new site should be private — otherwise
@@ -561,19 +564,25 @@ export async function forkSite(
   //   · Inserting first and calling updateSiteSharing afterwards leaves a window in which the copy of a
   //     private source is public. A single write leaves no window.
   const visibility = stricter(source.visibility, policy.defaultVisibility);
-  await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: `${source.title} (copy)`, kind: source.kind, editToken, claimToken, anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility }, version, audit);
+  await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: `${source.title} (copy)`, kind: source.kind, editToken: owner.ownerId ? "" : editToken, claimToken: "", anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility }, version, audit);
   scheduleTextIndex(siteId, versionId);
   return { site: (await getSite(siteId))!, version: (await getVersion(versionId))! };
 }
 
 /** Rename — set a site's display title (trimmed, non-empty, ≤120 chars). Slug is untouched. */
-export async function renameSite(slug: string, rawTitle: string): Promise<Site | null> {
+export async function renameSite(slug: string, rawTitle: string, ctx?: AuditContext): Promise<Site | null> {
   const site = await getSiteBySlug(slug);
   if (!site || site.deletedAt) return null;
   const title = rawTitle.trim();
   if (!title) throw new BadRequestError("The title cannot be empty");
   if (title.length > MAX_TITLE_LENGTH) throw new BadRequestError(`The title is too long (at most ${MAX_TITLE_LENGTH} characters)`);
-  await updateSiteTitle(site.id, title);
+  if (ctx?.authorizationRequest) {
+    const { withPermissionCommit, writeCommitAudit } = await import("@/lib/authorized-commit");
+    await withPermissionCommit(ctx.authorizationRequest,site.id,"site.rename",async q => {
+      await q("UPDATE sites SET title=$1,updated_at=$2 WHERE id=$3",[title,Date.now(),site.id]);
+      await writeCommitAudit(q,auditRow(ctx,site.id,null,"rename"));
+    });
+  } else await updateSiteTitle(site.id, title);
   scheduleTextRetitle(site.id, title); // the title is indexed too; the body need not be read again
   return getSite(site.id);
 }

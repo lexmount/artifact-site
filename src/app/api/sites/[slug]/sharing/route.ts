@@ -1,12 +1,11 @@
+import { withPermissionCommit } from "@/lib/authorized-commit";
+import { assertMutationOrigin } from "@/lib/request-auth";
 // Sharing settings. Owner-only: a tier that may merely edit content must never be able to widen
 // its own access, which is what letting `login` editors change edit_policy would amount to.
 import type { NextResponse } from "next/server";
-import { updateSiteSharing } from "@/lib/db";
 import { getSiteView } from "@/lib/sites";
 import { apiAuditContext, recordSiteAudit } from "@/lib/audit";
 import { requireActor, requireCapability } from "@/lib/authz";
-import { csrfSafe } from "@/lib/session";
-import { AuthError } from "@/lib/auth";
 import type { EditPolicy, Visibility } from "@/lib/types";
 import { errorResponse, json } from "../../../_util";
 
@@ -33,11 +32,11 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
 
 export async function PUT(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
   try {
-    if (!csrfSafe(request)) throw new AuthError("Cross-site request rejected");
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
     const { actor } = await requireActor(request, view.site, "manage");
+    await assertMutationOrigin(request, view.site);
 
     const body = (await request.json()) as { visibility?: unknown; editPolicy?: unknown };
     if ((body as {editPolicy?: unknown}).editPolicy === "login") return json({error:"Use members or editable share links to grant editing"},400);
@@ -52,7 +51,7 @@ export async function PUT(request: Request, context: { params: Promise<{ slug: s
       return json({ error: "A private site cannot also be open for all signed-in users to edit" }, 400);
     }
 
-    await updateSiteSharing(view.site.id, visibility, editPolicy);
+    await withPermissionCommit(request,view.site.id,"site.sharing.manage", q => q("UPDATE sites SET visibility=$1,edit_policy=$2,updated_at=$3 WHERE id=$4",[visibility,editPolicy,Date.now(),view.site.id]));
     await recordSiteAudit(view.site.id, "share", apiAuditContext(request, actor)); // best-effort, non-atomic
     return json({ visibility, editPolicy }, 200);
   } catch (error) {

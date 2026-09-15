@@ -459,7 +459,7 @@ it("bounds hot-path owner resolution and session reads per non-final chunk", asy
       owner.mockClear(); reads.mockClear();
       expect((await call(c, "upload_write", { upload_id, path: "index.html", index, base64: "YQ==", final: false })).error).toBe(false);
       expect(owner).toHaveBeenCalledTimes(1);
-      expect(reads).toHaveBeenCalledTimes(2);
+      expect(reads).toHaveBeenCalledTimes(3);
     }
   } finally { owner.mockRestore(); reads.mockRestore(); }
 });
@@ -490,4 +490,40 @@ it("bounds staging metadata independently of the project-file limit", async () =
   const result = await call(c, "upload_write", { ...args, index: 2000 });
   expect(result.error).toBe(true); expect(result.data.error).toContain("Too many chunks for one file");
   expect(result.data.error).not.toContain("Too many files");
+});
+
+it("forwards tenant and share context with existing MCP credentials", async () => {
+  const owner = await identity("context-owner"), guest = await identity("context-guest");
+  const ownerClient = await connect(owner.token), guestClient = await connect(guest.token);
+  const {rbacQuery,getSiteBySlug,createId} = await import("@/lib/db");
+  const account = (await call(ownerClient,"connection")).data.user;
+  const tenant = createId("tenant");
+  await rbacQuery("INSERT INTO tenants(id,name) VALUES($1,'MCP destination')",[tenant]);
+  await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'member')",[tenant,account.id]);
+  const published = await call(ownerClient,"publish",{html:"<html>Shared context</html>",share:false,tenant_id:tenant});
+  expect(published.error).toBe(false); const slug=published.data.slug;
+  expect((await getSiteBySlug(slug))!.tenantId).toBe(tenant);
+  expect(published.data).not.toHaveProperty("editToken");
+  const shared = await call(ownerClient,"share",{slug,policy:"login",mode:"edit"});
+  expect(shared.error).toBe(false);
+  const edit = await call(guestClient,"edit",{slug,share_token:shared.data.token,path:"index.html",content:"<html>Updated through share</html>",expected_version:(await getSiteBySlug(slug))!.currentVersionId});
+  expect(edit.error).toBe(false);
+  expect((await call(guestClient,"update",{slug,share_token:shared.data.token,title:"Not permitted"})).error).toBe(true);
+  const emailAlias = await call(ownerClient,"share",{slug,policy:"email",mode:"view",versionId:edit.data.versionId});
+  expect(emailAlias.error).toBe(false); expect(emailAlias.data.share.policy).toBe("people");
+  expect(emailAlias.data.share.versionId).toBe(edit.data.versionId);
+});
+
+it("rejects further MCP chunks immediately after an editor is removed", async () => {
+  const owner = await identity("chunk-owner"), editor = await identity("chunk-editor");
+  const ca=await connect(owner.token), ce=await connect(editor.token);
+  const slug=(await call(ca,"publish",{html:"<html>Original</html>",share:false})).data.slug;
+  const {getSiteBySlug,rbacQuery}=await import("@/lib/db"); const site=(await getSiteBySlug(slug))!;
+  const user=(await call(ce,"connection")).data.user;
+  await rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'editor',1)",[site.id,user.id]);
+  const upload_id=(await call(ce,"upload_start",{slug})).data.versionId;
+  expect((await call(ce,"upload_write",{upload_id,path:"index.html",index:0,base64:"YQ==",final:false})).error).toBe(false);
+  await rbacQuery("DELETE FROM site_members WHERE site_id=$1 AND user_id=$2",[site.id,user.id]);
+  expect((await call(ce,"upload_write",{upload_id,path:"index.html",index:1,base64:"Yg==",final:false})).data.status).toBe(403);
+  expect((await getSiteBySlug(slug))!.currentVersionId).toBe(site.currentVersionId);
 });

@@ -15,16 +15,16 @@ import { __resetRateLimitForTests } from "@/lib/ratelimit";
 const BASE = "http://localhost";
 const cookieOf = (res: Response) => (res.headers.get("set-cookie") ?? "").split(";")[0];
 const open = (title: string, cookie = "") =>
-  openUpload(new Request(`${BASE}/api/uploads`, { method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify({ title }) }));
+  openUpload(new Request(`${BASE}/api/uploads`, { method: "POST", headers: { origin: BASE, "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify({ title }) }));
 // `extra` carries the deliberate credential (x-edit-token) a client holding one sends on every
 // step: on a session that targets an existing site, a cookie alone without an Origin is 401.
 const put = (id: string, relpath: string, bytes: Uint8Array<ArrayBuffer>, cookie: string, extra: Record<string, string> = {}) =>
   putFile(
-    new Request(`${BASE}/api/uploads/${id}/files/${relpath}`, { method: "PUT", headers: { "content-type": "application/octet-stream", "content-length": String(bytes.byteLength), cookie, ...extra }, body: bytes }),
+    new Request(`${BASE}/api/uploads/${id}/files/${relpath}`, { method: "PUT", headers: { origin: BASE, "content-type": "application/octet-stream", "content-length": String(bytes.byteLength), cookie, ...extra }, body: bytes }),
     { params: Promise.resolve({ versionId: id, relpath: relpath.split("/") }) },
   );
 const commit = (id: string, cookie: string) =>
-  commitUpload(new Request(`${BASE}/api/uploads/${id}/commit`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: "{}" }), { params: Promise.resolve({ versionId: id }) });
+  commitUpload(new Request(`${BASE}/api/uploads/${id}/commit`, { method: "POST", headers: { origin: BASE, "content-type": "application/json", cookie }, body: "{}" }), { params: Promise.resolve({ versionId: id }) });
 
 beforeEach(() => __resetRateLimitForTests());
 const streamOf = (bytes: Uint8Array) => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(bytes); c.close(); } });

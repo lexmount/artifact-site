@@ -1,8 +1,8 @@
 import "server-only";
 
-// Policy an operator may change from the console, without a rebuild. All of it "who may do
-// what": create policy, what anonymous creators may do, default visibility, the anonymous-site
-// clock, the four quota caps, and the three MCP OAuth knobs (which hosts may connect, whether
+// Policy an operator may change from the console, without a rebuild: create policy, anonymous
+// creator access, default visibility, anonymous-site expiry, audit retention, quota caps and
+// the three MCP OAuth knobs (which hosts may connect, whether
 // clients may register themselves, which application schemes are admitted as return addresses).
 // Everything that would need a restart or could lock the operator out (database, storage, OIDC,
 // the public address, the administrator list) stays in the environment on purpose.
@@ -36,6 +36,7 @@ export interface PolicySettings {
   anonymousSites: AnonymousSites;
   defaultVisibility: Visibility;
   anonSiteTtlDays: number;
+  auditRetentionDays: number;
   quotaSitesPerUser: number;
   quotaBytesPerUser: number;
   quotaSitesPerAnon: number;
@@ -62,6 +63,7 @@ export const SETTINGS: { [K in SettingKey]: Kind & { env: string; fromEnv: () =>
   anonymousSites: { kind: "enum", options: ["full", "read-only"], env: "ARTIFACT_ANONYMOUS_SITES", fromEnv: () => config.anonymousSites },
   defaultVisibility: { kind: "enum", options: ["public", "unlisted", "private"], env: "ARTIFACT_DEFAULT_VISIBILITY", fromEnv: () => config.defaultVisibility },
   anonSiteTtlDays: { kind: "int", min: 0, max: 3650, env: "ARTIFACT_ANON_SITE_TTL_DAYS", fromEnv: () => Math.round(config.anonSiteTtlMs / 86_400_000) },
+  auditRetentionDays: { kind: "int", min: 0, max: 3650, env: "ARTIFACT_AUDIT_RETENTION_DAYS", fromEnv: () => config.auditRetentionDays },
   quotaSitesPerUser: { kind: "int", min: 0, max: 1_000_000, env: "ARTIFACT_QUOTA_SITES_PER_USER", fromEnv: () => config.quota.sitesPerUser },
   quotaBytesPerUser: { kind: "int", min: 0, max: Number.MAX_SAFE_INTEGER, env: "ARTIFACT_QUOTA_BYTES_PER_USER", fromEnv: () => config.quota.bytesPerUser },
   quotaSitesPerAnon: { kind: "int", min: 0, max: 1_000_000, env: "ARTIFACT_QUOTA_SITES_PER_ANON", fromEnv: () => config.quota.sitesPerAnon },

@@ -1,3 +1,5 @@
+import { withPermissionCommit } from "@/lib/authorized-commit";
+import { assertMutationOrigin } from "@/lib/request-auth";
 // Share links of one site — list + mint. Owner-only, for the same reason as /sharing and
 // /collaborators: minting a link is handing out read access, so a tier that may merely edit content
 // must not be able to widen who can see the site. `manage` is not enough either — a collaborator
@@ -8,8 +10,6 @@ import { getSiteView } from "@/lib/sites";
 import { apiAuditContext, recordSiteAudit } from "@/lib/audit";
 import { requireActor, requireCapability } from "@/lib/authz";
 import { anonIdFromRequest } from "@/lib/anon";
-import { csrfSafe } from "@/lib/session";
-import { AuthError } from "@/lib/auth";
 import { createPasscode, createShareToken, hashPasscode, hashToken } from "@/lib/share";
 import { resolvePublicBase } from "@/lib/publish-skill";
 import type { User } from "@/lib/types";
@@ -45,11 +45,11 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
  */
 export async function POST(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
   try {
-    if (!csrfSafe(request)) throw new AuthError("Cross-site request rejected");
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
     const { actor, viewer } = await requireActor(request, view.site, "manage");
+    await assertMutationOrigin(request, view.site);
 
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // `login` is the default because the person minting this is, by definition, signed in: the
@@ -69,7 +69,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
 
     const authorization = await parseShareAuthorization(body,view.site.id);
     const token = createShareToken();
-    const share = await createShare({
+    const share = await withPermissionCommit(request,view.site.id,"site.sharing.manage", async () => createShare({
       ...authorization,
       id: createId("shr"),
       siteId: view.site.id,
@@ -83,7 +83,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
       createdAnonId: viewer.session ? null : anonIdFromRequest(request),
       expiresAt,
       allowAi: body.allowAi === true, // Q&A tier: strictly opt-in, anything but literal true stays off
-    });
+    }));
     await recordSiteAudit(view.site.id, "share", apiAuditContext(request, actor)); // best-effort, non-atomic
 
     return json({

@@ -7,7 +7,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles } from "lucide-react";
-import { adoptStoredSites } from "@/lib/adoption";
 import { useT } from "@/components/locale-provider";
 
 export default function WelcomeBurst() {
@@ -31,13 +30,7 @@ export default function WelcomeBurst() {
     // update out of the commit phase.
     let t1 = 0, t2 = 0;
     const frame = requestAnimationFrame(async () => {
-      // Settle ownership here, because this is the one moment we know a sign-in just happened.
-      // The callback already adopted whatever the anon cookie covered; this reaches everything
-      // older, where the browser's stored edit tokens are the only surviving evidence of who
-      // made the site. A failure is silent on purpose — the sign-in itself still succeeded.
-      const byToken = await adoptStoredSites();
-
-      setCount((Number.isFinite(n) ? n : 0) + byToken);
+      setCount(Number.isFinite(n) ? n : 0);
       // Reduced motion still gets the message, just without the sweep: the information is the
       // point, the animation is decoration.
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
