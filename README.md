@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/artifact-site-banner-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/artifact-site-banner.png">
-    <img src="docs/assets/artifact-site-banner.png" alt="artifact-site — A shared home for AI-generated pages and documents, on your own server. Open source, self-hosted, agent-ready." width="1000">
+    <img src="docs/assets/artifact-site-banner.png" alt="artifact-site — A shared home for AI-generated pages and documents, on your own server. Open source, self-hosted, agent-ready." width="560">
   </picture>
 </p>
 
@@ -22,11 +22,11 @@
   <a href="#license"><img src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg" alt="License: Apache-2.0 OR MIT"></a>
   <a href=".nvmrc"><img src="https://img.shields.io/badge/node-%E2%89%A5%2024-brightgreen.svg" alt="Node 24"></a>
   <a href="ROADMAP.md"><img src="https://img.shields.io/badge/roadmap-what's%20next-8a5a2b.svg" alt="Roadmap"></a>
+  <a href="https://www.npmjs.com/package/@artifact-site/cli"><img src="https://img.shields.io/npm/v/@artifact-site/cli" alt="npm"></a>
+  <a href="https://github.com/lexmount/artifact-site/releases/latest"><img src="https://img.shields.io/github/v/release/lexmount/artifact-site" alt="GitHub Release"></a>
 </p>
 
-AI tools produce more finished work every day: interactive charts, analysis reports, web prototypes and slide decks. That work often ends up scattered across chat histories, local folders and different tools, with no shared place to browse, share or maintain it. Showing someone still means deploying it, sending files or taking a screenshot; finding the latest version later takes more work.
-
-**artifact-site brings that work onto your own server as links you can share, update and search.** Think of it as a self-hosted workspace for your team's artifacts, similar to Claude Artifacts or OpenAI Sites: your chosen AI tools or internal tools create the work, and artifact-site publishes and manages it. Upload HTML, static sites or documents so your team can view them online, control access and keep revisions. Coding agents can publish, update, search and read existing work too.
+**A self-hosted home for your team’s AI-generated pages and documents.** Publish HTML, build folders, ZIPs and PDFs as sandboxed, versioned links. Agents can publish, update, search and read through the CLI or remote MCP.
 
 > **[Try the live demo](https://artifact-site.app.lexmount.com/)** — no installation needed. Drag and drop a file to publish it and get a shareable link, without signing in.
 >
@@ -41,6 +41,21 @@ AI tools produce more finished work every day: interactive charts, analysis repo
 - **Drop it in and share it.** Upload HTML, a build folder, a ZIP or a document to get a link. Large sites upload in chunks. Share with everyone, signed-in users, named people or passcode holders.
 - **Keep improving published work.** Edit HTML text or source in the browser, or let an agent update the whole site. Each change keeps a version, with rollback and the option to save a copy.
 - **Let agents pick up where they left off.** Publish and update through the guide, CLI or MCP, then search by content and read extractable text. For example, find a previous report and update it at the same address for your team to view.
+
+## How it compares
+
+| For your team | Claude Artifacts / Claude Code Artifacts | ChatGPT Sites (OpenAI) | artifact-site |
+| --- | --- | --- | --- |
+| Hosting | Anthropic-managed | OpenAI-managed | **Your server**, with local or S3-compatible file storage |
+| Publishing workflow | Within Claude / Claude Code | Within ChatGPT Sites | **Any tool** via file upload, CLI or remote MCP |
+| Content focus | Interactive artifacts | Hosted websites and apps | Static HTML, build folders, ZIPs, PDF and Office documents¹ |
+| Identity | Claude accounts | ChatGPT accounts | **Your OIDC provider**, such as Google, Keycloak or Okta |
+
+¹ Office online preview requires Gotenberg. artifact-site hosts finished files; it does not run application backends or build jobs.
+
+Claude Artifacts and ChatGPT Sites combine creation and hosted sharing. artifact-site complements those workflows with a shared home on your own infrastructure for pages and documents produced by different tools.
+
+Product scope and sharing vary by plan and evolve; see the official [Claude Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them) and [ChatGPT Sites](https://learn.chatgpt.com/docs/sites) guides.
 
 ## Contents
 
@@ -67,7 +82,7 @@ Hosted pages run in a sandbox and cannot use the platform's login session. Exter
 
 ## Quick start (local deployment)
 
-With Git, Make, Docker 24+ and the Compose plugin 2.24+ installed, run these commands on a Linux machine. No Node installation, domain or identity provider is needed.
+To try it, use the [live demo](https://artifact-site.app.lexmount.com/) without installing anything. To deploy locally, run the three commands below. You need Git, Make, Bash, Docker 24+ and the Compose plugin 2.24+. On macOS, use Docker Desktop; on Windows, run the commands inside WSL2 with Docker Desktop’s WSL integration enabled. No Node installation, domain or identity provider is needed.
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site
@@ -92,7 +107,13 @@ Drop `hello.html` onto the home page (or choose **Upload**). You should see “H
 
 ## Connect a coding agent
 
-Open **Agent guide** on your deployment to choose the prompt, CLI or MCP path. `/for-agents#cli` and `/for-agents#mcp` provide server-specific commands, authentication steps and client configuration. Remote MCP authenticates every request: ChatGPT, Claude and other OAuth-capable clients sign in through the server's own consent page, other clients carry a personal token. CLI publishing, updating, sharing and deleting require a token; publishing creates a public share by default. Use `--share none` (CLI) or `share: false` (MCP) to skip sharing.
+Choose the entry point that fits your agent:
+
+- **Skill**: `npx skills add lexmount/artifact-site` — install the [agent skill](skills/artifact-site/SKILL.md) and give your agent your server URL.
+- **CLI**: `npm install -g @artifact-site/cli` — requires Node 24+; use the commands below.
+- **MCP**: `https://your-server/mcp` — connect ChatGPT, Claude or another MCP client through the server’s OAuth sign-in; no CLI installation required.
+
+**CLI and MCP publishing create a public share by default.** Use `--share none` (CLI) or `share: false` (MCP) to publish without sharing.
 
 <p align="center"><img src="docs/assets/agent.gif" alt="A coding agent publishes a build folder with the artifact-site CLI and hands back the share link" width="820"></p>
 <p align="center"><sub><b>Or let your coding agent do it.</b> With the agent guide (<code>/for-agents.md</code>), the CLI or the MCP server, "publish this and give me a link" is one instruction — and the site can be updated, searched and read the same way.</sub></p>
@@ -103,9 +124,7 @@ Give this instruction to Claude Code, Cursor, Codex or another coding agent that
 Publish this project's output to artifact-site. Publishing guide: https://your-server/for-agents.md
 ```
 
-Team deployments with OIDC support device sign-in approval; the anonymous local setup above does not require it. The agent follows the guide and the server's publishing policy to choose authentication. A cloud agent cannot directly reach `127.0.0.1` on your computer.
-
-The CLI requires Node 24+. Install it with `npm install -g @artifact-site/cli` (details and the MCP setup: [cli/README.md](cli/README.md)), then run:
+CLI examples (`login` requires OIDC):
 
 ```bash
 artifact-site login --base https://your-server        # one-time device sign-in
@@ -113,6 +132,13 @@ artifact-site publish dist/ --title "Q3 dashboard"    # publish and return links
 artifact-site find "quota"                           # search by content
 artifact-site read YOUR_SITE_SLUG                    # replace with a site slug to read its text
 ```
+
+<details>
+<summary>Authentication details</summary>
+
+Open **Agent guide** on your deployment to choose the prompt, CLI or MCP path. `/for-agents#cli` and `/for-agents#mcp` provide server-specific commands, authentication steps and client configuration. Remote MCP authenticates every request: ChatGPT, Claude and other OAuth-capable clients sign in through the server's own consent page, other clients carry a personal token. CLI publishing, updating, sharing and deleting require a token; publishing creates a public share by default. Use `--share none` (CLI) or `share: false` (MCP) to skip sharing.
+
+Team deployments with OIDC support device sign-in approval; the anonymous local setup above does not require it. The agent follows the guide and the server's publishing policy to choose authentication. A cloud agent cannot directly reach `127.0.0.1` on your computer.
 
 The login example requires OIDC. Remote MCP is a separate, complete entry point at
 `https://your-server/mcp`: no CLI installation is required. ChatGPT, Claude and any client that
@@ -123,6 +149,8 @@ search, read, sharing, versions, export and deletion, including binary files and
 uploads through MCP tools.
 
 See [CLI commands](cli/README.md) and [remote MCP setup and tools](docs/MCP.md).
+
+</details>
 
 ## Deploy for your team
 
@@ -168,6 +196,8 @@ npm test          # unit tests, no external services needed
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution process, DCO sign-off and CI requirements. Report bugs and ideas in [issues](https://github.com/lexmount/artifact-site/issues); ask questions in [discussions](https://github.com/lexmount/artifact-site/discussions).
+
+If artifact-site is useful to you, a ⭐ helps others find it. Using it with your team? Say hi in [Discussions](https://github.com/lexmount/artifact-site/discussions) — we’d love to list you.
 
 ## License
 

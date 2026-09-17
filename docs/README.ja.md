@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/artifact-site-banner-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="assets/artifact-site-banner.png">
-    <img src="assets/artifact-site-banner.png" alt="artifact-site — AI が生成したページやドキュメントを、自分のサーバー上でまとめて管理する場所。オープンソース、セルフホスト、エージェント対応。" width="1000">
+    <img src="assets/artifact-site-banner.png" alt="artifact-site — AI が生成したページやドキュメントを、自分のサーバー上でまとめて管理する場所。オープンソース、セルフホスト、エージェント対応。" width="560">
   </picture>
 </p>
 
@@ -22,13 +22,13 @@
   <a href="#ライセンス"><img src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg" alt="ライセンス: Apache-2.0 OR MIT"></a>
   <a href="../.nvmrc"><img src="https://img.shields.io/badge/node-%E2%89%A5%2024-brightgreen.svg" alt="Node 24"></a>
   <a href="../ROADMAP.md"><img src="https://img.shields.io/badge/roadmap-what's%20next-8a5a2b.svg" alt="ロードマップ"></a>
+  <a href="https://www.npmjs.com/package/@artifact-site/cli"><img src="https://img.shields.io/npm/v/@artifact-site/cli" alt="npm"></a>
+  <a href="https://github.com/lexmount/artifact-site/releases/latest"><img src="https://img.shields.io/github/v/release/lexmount/artifact-site" alt="GitHub Release"></a>
 </p>
 
 <p align="center"><sub>この文書は<a href="../README.md">英語版</a>と同期して更新しています。内容に相違がある場合は英語版が優先します。</sub></p>
 
-AI ツールは日々、より多くの完成物を生み出しています。インタラクティブなグラフ、分析レポート、Web プロトタイプ、スライド資料。しかしそうした成果物は、チャット履歴やローカルフォルダー、さまざまなツールの中に散らばりがちで、まとめて閲覧・共有・更新できる場所がありません。誰かに見せるには依然としてデプロイやファイル送付、スクリーンショットが必要で、後から最新版を探すのにも手間がかかります。
-
-**artifact-site は、そうした成果物を自分のサーバー上に集め、共有・更新・検索できるリンクに変えます。** Claude Artifacts や OpenAI Sites に似た、チーム向けのセルフホスト型ワークスペースと考えてください。成果物はお好みの AI ツールや社内ツールで作り、artifact-site が公開と管理を引き受けます。HTML、静的サイト、ドキュメントをアップロードすれば、チームはオンラインで閲覧し、アクセス権を管理し、改訂履歴を保持できます。コーディングエージェントも、既存の成果物を公開・更新・検索・読み取りできます。
+**チームの AI 生成ページとドキュメントを集める、セルフホストの共有スペース。** HTML、ビルドフォルダー、ZIP、PDF を、サンドボックスで隔離され、バージョンが残るリンクとして公開できます。エージェントは CLI やリモート MCP から公開・更新・検索・読み取りができます。
 
 > **[ライブデモを試す](https://artifact-site.app.lexmount.com/)** — インストール不要。ファイルをドラッグ＆ドロップするだけで公開され、サインインなしで共有リンクを取得できます。
 >
@@ -43,6 +43,21 @@ AI ツールは日々、より多くの完成物を生み出しています。�
 - **ドロップするだけで共有。** HTML、ビルドフォルダー、ZIP、ドキュメントをアップロードするとリンクが得られます。大きなサイトは分割してアップロードされます。全員、サインイン済みユーザー、指定した人、アクセスコードを持つ人に共有できます。
 - **公開後も改善を続けられる。** ブラウザー上で HTML のテキストやソースを編集するか、エージェントにサイト全体を更新させます。変更のたびにバージョンが残り、ロールバックやコピーの保存もできます。
 - **エージェントが続きから作業できる。** ガイド、CLI、MCP から公開・更新し、内容で検索して抽出可能なテキストを読み取ります。たとえば以前のレポートを見つけ、同じアドレスで更新して、チームに新しい版を見てもらえます。
+
+## ホスティング製品との比較
+
+| チームの検討事項 | Claude Artifacts / Claude Code Artifacts | ChatGPT Sites（OpenAI） | artifact-site |
+| --- | --- | --- | --- |
+| ホスティング | Anthropic が管理 | OpenAI が管理 | **自分のサーバー**。ファイルはローカルまたは S3 互換ストレージに保存 |
+| 公開方法 | Claude / Claude Code 内 | ChatGPT Sites 内 | ファイルアップロード、CLI、リモート MCP で**任意のツール**から |
+| 主なコンテンツ | インタラクティブな成果物 | ホストされた Web サイトやアプリ | 静的 HTML、ビルドフォルダー、ZIP、PDF、Office ドキュメント¹ |
+| 認証基盤 | Claude アカウント | ChatGPT アカウント | Google、Keycloak、Okta などの**自分の OIDC プロバイダー** |
+
+¹ Office のオンラインプレビューには Gotenberg が必要です。artifact-site は完成したファイルをホストし、アプリのバックエンドやビルド処理は実行しません。
+
+Claude Artifacts と ChatGPT Sites は、作成とホスティングによる共有を組み合わせています。artifact-site はこれらのワークフローを補完し、さまざまなツールで作ったページやドキュメントを、自分のインフラ上の共有スペースに集めます。
+
+製品の機能や共有方法はプランによって異なり、変更されます。公式の [Claude Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them) と [ChatGPT Sites](https://learn.chatgpt.com/docs/sites) のガイドを参照してください。
 
 ## 目次
 
@@ -69,7 +84,7 @@ Web プロジェクトはアップロード前に静的ファイルへビルド�
 
 ## クイックスタート（ローカル環境）
 
-Git、Make、Docker 24 以上、Compose プラグイン 2.24 以上をインストールした Linux マシンで、次のコマンドを実行します。Node のインストール、ドメイン、ID プロバイダーは不要です。
+試すだけなら、インストール不要の[ライブデモ](https://artifact-site.app.lexmount.com/)を利用できます。ローカルにデプロイするには、以下の 3 コマンドを実行します。Git、Make、Bash、Docker 24 以上、Compose プラグイン 2.24 以上が必要です。macOS では Docker Desktop を、Windows では Docker Desktop の WSL 連携を有効にした WSL2 を使って実行してください。Node、ドメイン、認証プロバイダーの設定は不要です。
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site
@@ -94,7 +109,13 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 
 ## コーディングエージェントとの連携
 
-デプロイ先で **Agent guide**（エージェントガイド）を開き、プロンプト、CLI、MCP のいずれかの方法を選びます。`/for-agents#cli` と `/for-agents#mcp` に、サーバー固有のコマンド、認証手順、クライアント設定があります。リモート MCP はすべてのリクエストを認証します。ChatGPT、Claude など OAuth に対応したクライアントはサーバー自身の同意ページからサインインし、その他のクライアントは個人トークンを持たせます。CLI での公開、更新、共有、削除にはトークンが必要です。公開するとデフォルトで公開共有が作成されます。共有しない場合は `--share none`（CLI）または `share: false`（MCP）を使います。
+エージェントに合った入口を選んでください。
+
+- **Skill**: `npx skills add lexmount/artifact-site` — [エージェントスキル](../skills/artifact-site/SKILL.md)をインストールし、サーバーの URL をエージェントに伝えます。
+- **CLI**: `npm install -g @artifact-site/cli` — Node 24 以上が必要です。コマンド例は以下をご覧ください。
+- **MCP**: `https://your-server/mcp` — ChatGPT、Claude などの MCP クライアントから、サーバーの OAuth サインインで接続します。CLI のインストールは不要です。
+
+**CLI と MCP での公開は、デフォルトで公開共有リンクを作成します。** 共有しない場合は `--share none`（CLI）または `share: false`（MCP）を使ってください。
 
 <p align="center"><img src="assets/agent.gif" alt="コーディングエージェントが artifact-site の CLI でビルドフォルダーを公開し、共有リンクを返す" width="820"></p>
 <p align="center"><sub><b>あるいはコーディングエージェントに任せる。</b>エージェントガイド（<code>/for-agents.md</code>）、CLI、MCP サーバーがあれば、「これを公開してリンクをください」の一言で済みます。更新、検索、読み取りも同じように頼めます。</sub></p>
@@ -105,9 +126,7 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 このプロジェクトの成果物を artifact-site に公開してください。公開ガイド: https://your-server/for-agents.md
 ```
 
-OIDC を設定したチーム向けのデプロイでは、デバイスサインインの承認に対応しています。上記の匿名ローカル環境では不要です。エージェントはガイドとサーバーの公開ポリシーに従って認証方法を選びます。クラウド上のエージェントは、あなたのコンピューターの `127.0.0.1` に直接アクセスできません。
-
-CLI には Node 24 以上が必要です。`npm install -g @artifact-site/cli` でインストールし（詳細と MCP の設定は [cli/README.md](../cli/README.md)）、次を実行します。
+CLI の例（`login` には OIDC が必要です）：
 
 ```bash
 artifact-site login --base https://your-server        # 一度きりのデバイスサインイン
@@ -116,9 +135,18 @@ artifact-site find "quota"                           # 内容で検索
 artifact-site read YOUR_SITE_SLUG                    # サイトのスラッグに置き換えてテキストを読む
 ```
 
+<details>
+<summary>認証の詳細</summary>
+
+デプロイ先で **Agent guide**（エージェントガイド）を開き、プロンプト、CLI、MCP のいずれかの方法を選びます。`/for-agents#cli` と `/for-agents#mcp` に、サーバー固有のコマンド、認証手順、クライアント設定があります。リモート MCP はすべてのリクエストを認証します。ChatGPT、Claude など OAuth に対応したクライアントはサーバー自身の同意ページからサインインし、その他のクライアントは個人トークンを持たせます。CLI での公開、更新、共有、削除にはトークンが必要です。公開するとデフォルトで公開共有が作成されます。共有しない場合は `--share none`（CLI）または `share: false`（MCP）を使います。
+
+OIDC を設定したチーム向けのデプロイでは、デバイスサインインの承認に対応しています。上記の匿名ローカル環境では不要です。エージェントはガイドとサーバーの公開ポリシーに従って認証方法を選びます。クラウド上のエージェントは、あなたのコンピューターの `127.0.0.1` に直接アクセスできません。
+
 上記のログイン例には OIDC が必要です。リモート MCP は `https://your-server/mcp` にある独立した完全な入口で、CLI のインストールは不要です。ChatGPT、Claude をはじめ MCP の認可仕様を実装したクライアントは、このアドレスだけで接続し、サーバーの OAuth 同意ページでサインインします。その他のクライアントは、デプロイ先の `/for-agents#mcp` ページで個人トークンを作成し、認証済みの設定をコピーします。公開、更新、検索、読み取り、共有、バージョン管理、エクスポート、削除に対応し、バイナリファイルやディレクトリのアップロードも MCP ツールから行えます。
 
 [CLI コマンド](../cli/README.md)と[リモート MCP の設定とツール](MCP.md)を参照してください。
+
+</details>
 
 ## チームへの展開
 
@@ -164,6 +192,8 @@ npm test          # ユニットテスト。外部サービスは不要
 ```
 
 コントリビューションの流れ、DCO の署名、CI の要件は [CONTRIBUTING.md](../CONTRIBUTING.md) を参照してください。バグや提案は [issues](https://github.com/lexmount/artifact-site/issues) へ、質問は [discussions](https://github.com/lexmount/artifact-site/discussions) へお寄せください。
+
+artifact-site が役に立ったら、⭐ でほかの人にも見つけてもらえます。チームで利用中ですか？ [Discussions](https://github.com/lexmount/artifact-site/discussions) でお知らせください。利用チームとしてぜひ紹介させてください。
 
 ## ライセンス
 

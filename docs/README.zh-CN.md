@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/artifact-site-banner-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="assets/artifact-site-banner.png">
-    <img src="assets/artifact-site-banner.png" alt="artifact-site：给 AI 生成的网页和文档一个集中管理、分享和持续更新的地方，部署在你自己的服务器上。开源、自托管、适配 agent。" width="1000">
+    <img src="assets/artifact-site-banner.png" alt="artifact-site：给 AI 生成的网页和文档一个集中管理、分享和持续更新的地方，部署在你自己的服务器上。开源、自托管、适配 agent。" width="560">
   </picture>
 </p>
 
@@ -22,13 +22,13 @@
   <a href="#协议"><img src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg" alt="协议：Apache-2.0 OR MIT"></a>
   <a href="../.nvmrc"><img src="https://img.shields.io/badge/node-%E2%89%A5%2024-brightgreen.svg" alt="Node 24"></a>
   <a href="../ROADMAP.md"><img src="https://img.shields.io/badge/roadmap-what's%20next-8a5a2b.svg" alt="路线图"></a>
+  <a href="https://www.npmjs.com/package/@artifact-site/cli"><img src="https://img.shields.io/npm/v/@artifact-site/cli" alt="npm"></a>
+  <a href="https://github.com/lexmount/artifact-site/releases/latest"><img src="https://img.shields.io/github/v/release/lexmount/artifact-site" alt="GitHub Release"></a>
 </p>
 
 <p align="center"><sub>本文档与 <a href="../README.md">英文版</a> 同步维护；如有出入，以英文版为准。</sub></p>
 
-AI 越来越擅长生成东西：一张交互图表、一份分析报告、一个网页原型、一套幻灯片。但这些作品往往散落在聊天记录、本地目录和不同工具里，缺少一个集中查看、分享和继续维护的地方。发给别人看还要部署、传文件或截图；过一阵再找，又不容易确认哪个是最新版本。
-
-**artifact-site 把这些作品集中到你自己的服务器上，变成可分享、可更新、可检索的链接。** 可以把它理解成团队自托管的、类似 Claude Artifacts 或 OpenAI Sites 的作品空间：作品由你选择的 AI 工具或内部工具生成，artifact-site 负责发布和管理。上传 HTML、静态网站或文档后，团队可以在线查看、设置访问权限并保留版本；coding agent 也能发布、更新、搜索和读取已有作品。
+**团队 AI 网页和文档的自托管共享空间。** 将 HTML、构建目录、ZIP 和 PDF 发布为沙箱隔离、保留版本的链接。Agent 可通过 CLI 或远程 MCP 发布、更新、搜索和读取作品。
 
 > **[在线体验](https://artifact-site.app.lexmount.com/)，无需安装。** 拖入文件即可发布并获取分享链接，无需登录。
 >
@@ -43,6 +43,21 @@ AI 越来越擅长生成东西：一张交互图表、一份分析报告、一�
 - **拖进来，就能分享。** 上传 HTML、构建目录、ZIP 或文档，获得一个链接；大站点支持分块上传。可以分享给任何人、登录用户、指定的人，或持有访问码的人。
 - **发布之后还能继续改。** 在浏览器里编辑 HTML 页面的文字或源码，也可以让 agent 更新整个站点。每次修改保留版本，支持回滚和另存为新作品。
 - **让 agent 接着用。** 通过发布指南、CLI 或 MCP 发布和更新，也能按内容搜索、读取可提取的正文。例如，找到上次发布的报告，在同一个地址更新，团队就能查看新版本。
+
+## 与托管产品的比较
+
+| 团队关注点 | Claude Artifacts / Claude Code Artifacts | ChatGPT Sites（OpenAI） | artifact-site |
+| --- | --- | --- | --- |
+| 托管位置 | Anthropic 托管 | OpenAI 托管 | **自己的服务器**，文件存于本地或 S3 兼容存储 |
+| 发布方式 | 通过 Claude / Claude Code | 通过 ChatGPT Sites | **任意工具**，通过文件上传、CLI 或远程 MCP 接入 |
+| 主要内容 | 交互式作品 | 托管网站和应用 | 静态 HTML、构建目录、ZIP、PDF 和 Office 文档¹ |
+| 身份体系 | Claude 账号 | ChatGPT 账号 | **自己的 OIDC 身份源**，如 Google、Keycloak 或 Okta |
+
+¹ Office 在线预览需要 Gotenberg。artifact-site 托管已经生成的文件，不运行应用后端或构建任务。
+
+Claude Artifacts 和 ChatGPT Sites 将创作与托管分享结合起来。artifact-site 为这些流程提供补充：把不同工具生成的网页和文档集中在自己的基础设施上，供团队共享。
+
+产品能力和分享方式因套餐而异，也会持续变化；请参阅官方 [Claude Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them) 和 [ChatGPT Sites](https://learn.chatgpt.com/docs/sites) 指南。
 
 ## 目录
 
@@ -69,7 +84,7 @@ AI 越来越擅长生成东西：一张交互图表、一份分析报告、一�
 
 ## 快速开始（本地部署）
 
-准备好 Git、Make、Docker 24+ 和 Compose 插件 2.24+，在 Linux 机器上执行以下命令即可。无需安装 Node，也无需配置域名或登录服务。
+只想试用？直接打开[在线演示](https://artifact-site.app.lexmount.com/)，无需安装。本地部署执行下面三条命令，需要 Git、Make、Bash、Docker 24+ 和 Compose 插件 2.24+。macOS 可使用 Docker Desktop；Windows 请在 WSL2 中执行，并启用 Docker Desktop 的 WSL 集成。无需安装 Node，也无需配置域名或登录服务。
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site
@@ -94,7 +109,13 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 
 ## 接入 coding agent
 
-打开部署后的 **Agent 指南**，选择交给 Agent、CLI 或 MCP。`/for-agents#cli` 和 `/for-agents#mcp` 提供当前服务器的命令、认证步骤与客户端配置。远程 MCP 的每次请求都要认证：ChatGPT、Claude 等支持 OAuth 的客户端通过本服务自己的授权页登录，其他客户端携带个人 Token；CLI 发布、更新、分享和删除需要 Token；发布默认创建公开分享，不分享时使用 `--share none`（CLI）或 `share: false`（MCP）。
+选择适合你的 agent 的入口：
+
+- **Skill**: `npx skills add lexmount/artifact-site` — 安装 [agent skill](../skills/artifact-site/SKILL.md)，并告诉 agent 你的服务器地址。
+- **CLI**: `npm install -g @artifact-site/cli` — 需要 Node 24+，示例命令见下方。
+- **MCP**: `https://your-server/mcp` — ChatGPT、Claude 等 MCP 客户端通过服务器的 OAuth 登录连接，无需安装 CLI。
+
+**CLI 和 MCP 发布默认创建公开分享。** 不分享时使用 `--share none`（CLI）或 `share: false`（MCP）。
 
 <p align="center"><img src="assets/agent.zh-CN.gif" alt="coding agent 用 artifact-site 的 CLI 发布构建目录并交回分享链接" width="820"></p>
 <p align="center"><sub><b>或者交给你的 coding agent。</b>有了 agent 指南（<code>/for-agents.md</code>）、CLI 或 MCP 服务，"把这个发布了给我个链接"就是一句话的事——之后的更新、搜索、读取也一样。</sub></p>
@@ -105,9 +126,7 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 请把当前项目的产物发布到 artifact-site，发布手册：https://你的服务器/for-agents.md
 ```
 
-配置了 OIDC 的团队部署支持设备登录授权；本地匿名体验不需要这个步骤。agent 根据指南和服务器的发布策略选择认证方式。云端 agent 无法直接访问你电脑上的 `127.0.0.1`。
-
-CLI 需要 Node 24+。用 `npm install -g @artifact-site/cli` 安装（细节和 MCP 配置见 [cli/README.md](../cli/README.md)），再运行：
+CLI 示例（`login` 需要 OIDC）：
 
 ```bash
 artifact-site login --base https://your-server        # 一次性设备登录
@@ -116,11 +135,20 @@ artifact-site find "quota"                           # 按内容搜索
 artifact-site read YOUR_SITE_SLUG                    # 替换为作品标识，读取正文
 ```
 
+<details>
+<summary>认证详情</summary>
+
+打开部署后的 **Agent 指南**，选择交给 Agent、CLI 或 MCP。`/for-agents#cli` 和 `/for-agents#mcp` 提供当前服务器的命令、认证步骤与客户端配置。远程 MCP 的每次请求都要认证：ChatGPT、Claude 等支持 OAuth 的客户端通过本服务自己的授权页登录，其他客户端携带个人 Token；CLI 发布、更新、分享和删除需要 Token；发布默认创建公开分享，不分享时使用 `--share none`（CLI）或 `share: false`（MCP）。
+
+配置了 OIDC 的团队部署支持设备登录授权；本地匿名体验不需要这个步骤。agent 根据指南和服务器的发布策略选择认证方式。云端 agent 无法直接访问你电脑上的 `127.0.0.1`。
+
 以上登录示例需要 OIDC。远程 MCP 是另一套完整入口，地址为 `https://your-server/mcp`，无需安装 CLI。
 ChatGPT、Claude 等实现了 MCP 授权规范的客户端只需填入这个地址，然后在本服务的 OAuth 授权页登录即可；其他客户端打开部署后的 `/for-agents#mcp`，创建个人 Token 并复制认证配置。之后即可发布、更新、搜索、读取、分享、管理版本、导出和删除。
 二进制文件和文件夹也可通过 MCP 工具上传，无需调用 CLI。
 
 完整说明见 [CLI 命令](../cli/README.md)和[远程 MCP 接入及工具](MCP.md)。
+
+</details>
 
 ## 团队部署
 
@@ -166,6 +194,8 @@ npm test          # 单元测试，不依赖外部服务
 ```
 
 提交流程、DCO 签名和 CI 要求见 [CONTRIBUTING.md](../CONTRIBUTING.md)。Bug 和建议提交到 [issues](https://github.com/lexmount/artifact-site/issues)，使用问题到 [discussions](https://github.com/lexmount/artifact-site/discussions)。
+
+如果 artifact-site 对你有用，一颗 ⭐ 可以帮助更多人发现它。团队正在使用？欢迎到 [Discussions](https://github.com/lexmount/artifact-site/discussions) 打个招呼，我们很乐意将你们列为使用者。
 
 ## 协议
 

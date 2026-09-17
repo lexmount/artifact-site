@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/artifact-site-banner-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="assets/artifact-site-banner.png">
-    <img src="assets/artifact-site-banner.png" alt="artifact-site — Un espace commun pour les pages et documents générés par l'IA, sur votre propre serveur. Open source, auto-hébergé, prêt pour les agents." width="1000">
+    <img src="assets/artifact-site-banner.png" alt="artifact-site — Un espace commun pour les pages et documents générés par l'IA, sur votre propre serveur. Open source, auto-hébergé, prêt pour les agents." width="560">
   </picture>
 </p>
 
@@ -22,13 +22,13 @@
   <a href="#licence"><img src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg" alt="Licence : Apache-2.0 OR MIT"></a>
   <a href="../.nvmrc"><img src="https://img.shields.io/badge/node-%E2%89%A5%2024-brightgreen.svg" alt="Node 24"></a>
   <a href="../ROADMAP.md"><img src="https://img.shields.io/badge/roadmap-what's%20next-8a5a2b.svg" alt="Feuille de route"></a>
+  <a href="https://www.npmjs.com/package/@artifact-site/cli"><img src="https://img.shields.io/npm/v/@artifact-site/cli" alt="npm"></a>
+  <a href="https://github.com/lexmount/artifact-site/releases/latest"><img src="https://img.shields.io/github/v/release/lexmount/artifact-site" alt="GitHub Release"></a>
 </p>
 
 <p align="center"><sub>Cette traduction est maintenue en parallèle de la <a href="../README.md">version anglaise</a> ; en cas de divergence, l'anglais fait foi.</sub></p>
 
-Les outils d'IA produisent chaque jour davantage de travail fini : graphiques interactifs, rapports d'analyse, prototypes web et présentations. Ce travail finit souvent dispersé entre historiques de conversation, dossiers locaux et outils divers, sans lieu commun pour le parcourir, le partager ou le maintenir. Le montrer à quelqu'un suppose encore de le déployer, d'envoyer des fichiers ou de faire une capture d'écran ; retrouver plus tard la dernière version demande un effort supplémentaire.
-
-**artifact-site rassemble ce travail sur votre propre serveur, sous forme de liens que vous pouvez partager, mettre à jour et rechercher.** Voyez-le comme un espace de travail auto-hébergé pour les artefacts de votre équipe, comparable à Claude Artifacts ou OpenAI Sites : vos outils d'IA ou vos outils internes créent le travail, artifact-site le publie et le gère. Téléversez du HTML, des sites statiques ou des documents pour que votre équipe puisse les consulter en ligne, en contrôler l'accès et en conserver les révisions. Les agents de codage peuvent eux aussi publier, mettre à jour, rechercher et lire le travail existant.
+**Un espace auto-hébergé pour les pages et documents générés par IA de votre équipe.** Publiez HTML, dossiers de build, ZIP et PDF sous forme de liens versionnés, avec isolation en bac à sable. Les agents peuvent publier, mettre à jour, rechercher et lire via la CLI ou MCP distant.
 
 > **[Essayer la démo en ligne](https://artifact-site.app.lexmount.com/)** — aucune installation requise. Glissez-déposez un fichier pour le publier et obtenir un lien de partage, sans vous connecter.
 >
@@ -43,6 +43,21 @@ Les outils d'IA produisent chaque jour davantage de travail fini : graphiques in
 - **Déposez et partagez.** Téléversez du HTML, un dossier de build, un ZIP ou un document pour obtenir un lien. Les sites volumineux sont envoyés par morceaux. Partagez avec tout le monde, les utilisateurs connectés, des personnes nommées ou les détenteurs d'un code d'accès.
 - **Continuez d'améliorer le travail publié.** Modifiez le texte ou la source HTML dans le navigateur, ou laissez un agent mettre à jour tout le site. Chaque modification conserve une version, avec retour en arrière et possibilité d'enregistrer une copie.
 - **Laissez les agents reprendre là où ils s'étaient arrêtés.** Publiez et mettez à jour via le guide, la CLI ou MCP, puis recherchez par contenu et lisez le texte extractible. Par exemple, retrouvez un rapport précédent et mettez-le à jour à la même adresse pour que votre équipe le consulte.
+
+## Comparaison avec les produits hébergés
+
+| Pour votre équipe | Claude Artifacts / Claude Code Artifacts | ChatGPT Sites (OpenAI) | artifact-site |
+| --- | --- | --- | --- |
+| Hébergement | Géré par Anthropic | Géré par OpenAI | **Votre serveur**, avec stockage de fichiers local ou compatible S3 |
+| Publication | Dans Claude / Claude Code | Dans ChatGPT Sites | **Tout outil**, via téléversement, CLI ou MCP distant |
+| Contenus privilégiés | Artefacts interactifs | Sites web et applications hébergés | HTML statique, dossiers de build, ZIP, PDF et documents Office¹ |
+| Identité | Comptes Claude | Comptes ChatGPT | **Votre fournisseur OIDC**, par exemple Google, Keycloak ou Okta |
+
+¹ L’aperçu en ligne des documents Office nécessite Gotenberg. artifact-site héberge des fichiers prêts à publier ; il n’exécute ni backends applicatifs ni tâches de build.
+
+Claude Artifacts et ChatGPT Sites associent création et partage hébergé. artifact-site complète ces flux avec un espace commun sur votre propre infrastructure pour les pages et documents produits par différents outils.
+
+Les fonctionnalités et le partage varient selon l’offre et évoluent ; consultez les guides officiels de [Claude Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them) et [ChatGPT Sites](https://learn.chatgpt.com/docs/sites).
 
 ## Sommaire
 
@@ -69,7 +84,7 @@ Les pages hébergées s'exécutent dans un bac à sable et ne peuvent pas utilis
 
 ## Démarrage rapide (déploiement local)
 
-Avec Git, Make, Docker 24+ et le plugin Compose 2.24+ installés, exécutez ces commandes sur une machine Linux. Aucune installation de Node, aucun domaine ni fournisseur d'identité n'est nécessaire.
+Pour essayer, utilisez la [démo en ligne](https://artifact-site.app.lexmount.com/) sans rien installer. Pour un déploiement local, exécutez les trois commandes ci-dessous. Il vous faut Git, Make, Bash, Docker 24+ et le plugin Compose 2.24+. Sur macOS, utilisez Docker Desktop ; sur Windows, exécutez les commandes dans WSL2 avec l’intégration WSL de Docker Desktop activée. Aucune installation de Node, aucun domaine ni fournisseur d’identité n’est nécessaire.
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site
@@ -94,7 +109,13 @@ Déposez `hello.html` sur la page d'accueil (ou choisissez **Upload**). Vous dev
 
 ## Connecter un agent de codage
 
-Ouvrez **Agent guide** (le guide des agents) sur votre déploiement pour choisir la voie du prompt, de la CLI ou de MCP. `/for-agents#cli` et `/for-agents#mcp` fournissent les commandes propres au serveur, les étapes d'authentification et la configuration des clients. Le MCP distant authentifie chaque requête : ChatGPT, Claude et les autres clients compatibles OAuth se connectent via la page de consentement du serveur, les autres clients portent un jeton personnel. Publier, mettre à jour, partager et supprimer via la CLI exigent un jeton ; la publication crée par défaut un partage public. Utilisez `--share none` (CLI) ou `share: false` (MCP) pour ne pas partager.
+Choisissez le point d’entrée adapté à votre agent :
+
+- **Skill**: `npx skills add lexmount/artifact-site` — installez le [skill pour agents](../skills/artifact-site/SKILL.md) et indiquez à votre agent l’URL de votre serveur.
+- **CLI**: `npm install -g @artifact-site/cli` — nécessite Node 24+ ; exemples de commandes ci-dessous.
+- **MCP**: `https://your-server/mcp` — connectez ChatGPT, Claude ou un autre client MCP via la connexion OAuth du serveur ; aucune installation de la CLI n’est nécessaire.
+
+**La publication via CLI ou MCP crée par défaut un partage public.** Utilisez `--share none` (CLI) ou `share: false` (MCP) pour publier sans partager.
 
 <p align="center"><img src="assets/agent.gif" alt="Un agent de codage publie un dossier de build avec la CLI artifact-site et renvoie le lien de partage" width="820"></p>
 <p align="center"><sub><b>Ou laissez faire votre agent de codage.</b> Avec le guide des agents (<code>/for-agents.md</code>), la CLI ou le serveur MCP, « publie ceci et donne-moi un lien » tient en une seule instruction — et le site peut être mis à jour, recherché et lu de la même façon.</sub></p>
@@ -105,9 +126,7 @@ Donnez cette instruction à Claude Code, Cursor, Codex ou tout autre agent de co
 Publie la sortie de ce projet sur artifact-site. Guide de publication : https://your-server/for-agents.md
 ```
 
-Les déploiements d'équipe avec OIDC prennent en charge l'approbation de connexion d'appareil ; l'installation locale anonyme ci-dessus n'en a pas besoin. L'agent suit le guide et la politique de publication du serveur pour choisir l'authentification. Un agent dans le cloud ne peut pas atteindre directement `127.0.0.1` sur votre ordinateur.
-
-La CLI requiert Node 24+. Installez-la avec `npm install -g @artifact-site/cli` (détails et configuration MCP : [cli/README.md](../cli/README.md)), puis exécutez :
+Exemples CLI (`login` nécessite OIDC) :
 
 ```bash
 artifact-site login --base https://your-server        # connexion d'appareil, une seule fois
@@ -116,9 +135,18 @@ artifact-site find "quota"                           # rechercher par contenu
 artifact-site read YOUR_SITE_SLUG                    # remplacer par le slug d'un site pour lire son texte
 ```
 
+<details>
+<summary>Détails de l’authentification</summary>
+
+Ouvrez **Agent guide** (le guide des agents) sur votre déploiement pour choisir la voie du prompt, de la CLI ou de MCP. `/for-agents#cli` et `/for-agents#mcp` fournissent les commandes propres au serveur, les étapes d'authentification et la configuration des clients. Le MCP distant authentifie chaque requête : ChatGPT, Claude et les autres clients compatibles OAuth se connectent via la page de consentement du serveur, les autres clients portent un jeton personnel. Publier, mettre à jour, partager et supprimer via la CLI exigent un jeton ; la publication crée par défaut un partage public. Utilisez `--share none` (CLI) ou `share: false` (MCP) pour ne pas partager.
+
+Les déploiements d'équipe avec OIDC prennent en charge l'approbation de connexion d'appareil ; l'installation locale anonyme ci-dessus n'en a pas besoin. L'agent suit le guide et la politique de publication du serveur pour choisir l'authentification. Un agent dans le cloud ne peut pas atteindre directement `127.0.0.1` sur votre ordinateur.
+
 L'exemple de connexion requiert OIDC. Le MCP distant est un point d'entrée distinct et complet à l'adresse `https://your-server/mcp` : aucune installation de la CLI n'est nécessaire. ChatGPT, Claude et tout client qui implémente l'autorisation MCP se connectent avec la seule adresse et s'authentifient via la page de consentement OAuth du serveur ; pour les autres clients, la page `/for-agents#mcp` du déploiement crée un jeton personnel et copie la configuration authentifiée. Il prend en charge la publication, la mise à jour, la recherche, la lecture, le partage, les versions, l'export et la suppression, y compris les fichiers binaires et l'envoi de répertoires via les outils MCP.
 
 Voir les [commandes de la CLI](../cli/README.md) et la [configuration et les outils du MCP distant](MCP.md).
+
+</details>
 
 ## Déployer pour votre équipe
 
@@ -164,6 +192,8 @@ npm test          # tests unitaires, sans service externe
 ```
 
 Voir [CONTRIBUTING.md](../CONTRIBUTING.md) pour le processus de contribution, la signature DCO et les exigences de la CI. Signalez bugs et idées dans les [issues](https://github.com/lexmount/artifact-site/issues) ; posez vos questions dans les [discussions](https://github.com/lexmount/artifact-site/discussions).
+
+Si artifact-site vous est utile, une ⭐ aide d’autres personnes à le découvrir. Votre équipe l’utilise ? Présentez-vous dans les [Discussions](https://github.com/lexmount/artifact-site/discussions) — nous serions ravis de vous citer parmi les utilisateurs.
 
 ## Licence
 

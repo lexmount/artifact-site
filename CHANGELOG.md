@@ -5,6 +5,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Add an installable artifact-site agent skill and streamline README onboarding across all six languages, with a concise hosted-product comparison and clearer CLI/MCP entry points.
+
 - Enforce RBAC consistently across browser, API, CLI and MCP access. Fix title editing for account owners/admins, validate anonymous management tokens, retire owned-site tokens and disable disown without changing ownership, visibility or existing shares.
 - Recheck credentials and roles during upload staging and final publication; close CSRF token-presence bypasses, revoke derived preview grants, and protect private metadata and source/export access.
 - Preserve MCP/personal-token authentication, add tenant/share context and share mode/version controls to clients, and keep `email` as a compatible alias of the `people` share policy.
