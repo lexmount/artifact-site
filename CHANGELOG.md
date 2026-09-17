@@ -14,6 +14,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ### Fixed
 
+- Preserve every file in a parallel chunked upload, including the root `index.html`, so a published site consistently opens at its intended entry page.
+
 - Public and unlisted artifact viewers now need editor-or-higher source-export permission to fork (Save a copy), download original files or export ZIPs. Rendered content remains readable.
 
 - Prevent concurrent RBAC operations from exhausting the PostgreSQL connection pool while

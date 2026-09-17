@@ -19,8 +19,8 @@
 // orphan, collected by expiry cleanup. The version row is written only at the moment of commit, so
 // the database never holds half a version: a version either exists in full or never existed.
 import {
-  createId, deleteUploadSession, getUploadSessionRow, insertUploadSession, listUploadSessionsBefore,
-  setUploadSessionFiles, type UploadSessionRow,
+  compareUploadSessionFiles, createId, deleteUploadSession, getUploadSessionRow, insertUploadSession,
+  listUploadSessionsBefore, type UploadSessionRow,
 } from "@/lib/db";
 import { getStorage } from "@/lib/storage";
 import { limits } from "@/lib/config";
@@ -87,12 +87,20 @@ export function assertSessionRoom(session: UploadSession, incoming: number): voi
   }
 }
 
-/** Re-uploading a file with the same name overwrites rather than accumulates — otherwise a few retries would falsely exceed the limit. Mutates the passed-in object in place, then persists. */
+/** Merge parallel PUTs atomically; retrying a path replaces its prior byte count. */
 export async function recordUploadedFile(session: UploadSession, relpath: string, bytes: number): Promise<void> {
-  const existing = session.files.findIndex((f) => f.relpath === relpath);
-  if (existing >= 0) session.files[existing] = { relpath, bytes };
-  else session.files.push({ relpath, bytes });
-  await setUploadSessionFiles(session.versionId, session.files);
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const current = await getUploadSessionRow(session.versionId);
+    if (!current) throw new BadRequestError("The upload session does not exist or has expired");
+    const prior = current.files.filter((file) => file.relpath !== relpath);
+    assertSessionRoom({ ...current, files: prior }, bytes);
+    const updated = [...prior, { relpath, bytes }];
+    if (await compareUploadSessionFiles(session.versionId, current.files, updated)) {
+      session.files = updated;
+      return;
+    }
+  }
+  throw new BadRequestError("Concurrent uploads changed the session too often; retry the file");
 }
 
 /** Discard the session and reclaim the bytes already written — an interrupted upload must not leave permanent garbage in storage. */
