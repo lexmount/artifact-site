@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/artifact-site-banner-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="assets/artifact-site-banner.png">
-    <img src="assets/artifact-site-banner.png" alt="artifact-site — Ein gemeinsamer Ort für KI-generierte Seiten und Dokumente, auf Ihrem eigenen Server. Open Source, selbst gehostet, bereit für Agenten." width="1000">
+    <img src="assets/artifact-site-banner.png" alt="artifact-site — Ein gemeinsamer Ort für KI-generierte Seiten und Dokumente, auf Ihrem eigenen Server. Open Source, selbst gehostet, bereit für Agenten." width="560">
   </picture>
 </p>
 
@@ -22,13 +22,15 @@
   <a href="#lizenz"><img src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg" alt="Lizenz: Apache-2.0 OR MIT"></a>
   <a href="../.nvmrc"><img src="https://img.shields.io/badge/node-%E2%89%A5%2024-brightgreen.svg" alt="Node 24"></a>
   <a href="../ROADMAP.md"><img src="https://img.shields.io/badge/roadmap-what's%20next-8a5a2b.svg" alt="Roadmap"></a>
+  <a href="https://www.npmjs.com/package/@artifact-site/cli"><img src="https://img.shields.io/npm/v/@artifact-site/cli" alt="npm"></a>
+  <a href="https://github.com/lexmount/artifact-site/releases/latest"><img src="https://img.shields.io/github/v/release/lexmount/artifact-site" alt="GitHub Release"></a>
 </p>
 
 <p align="center"><sub>Diese Übersetzung wird zusammen mit der <a href="../README.md">englischen Fassung</a> gepflegt; bei Abweichungen gilt das Englische.</sub></p>
 
-KI-Werkzeuge liefern jeden Tag mehr fertige Arbeit: interaktive Diagramme, Analyseberichte, Web-Prototypen und Foliensätze. Diese Arbeit landet oft verstreut in Chat-Verläufen, lokalen Ordnern und verschiedenen Tools, ohne einen gemeinsamen Ort, an dem man sie durchsehen, teilen oder pflegen kann. Jemandem etwas zu zeigen heißt immer noch: deployen, Dateien verschicken oder einen Screenshot machen; die neueste Version später wiederzufinden kostet zusätzliche Arbeit.
+Heute stehen unzählige KI-Agenten zur Auswahl, doch ihre Ergebnisse verteilen sich auf Ihren Computer, Chat-Verläufe und die Clouds verschiedener Plattformen. Das erschwert es, sie gemeinsam zu verwalten, zu teilen und später wiederzufinden.
 
-**artifact-site bringt diese Arbeit auf Ihren eigenen Server, als Links, die Sie teilen, aktualisieren und durchsuchen können.** Stellen Sie es sich als selbst gehosteten Arbeitsbereich für die Artefakte Ihres Teams vor, ähnlich wie Claude Artifacts oder OpenAI Sites: Ihre KI-Werkzeuge oder internen Tools erzeugen die Arbeit, artifact-site veröffentlicht und verwaltet sie. Laden Sie HTML, statische Websites oder Dokumente hoch, damit Ihr Team sie online ansehen, den Zugriff steuern und Revisionen behalten kann. Auch Coding-Agenten können vorhandene Arbeit veröffentlichen, aktualisieren, durchsuchen und lesen.
+**artifact-site ist ein selbst gehosteter Arbeitsbereich für Einzelpersonen und Teams, ähnlich wie Claude Artifacts oder OpenAI Sites.** Ihre verschiedenen Agenten erstellen die Inhalte; artifact-site verwaltet sie zentral: Seiten und Dokumente werden zu Links, mit Freigaben, Kommentaren und Feedback, Zugriffskontrolle und Versionsverlauf. Ihre bisherigen Agenten können die Arbeit über die CLI oder MCP weiter bearbeiten, veröffentlichen, durchsuchen und aktualisieren.
 
 > **[Live-Demo ausprobieren](https://artifact-site.app.lexmount.com/)** – keine Installation nötig. Ziehen Sie eine Datei hinein, um sie zu veröffentlichen und einen teilbaren Link zu erhalten, ohne Anmeldung.
 >
@@ -43,6 +45,21 @@ KI-Werkzeuge liefern jeden Tag mehr fertige Arbeit: interaktive Diagramme, Analy
 - **Ablegen und teilen.** Laden Sie HTML, einen Build-Ordner, ein ZIP oder ein Dokument hoch und erhalten Sie einen Link. Große Websites werden in Teilen hochgeladen. Teilen Sie mit allen, mit angemeldeten Benutzern, mit bestimmten Personen oder mit Inhabern eines Zugangscodes.
 - **Veröffentlichte Arbeit weiter verbessern.** Bearbeiten Sie HTML-Text oder -Quelltext im Browser, oder lassen Sie einen Agenten die ganze Website aktualisieren. Jede Änderung behält eine Version, mit Rollback und der Möglichkeit, eine Kopie zu speichern.
 - **Agenten dort weitermachen lassen, wo sie aufgehört haben.** Veröffentlichen und aktualisieren Sie über den Leitfaden, die CLI oder MCP, suchen Sie dann nach Inhalt und lesen Sie extrahierbaren Text. Finden Sie zum Beispiel einen früheren Bericht und aktualisieren Sie ihn unter derselben Adresse, damit Ihr Team ihn ansehen kann.
+
+## Vergleich mit gehosteten Produkten
+
+| Für Ihr Team | Claude Artifacts / Claude Code Artifacts | ChatGPT Sites (OpenAI) | artifact-site |
+| --- | --- | --- | --- |
+| Hosting | Von Anthropic verwaltet | Von OpenAI verwaltet | **Ihr Server**, mit lokalem oder S3-kompatiblem Dateispeicher |
+| Veröffentlichung | In Claude / Claude Code | In ChatGPT Sites | **Beliebige Tools** über Datei-Upload, CLI oder Remote-MCP |
+| Inhalte im Fokus | Interaktive Artefakte | Gehostete Websites und Apps | Statisches HTML, Build-Ordner, ZIPs, PDF und Office-Dokumente¹ |
+| Identität | Claude-Konten | ChatGPT-Konten | **Ihr OIDC-Anbieter**, etwa Google, Keycloak oder Okta |
+
+¹ Die Online-Vorschau von Office-Dokumenten benötigt Gotenberg. artifact-site hostet fertige Dateien und führt weder Anwendungs-Backends noch Build-Jobs aus.
+
+Claude Artifacts und ChatGPT Sites verbinden die Erstellung mit gehosteter Freigabe. artifact-site ergänzt diese Abläufe um einen gemeinsamen Ort auf Ihrer eigenen Infrastruktur für Seiten und Dokumente aus verschiedenen Tools.
+
+Funktionsumfang und Freigaben hängen vom Tarif ab und entwickeln sich weiter; siehe die offiziellen Leitfäden zu [Claude Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them) und [ChatGPT Sites](https://learn.chatgpt.com/docs/sites).
 
 ## Inhalt
 
@@ -69,7 +86,7 @@ Gehostete Seiten laufen in einer Sandbox und können die Anmeldesitzung der Plat
 
 ## Schnellstart (lokale Installation)
 
-Führen Sie mit installiertem Git, Make, Docker 24+ und Compose-Plugin 2.24+ diese Befehle auf einer Linux-Maschine aus. Weder eine Node-Installation noch eine Domain oder ein Identity-Provider ist nötig.
+Zum Ausprobieren nutzen Sie die [Live-Demo](https://artifact-site.app.lexmount.com/) ohne Installation. Für eine lokale Installation führen Sie die folgenden drei Befehle aus. Sie benötigen Git, Make, Bash, Docker 24+ und das Compose-Plugin 2.24+. Unter macOS nutzen Sie Docker Desktop; unter Windows führen Sie die Befehle in WSL2 mit aktivierter WSL-Integration von Docker Desktop aus. Node, eine Domain oder ein Identitätsanbieter sind nicht erforderlich.
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site
@@ -94,7 +111,13 @@ Ziehen Sie `hello.html` auf die Startseite (oder wählen Sie **Upload**). Sie so
 
 ## Einen Coding-Agenten anbinden
 
-Öffnen Sie in Ihrer Installation **Agent guide** (den Agenten-Leitfaden), um zwischen Prompt, CLI und MCP zu wählen. `/for-agents#cli` und `/for-agents#mcp` liefern serverspezifische Befehle, Authentifizierungsschritte und Client-Konfigurationen. Remote-MCP authentifiziert jede Anfrage: ChatGPT, Claude und andere OAuth-fähige Clients melden sich über die Zustimmungsseite des Servers an, andere Clients führen ein persönliches Token mit. Veröffentlichen, Aktualisieren, Teilen und Löschen über die CLI erfordern ein Token; das Veröffentlichen erzeugt standardmäßig eine öffentliche Freigabe. Mit `--share none` (CLI) oder `share: false` (MCP) überspringen Sie die Freigabe.
+Wählen Sie den passenden Zugang für Ihren Agenten:
+
+- **Skill**: `npx skills add lexmount/artifact-site` — installieren Sie den [Agenten-Skill](../skills/artifact-site/SKILL.md) und geben Sie Ihrem Agenten die Server-URL.
+- **CLI**: `npm install -g @artifact-site/cli` — erfordert Node 24+; Befehlsbeispiele finden Sie unten.
+- **MCP**: `https://your-server/mcp` — verbinden Sie ChatGPT, Claude oder einen anderen MCP-Client über die OAuth-Anmeldung des Servers; keine CLI-Installation nötig.
+
+**CLI- und MCP-Veröffentlichungen erzeugen standardmäßig eine öffentliche Freigabe.** Verwenden Sie `--share none` (CLI) oder `share: false` (MCP), um ohne Freigabe zu veröffentlichen.
 
 <p align="center"><img src="assets/agent.gif" alt="Ein Coding-Agent veröffentlicht einen Build-Ordner mit der artifact-site-CLI und gibt den Freigabelink zurück" width="820"></p>
 <p align="center"><sub><b>Oder lassen Sie Ihren Coding-Agenten das erledigen.</b> Mit dem Agenten-Leitfaden (<code>/for-agents.md</code>), der CLI oder dem MCP-Server ist „veröffentliche das und gib mir einen Link“ eine einzige Anweisung – und die Website lässt sich auf demselben Weg aktualisieren, durchsuchen und lesen.</sub></p>
@@ -105,9 +128,7 @@ Geben Sie diese Anweisung an Claude Code, Cursor, Codex oder einen anderen Codin
 Veröffentliche die Ausgabe dieses Projekts auf artifact-site. Anleitung zum Veröffentlichen: https://your-server/for-agents.md
 ```
 
-Team-Installationen mit OIDC unterstützen die Bestätigung einer Geräteanmeldung; die anonyme lokale Installation oben braucht das nicht. Der Agent folgt dem Leitfaden und der Veröffentlichungsrichtlinie des Servers, um die Authentifizierung zu wählen. Ein Cloud-Agent kann `127.0.0.1` auf Ihrem Computer nicht direkt erreichen.
-
-Die CLI erfordert Node 24+. Installieren Sie sie mit `npm install -g @artifact-site/cli` (Details und die MCP-Einrichtung: [cli/README.md](../cli/README.md)) und führen Sie dann aus:
+CLI-Beispiele (`login` erfordert OIDC):
 
 ```bash
 artifact-site login --base https://your-server        # einmalige Geräteanmeldung
@@ -116,9 +137,18 @@ artifact-site find "quota"                           # nach Inhalt suchen
 artifact-site read YOUR_SITE_SLUG                    # durch einen Site-Slug ersetzen, um dessen Text zu lesen
 ```
 
+<details>
+<summary>Details zur Authentifizierung</summary>
+
+Öffnen Sie in Ihrer Installation **Agent guide** (den Agenten-Leitfaden), um zwischen Prompt, CLI und MCP zu wählen. `/for-agents#cli` und `/for-agents#mcp` liefern serverspezifische Befehle, Authentifizierungsschritte und Client-Konfigurationen. Remote-MCP authentifiziert jede Anfrage: ChatGPT, Claude und andere OAuth-fähige Clients melden sich über die Zustimmungsseite des Servers an, andere Clients führen ein persönliches Token mit. Veröffentlichen, Aktualisieren, Teilen und Löschen über die CLI erfordern ein Token; das Veröffentlichen erzeugt standardmäßig eine öffentliche Freigabe. Mit `--share none` (CLI) oder `share: false` (MCP) überspringen Sie die Freigabe.
+
+Team-Installationen mit OIDC unterstützen die Bestätigung einer Geräteanmeldung; die anonyme lokale Installation oben braucht das nicht. Der Agent folgt dem Leitfaden und der Veröffentlichungsrichtlinie des Servers, um die Authentifizierung zu wählen. Ein Cloud-Agent kann `127.0.0.1` auf Ihrem Computer nicht direkt erreichen.
+
 Das Anmeldebeispiel erfordert OIDC. Remote-MCP ist ein eigener, vollständiger Zugang unter `https://your-server/mcp`: Eine CLI-Installation ist nicht nötig. ChatGPT, Claude und jeder Client, der die MCP-Autorisierung implementiert, verbinden sich allein mit der Adresse und melden sich über die OAuth-Zustimmungsseite des Servers an; für andere Clients erstellt die Seite `/for-agents#mcp` der Installation ein persönliches Token und kopiert die authentifizierte Konfiguration. Unterstützt werden Veröffentlichen, Aktualisieren, Suchen, Lesen, Teilen, Versionen, Export und Löschen, einschließlich Binärdateien und Verzeichnis-Uploads über MCP-Tools.
 
 Siehe [CLI-Befehle](../cli/README.md) und [Einrichtung und Tools für Remote-MCP](MCP.md).
+
+</details>
 
 ## Für Ihr Team bereitstellen
 
@@ -164,6 +194,8 @@ npm test          # Unit-Tests, keine externen Dienste nötig
 ```
 
 Siehe [CONTRIBUTING.md](../CONTRIBUTING.md) für den Beitragsprozess, das DCO-Sign-off und die CI-Anforderungen. Melden Sie Fehler und Ideen in den [Issues](https://github.com/lexmount/artifact-site/issues); stellen Sie Fragen in den [Discussions](https://github.com/lexmount/artifact-site/discussions).
+
+Wenn artifact-site Ihnen hilft, macht ein ⭐ es für andere leichter auffindbar. Ihr Team nutzt es bereits? Melden Sie sich in den [Discussions](https://github.com/lexmount/artifact-site/discussions) — wir würden Sie gern als Nutzer aufführen.
 
 ## Lizenz
 
