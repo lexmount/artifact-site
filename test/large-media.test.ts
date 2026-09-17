@@ -110,6 +110,36 @@ describe("upload sessions — a version either exists in full or never existed",
     expect((await getUploadSession(session.versionId))?.files).toEqual([{ relpath: "a.bin", bytes: 250 }]);
   });
 
+  it("keeps every file when parallel requests start from the same session snapshot", async () => {
+    const created = await createUploadSession({ ownerKey: "a:test" });
+    const first = await getUploadSession(created.versionId);
+    const second = await getUploadSession(created.versionId);
+    if (!first || !second) throw new Error("upload session missing");
+    await Promise.all([
+      recordUploadedFile(first, "a.html", 10),
+      recordUploadedFile(second, "index.html", 20),
+    ]);
+    expect((await getUploadSession(created.versionId))?.files).toEqual([
+      { relpath: "a.html", bytes: 10 },
+      { relpath: "index.html", bytes: 20 },
+    ]);
+  });
+
+  it("checks the total byte limit against the latest concurrent session state", async () => {
+    process.env.ARTIFACT_MAX_BYTES = String(1000);
+    const created = await createUploadSession({ ownerKey: "a:test" });
+    const first = await getUploadSession(created.versionId);
+    const second = await getUploadSession(created.versionId);
+    if (!first || !second) throw new Error("upload session missing");
+    const outcomes = await Promise.allSettled([
+      recordUploadedFile(first, "a.bin", 600),
+      recordUploadedFile(second, "b.bin", 600),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    expect((await getUploadSession(created.versionId))?.files).toHaveLength(1);
+  });
+
   // This is the lifeline of multi-replica deployments: the session must be readable by **another
   // process**. Simulated by bypassing the local object and reading straight from the database.
   it("sessions are persisted — another process can read them (the prerequisite for multiple replicas in production)", async () => {
