@@ -4,12 +4,14 @@
 //      meanwhile);
 //   2. media can be fetched by byte range (otherwise a video must fully download before it plays,
 //      and the progress bar cannot be dragged).
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseRangeHeader, servePreviewFile } from "@/lib/preview";
 import { getStorage } from "@/lib/storage";
+import * as db from "@/lib/db";
+import { errorResponse } from "@/app/api/_util";
 import { getCurrentVersion, getSiteBySlug } from "@/lib/db";
 import { createSite } from "@/lib/sites";
-import { createUploadSession, assertSessionRoom, recordUploadedFile, getUploadSession, discardUploadSession, resetUploadSessionsForTests, sweepExpiredSessions, UPLOAD_SESSION_TTL_MS } from "@/lib/upload-session";
+import { beginUploadedFile, createUploadSession, assertSessionRoom, recordUploadedFile, getUploadSession, discardUploadSession, resetUploadSessionsForTests, sweepExpiredSessions, UPLOAD_SESSION_TTL_MS } from "@/lib/upload-session";
 
 const bodyLen = (b: string | Uint8Array) => (typeof b === "string" ? Buffer.byteLength(b) : b.byteLength);
 const streamOf = (bytes: Uint8Array, chunk = 64 * 1024): ReadableStream<Uint8Array> => {
@@ -23,7 +25,7 @@ const streamOf = (bytes: Uint8Array, chunk = 64 * 1024): ReadableStream<Uint8Arr
   });
 };
 
-afterEach(async () => { await resetUploadSessionsForTests(); delete process.env.ARTIFACT_MAX_BYTES; delete process.env.ARTIFACT_MAX_FILES; });
+afterEach(async () => { vi.restoreAllMocks(); await resetUploadSessionsForTests(); delete process.env.ARTIFACT_MAX_BYTES; delete process.env.ARTIFACT_MAX_FILES; });
 
 describe("parseRangeHeader — dragging a video's progress bar depends entirely on it", () => {
   it("parses an ordinary range", () => {
@@ -108,6 +110,110 @@ describe("upload sessions — a version either exists in full or never existed",
     // The persisted copy must be the overwritten one too — under multiple replicas that is what
     // another machine reads
     expect((await getUploadSession(session.versionId))?.files).toEqual([{ relpath: "a.bin", bytes: 250 }]);
+  });
+
+  it("preserves parallel uploads from the same snapshot, including SHA-256 receipts", async () => {
+    const created = await createUploadSession({ ownerKey: "a:test" });
+    const first = (await getUploadSession(created.versionId))!;
+    const second = (await getUploadSession(created.versionId))!;
+    await Promise.all([
+      recordUploadedFile(first, "index.html", 100, "root-hash"),
+      recordUploadedFile(second, "nested/index.html", 200, "nested-hash"),
+    ]);
+    const files = (await getUploadSession(created.versionId))!.files;
+    expect(files).toHaveLength(2);
+    expect(files).toEqual(expect.arrayContaining([
+      { relpath: "index.html", bytes: 100, sha256: "root-hash" },
+      { relpath: "nested/index.html", bytes: 200, sha256: "nested-hash" },
+    ]));
+  });
+
+  it.each(["bytes", "files"])("admits only one parallel upload when the aggregate %s limit would be exceeded", async (limit) => {
+    if (limit === "bytes") process.env.ARTIFACT_MAX_BYTES = "1000";
+    else process.env.ARTIFACT_MAX_FILES = "1";
+    const created = await createUploadSession({ ownerKey: "a:test" });
+    const first = (await getUploadSession(created.versionId))!;
+    const second = (await getUploadSession(created.versionId))!;
+    const results = await Promise.allSettled([
+      recordUploadedFile(first, "a.bin", 600),
+      recordUploadedFile(second, "b.bin", 600),
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(result => result.status === "rejected")).toEqual([
+      expect.objectContaining({ reason: expect.objectContaining({ statusCode: 400 }) }),
+    ]);
+    expect((await getUploadSession(created.versionId))!.files).toHaveLength(1);
+  });
+
+  it.each(["bytes", "files"])("rechecks stale %s limit failures after another upload invalidates a receipt", async (limit) => {
+    if (limit === "bytes") process.env.ARTIFACT_MAX_BYTES = "1000";
+    else process.env.ARTIFACT_MAX_FILES = "1";
+    const session = await createUploadSession({ ownerKey: "a:test" });
+    await recordUploadedFile(session, "old.bin", 600, "old-hash");
+    const stale = (await getUploadSession(session.versionId))!;
+    await beginUploadedFile(session, "old.bin");
+    await recordUploadedFile(stale, "index.html", 600, "new-hash");
+    expect((await getUploadSession(session.versionId))!.files).toEqual([
+      { relpath: "index.html", bytes: 600, sha256: "new-hash" },
+    ]);
+  });
+
+  it("invalidates parallel re-uploads without resurrecting receipts or losing other files", async () => {
+    const created = await createUploadSession({ ownerKey: "a:test" });
+    await recordUploadedFile(created, "a.bin", 100, "a-hash");
+    await recordUploadedFile(created, "b.bin", 200, "b-hash");
+    const first = (await getUploadSession(created.versionId))!;
+    const second = (await getUploadSession(created.versionId))!;
+    await recordUploadedFile(created, "index.html", 300, "root-hash");
+    await Promise.all([beginUploadedFile(first, "a.bin"), beginUploadedFile(second, "b.bin")]);
+    expect((await getUploadSession(created.versionId))!.files).toEqual([
+      { relpath: "index.html", bytes: 300, sha256: "root-hash" },
+    ]);
+  });
+
+  it("invalidates a receipt added after the caller read its snapshot", async () => {
+    const created = await createUploadSession({ ownerKey: "a:test" });
+    const stale = (await getUploadSession(created.versionId))!;
+    await recordUploadedFile(created, "a.bin", 100, "a-hash");
+    await beginUploadedFile(stale, "a.bin");
+    expect((await getUploadSession(created.versionId))!.files).toEqual([]);
+  });
+
+  it.each(["record", "begin"])("returns 404 when a session disappears before %s", async (operation) => {
+    const session = await createUploadSession({ ownerKey: "a:test" });
+    await discardUploadSession(session.versionId);
+    const result = operation === "record"
+      ? recordUploadedFile(session, "a.bin", 100)
+      : beginUploadedFile(session, "a.bin");
+    await expect(result).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it.each(["record", "begin"])("returns 409 after repeated CAS conflicts during %s without changing the caller", async (operation) => {
+    const session = await createUploadSession({ ownerKey: "a:test" });
+    await recordUploadedFile(session, "a.bin", 100, "original-hash");
+    const compare = vi.spyOn(db, "compareUploadSessionFiles").mockResolvedValue(false);
+    const result = operation === "record"
+      ? recordUploadedFile(session, "a.bin", 200, "replacement-hash")
+      : beginUploadedFile(session, "a.bin");
+    const error = await result.catch(error => error);
+    expect(error).toMatchObject({ statusCode: 409, code: "upload_conflict" });
+    const response = errorResponse(error);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: error.message, code: "upload_conflict", retryable: true });
+    expect(compare).toHaveBeenCalledTimes(16);
+    expect(session.files).toEqual([{ relpath: "a.bin", bytes: 100, sha256: "original-hash" }]);
+    expect((await getUploadSession(session.versionId))!.files).toEqual(session.files);
+  });
+
+  it("counts a replacement once at both aggregate limits", async () => {
+    process.env.ARTIFACT_MAX_BYTES = "200";
+    process.env.ARTIFACT_MAX_FILES = "1";
+    const session = await createUploadSession({ ownerKey: "a:test" });
+    await recordUploadedFile(session, "a.bin", 100, "old-hash");
+    await recordUploadedFile(session, "a.bin", 200, "new-hash");
+    expect((await getUploadSession(session.versionId))!.files).toEqual([
+      { relpath: "a.bin", bytes: 200, sha256: "new-hash" },
+    ]);
   });
 
   // This is the lifeline of multi-replica deployments: the session must be readable by **another

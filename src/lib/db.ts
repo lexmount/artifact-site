@@ -553,7 +553,6 @@ export interface MetadataStore {
   insertUploadSession(u: UploadSessionRow): Promise<void>;
   getUploadSession(versionId: string): Promise<UploadSessionRow | null>;
   compareUploadSessionFiles(versionId: string, before: UploadSessionRow["files"], after: UploadSessionRow["files"]): Promise<boolean>;
-  setUploadSessionFiles(versionId: string, files: UploadSessionRow["files"]): Promise<void>;
   deleteUploadSession(versionId: string): Promise<void>;
   listUploadSessionsForTarget(ownerKey: string, targetSlug: string): Promise<UploadSessionRow[]>;
   listUploadSessionsBefore(createdBefore: number): Promise<UploadSessionRow[]>;
@@ -1079,7 +1078,6 @@ export async function claimSiteAudited(siteId: string, ownerId: string, audit: I
 }
 export async function insertUploadSession(u: UploadSessionRow): Promise<void> { await (await getStore()).insertUploadSession(u); }
 export async function getUploadSessionRow(versionId: string): Promise<UploadSessionRow | null> { return (await getStore()).getUploadSession(versionId); }
-export async function setUploadSessionFiles(versionId: string, files: UploadSessionRow["files"]): Promise<void> { return (await getStore()).setUploadSessionFiles(versionId, files); }
 export async function deleteUploadSession(versionId: string): Promise<void> { return (await getStore()).deleteUploadSession(versionId); }
 export async function listUploadSessionsForTarget(ownerKey: string, targetSlug: string): Promise<UploadSessionRow[]> { return (await getStore()).listUploadSessionsForTarget(ownerKey, targetSlug); }
 export async function listUploadSessionsBefore(createdBefore: number): Promise<UploadSessionRow[]> { return (await getStore()).listUploadSessionsBefore(createdBefore); }

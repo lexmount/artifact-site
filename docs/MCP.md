@@ -253,6 +253,12 @@ This admin endpoint accepts operator tokens without Origin; browser administrato
 a same-origin request. The separate owner-to-owner `/api/sites/<slug>/ownership` endpoint
 still requires a same-origin Origin header, including when called by an operator script.
 
+The file PUT (`upload_file` dispatch) can return 409 `upload_conflict` with `retryable:true`.
+After a short delay, retry the same PUT in the same session with the same path and bytes.
+For MCP `upload_write`, retry the same final chunk (same index, base64 and `final:true`);
+reduce parallelism if contention repeats, and publish only after all writes succeed.
+This differs from `version_conflict`, which requires reconciling the current version.
+
 Upload errors distinguish concurrent writes (retry the same chunk sequentially) from invalid
 indices (`chunk_index`), changed retry bytes (`chunk_mismatch`), and writes after finalization
 (`file_finalized`). The latter responses include `nextIndex` and `retryable:false`: correct the

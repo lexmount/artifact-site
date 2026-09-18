@@ -1512,9 +1512,7 @@ export class PostgresStore implements MetadataStore {
     const result = await this.pool.query("UPDATE upload_sessions SET files=$3 WHERE version_id=$1 AND files::jsonb=$2::jsonb", [versionId, JSON.stringify(before), JSON.stringify(after)]);
     return result.rowCount === 1;
   }
-  async setUploadSessionFiles(versionId: string, files: UploadSessionRow["files"]): Promise<void> {
-    await this.pool.query("UPDATE upload_sessions SET files=$2 WHERE version_id=$1", [versionId, JSON.stringify(files)]);
-  }
+
   async deleteUploadSession(versionId: string): Promise<void> {
     await this.pool.query("DELETE FROM upload_sessions WHERE version_id=$1", [versionId]);
   }

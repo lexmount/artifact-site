@@ -429,6 +429,28 @@ it("safely re-registers the same file if writing its assembled marker fails afte
   expect(Buffer.from(file.data.base64, "base64").toString()).toBe("<html>");
 });
 
+it("exposes retryable upload conflicts and accepts the same final chunk after contention", async () => {
+  const c = await connect((await identity("receipt-conflict")).token);
+  const upload_id = (await call(c, "upload_start")).data.versionId;
+  const args = { upload_id, path: "index.html", index: 0, base64: Buffer.from("<html>").toString("base64"), final: true };
+  const db = await import("@/lib/db");
+  const compare = db.compareUploadSessionFiles;
+  const contention = vi.spyOn(db, "compareUploadSessionFiles").mockImplementation((id, before, after) => {
+    if (id === upload_id && after.some(file => file.relpath === "index.html")) return Promise.resolve(false);
+    return compare(id, before, after);
+  });
+  try {
+    const result = await call(c, "upload_write", args);
+    expect(result.error).toBe(true);
+    expect(result.data).toMatchObject({ code: "upload_conflict", retryable: true });
+    expect((await db.getUploadSessionRow(upload_id))?.files).toEqual([]);
+  } finally { contention.mockRestore(); }
+  expect((await call(c, "upload_write", args)).error).toBe(false);
+  expect((await db.getUploadSessionRow(upload_id))?.files).toEqual([
+    { relpath: "index.html", bytes: 6, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
+  ]);
+});
+
 it("counts published files rather than chunks against maxFiles", async () => {
   const c = await connect((await identity("chunk-limits")).token);
   const upload_id = (await call(c, "upload_start")).data.versionId;
@@ -484,9 +506,9 @@ it("bounds staging metadata independently of the project-file limit", async () =
   const upload_id = (await call(c, "upload_start")).data.versionId;
   const args = { upload_id, path: "index.html", index: 0, base64: "YQ==", final: false };
   expect((await call(c, "upload_write", args)).error).toBe(false);
-  const { listUploadSessionsBefore, setUploadSessionFiles } = await import("@/lib/db");
+  const { listUploadSessionsBefore, compareUploadSessionFiles } = await import("@/lib/db");
   const child = (await listUploadSessionsBefore(Date.now() + 1)).find(s => s.targetSlug === upload_id)!;
-  await setUploadSessionFiles(child.versionId, Array.from({ length: 2000 }, (_, i) => ({ relpath: `${i}.part`, bytes: 1 })));
+  expect(await compareUploadSessionFiles(child.versionId, child.files, Array.from({ length: 2000 }, (_, i) => ({ relpath: `${i}.part`, bytes: 1 })))).toBe(true);
   const result = await call(c, "upload_write", { ...args, index: 2000 });
   expect(result.error).toBe(true); expect(result.data.error).toContain("Too many chunks for one file");
   expect(result.data.error).not.toContain("Too many files");
