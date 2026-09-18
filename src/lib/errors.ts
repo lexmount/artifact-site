@@ -29,3 +29,14 @@ export class QuotaExceededError extends Error {
     this.details = details;
   }
 }
+
+/** Transient receipt contention: retry the same file upload in the existing session. */
+export class UploadConflictError extends Error {
+  readonly statusCode = 409;
+  readonly code = "upload_conflict";
+  readonly retryable = true;
+  constructor() {
+    super("Concurrent upload; retry the same file upload after a short delay");
+    this.name = "UploadConflictError";
+  }
+}

@@ -22,11 +22,11 @@ import { getVersion, rbacTransaction } from "@/lib/db";
 // the database never holds half a version: a version either exists in full or never existed.
 import {
   createId, deleteUploadSession, getUploadSessionRow, listUploadSessionsBefore,
-  setUploadSessionFiles, type UploadSessionRow,
+  compareUploadSessionFiles, type UploadSessionRow,
 } from "@/lib/db";
 import { getStorage } from "@/lib/storage";
 import { limits } from "@/lib/config";
-import { BadRequestError } from "@/lib/errors";
+import { BadRequestError, UploadConflictError } from "@/lib/errors";
 import { anonIdFromRequest } from "@/lib/anon";
 import { isAdmin } from "@/lib/auth";
 import { sha256hex } from "@/lib/crypto";
@@ -93,12 +93,40 @@ export function assertSessionRoom(session: UploadSession, incoming: number): voi
   }
 }
 
-/** Re-uploading a file with the same name overwrites rather than accumulates — otherwise a few retries would falsely exceed the limit. Mutates the passed-in object in place, then persists. */
+/** Merge against an unchanged database snapshot; never mutate the CAS input or an uncommitted caller object. */
+async function updateSessionFiles(session: UploadSession, update: (current: UploadSession) => UploadSession["files"]): Promise<void> {
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const current = attempt === 0 ? session : await getUploadSession(session.versionId, session.ownerKey);
+    if (!current) {
+      throw Object.assign(new Error("The upload session does not exist or has expired; please start again"), { statusCode: 404 });
+    }
+    const before = current.files;
+    let after: UploadSession["files"] | undefined;
+    try {
+      after = update(current);
+    } catch (error) {
+      if (!(error instanceof BadRequestError)) throw error;
+      // Validate rejected snapshots too: another PUT may have freed room since this read.
+      if (await compareUploadSessionFiles(session.versionId, before, before)) throw error;
+    }
+    // Even a no-op must compare: a stale snapshot may be missing a receipt added by another PUT.
+    if (after && await compareUploadSessionFiles(session.versionId, before, after)) {
+      session.files = after;
+      return;
+    }
+    // Small jitter keeps replicas from repeatedly colliding under parallel uploads.
+    if (attempt < 15) await new Promise(resolve => setTimeout(resolve, 5 + Math.floor(Math.random() * Math.min(80, (attempt + 1) * 10))));
+  }
+  throw new UploadConflictError();
+}
+
+/** Re-uploading replaces the receipt; enforce aggregate limits against the snapshot committed by CAS. */
 export async function recordUploadedFile(session: UploadSession, relpath: string, bytes: number, sha256?: string): Promise<void> {
-  const existing = session.files.findIndex((f) => f.relpath === relpath);
-  if (existing >= 0) session.files[existing] = { relpath, bytes, ...(sha256 ? { sha256 } : {}) };
-  else session.files.push({ relpath, bytes, ...(sha256 ? { sha256 } : {}) });
-  await setUploadSessionFiles(session.versionId, session.files);
+  await updateSessionFiles(session, current => {
+    const prior = current.files.filter(file => file.relpath !== relpath);
+    assertSessionRoom({ ...current, files: prior }, bytes);
+    return [...prior, { relpath, bytes, ...(sha256 ? { sha256 } : {}) }];
+  });
 }
 
 /** Discard the session and reclaim the bytes already written — an interrupted upload must not leave permanent garbage in storage. */
@@ -129,7 +157,5 @@ export async function resetUploadSessionsForTests(): Promise<void> {
 
 /** Invalidate the old receipt BEFORE overwriting storage, including attempts that fail mid-stream. */
 export async function beginUploadedFile(session: UploadSession, relpath: string): Promise<void> {
-  if (!session.files.some(file => file.relpath === relpath)) return;
-  session.files = session.files.filter(file => file.relpath !== relpath);
-  await setUploadSessionFiles(session.versionId, session.files);
+  await updateSessionFiles(session, current => current.files.filter(file => file.relpath !== relpath));
 }

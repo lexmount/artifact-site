@@ -1313,9 +1313,6 @@ export class SqliteStore implements MetadataStore {
     }
   }
 
-  async setUploadSessionFiles(versionId: string, files: UploadSessionRow["files"]): Promise<void> {
-    this.db.prepare("UPDATE upload_sessions SET files=? WHERE version_id=?").run(JSON.stringify(files), versionId);
-  }
   async deleteUploadSession(versionId: string): Promise<void> {
     this.db.prepare("DELETE FROM upload_sessions WHERE version_id=?").run(versionId);
   }

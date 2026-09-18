@@ -47,8 +47,7 @@ export async function PUT(request: Request, context: { params: Promise<{ version
     const hash = createHash("sha256");
     const counted = request.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ transform(bytes, controller) { hash.update(bytes); controller.enqueue(bytes); } }));
     const written = await getStorage().writeStreamToVersion(session.siteId, session.versionId, target, counted);
-    // After streaming, re-check the total against the real byte count (a lying Content-Length is caught here)
-    assertSessionRoom({ ...session, files: session.files.filter((f) => f.relpath !== target) }, written);
+    // Record the real byte count and check aggregate limits against the snapshot committed by CAS.
     await recordUploadedFile(session, target, written, hash.digest("hex"));
     return json({ relpath: target, bytes: written });
   } catch (error) {

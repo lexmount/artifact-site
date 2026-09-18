@@ -5,6 +5,10 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Preserve file metadata and SHA-256 receipts during parallel uploads and re-uploads, keeping
+  entry-page detection stable and enforcing aggregate upload limits when merging receipts.
+  Revalidate stale limit failures and identify retryable receipt contention as `upload_conflict`.
+
 - Restore the original README banner display width across all six languages.
 
 ## 0.2.0 — 2026-09-17
