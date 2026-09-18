@@ -30,9 +30,12 @@ import {
   pruneSiteViews,
   recordShareView,
   recordSiteView,
+  recordSiteOpen,
   upsertUser,
 } from "@/lib/db";
-import { CRAWLER_UA_RE, logSiteOpen } from "@/lib/share";
+import { config } from "@/lib/config";
+import { pruneViewDetails } from "@/lib/view-retention";
+import { CRAWLER_UA_RE, logSiteOpen, logShareView } from "@/lib/share";
 import type { Session, Site, SiteView } from "@/lib/types";
 
 const SITE = "site_views_site";
@@ -54,6 +57,7 @@ afterEach(async () => {
   await closeDbForTests();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   delete process.env.ARTIFACT_DATA_DIR;
+  delete process.env.ARTIFACT_VIEW_RETENTION_DAYS;
 });
 
 /** A direct opening. Defaults are the anonymous-with-ip case; tests override what they are about. */
@@ -247,5 +251,57 @@ describe("logSiteOpen — the door policy", () => {
     // carries the product name but not a bot marker.
     expect(CRAWLER_UA_RE.test("Mozilla/5.0 (iPhone) Lark/7.30.5 LarkLocale/zh_CN")).toBe(false);
     expect(CRAWLER_UA_RE.test("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15")).toBe(false);
+  });
+});
+
+
+describe("unified opening contract", () => {
+  it("collapses concurrent direct and different share-link opens for one site", async () => {
+    const s = await site();
+    const share = await createShare({ id: "shr_atomic", siteId: SITE, tokenHash: "th-atomic", policy: "public", passcodeHash: null, label: null, createdBy: null, createdAnonId: null, expiresAt: null });
+    await Promise.all(Array.from({ length: 12 }, (_, i) => i % 2
+      ? logShareView(requestFor(), share, null, "same-reader")
+      : logSiteOpen(requestFor(), s, null, "same-reader")));
+    expect(await listSiteOpens(SITE, 100)).toHaveLength(1);
+  });
+  it("keeps identities distinct and admits the next visit only after 30 minutes", async () => {
+    const view = { ...mkView({ userId: "reader", ip: "10.0.0.1" }), shareId: null };
+    await recordSiteOpen(view, 1_800_000);
+    await recordSiteOpen({ ...view, viewedAt: T + 1_800_000 }, 1_800_000);
+    expect(await listSiteOpens(SITE, 100)).toHaveLength(1);
+    await recordSiteOpen({ ...view, viewedAt: T + 1_800_001 }, 1_800_000);
+    await recordSiteOpen({ ...view, userId: "another-reader" }, 1_800_000);
+    await recordSiteOpen({ ...view, userId: null, anonId: "reader" }, 1_800_000);
+    expect(await listSiteOpens(SITE, 100)).toHaveLength(4);
+    expect((await getSiteViewStats(SITE, T - 1, {})).uniqueViewers).toBe(3);
+  });
+  it("ignores share-link preview crawlers and speculative loads", async () => {
+    const share = await createShare({ id: "shr_bot", siteId: SITE, tokenHash: "th-bot", policy: "public", passcodeHash: null, label: null, createdBy: null, createdAnonId: null, expiresAt: null });
+    await logShareView(requestFor({ "user-agent": "Slackbot-LinkExpanding" }), share, null, "bot");
+    await logShareView(requestFor({ "next-router-prefetch": "1" }), share, null, "prefetch");
+    expect(await listSiteOpens(SITE, 100)).toHaveLength(0);
+  });
+});
+
+
+describe("view detail retention", () => {
+  it("fails safe on invalid policies and protects the seven-day window", async () => {
+    for (const value of ["", "abc", "-1", "1", "6", "3651", "7.5"]) {
+      process.env.ARTIFACT_VIEW_RETENTION_DAYS = value;
+      expect(config.viewRetentionDays).toBe(0);
+    }
+    await recordSiteView(mkView({ viewedAt: T - 8 * DAY }));
+    await recordSiteView(mkView({ viewedAt: T - 7 * DAY }));
+    process.env.ARTIFACT_VIEW_RETENTION_DAYS = "0";
+    expect(await pruneViewDetails(T)).toBe(0);
+    process.env.ARTIFACT_VIEW_RETENTION_DAYS = "7";
+    expect(await pruneViewDetails(T)).toBe(1);
+    expect((await listSiteOpens(SITE, 10)).map(v => v.viewedAt)).toEqual([T - 7 * DAY]);
+  });
+  it("limits a cleanup batch to 1000 records", async () => {
+    for (let i = 0; i < 1001; i++) await recordSiteView(mkView({ viewedAt: T - 1 }));
+    expect(await pruneSiteViews(T)).toBe(1000);
+    expect(await pruneSiteViews(T)).toBe(1);
+    expect(await pruneSiteViews(T)).toBe(0);
   });
 });

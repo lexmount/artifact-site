@@ -181,8 +181,8 @@ export const NO_NOTIFY_NOTICE = "Nobody will be notified — you need to send th
 export const EMAIL_EXACT_NOTICE =
   "This email has never signed in here. The person's sign-in email must match it exactly, or they will never get in — and neither of you will be told.";
 
-/** The plaintext link appears once, in the create response — the DB holds only its hash, so once dismissed it can never be retrieved. */
-export const TOKEN_ONCE_NOTICE = "The link is shown only once. Once closed it cannot be retrieved — revoke it and create a new one.";
+/** Newly created links remain available through the management listing. */
+export const LINK_REUSE_NOTICE = "You can view and copy this link here at any time.";
 
 /**
  * While the front door is still open, a restricted share is decoration: the single public address
@@ -332,13 +332,14 @@ function pickArray(body: unknown, ...keys: string[]): unknown[] {
  * One share, IN THE SHAPE THE LIST ENDPOINT RETURNS (`ShareSummary`).
  *
  * Deliberately not reusing `Share`: that is the storage-layer row, carrying `siteId`/`createdBy`/
- * `createdAnonId`, none of which the list endpoint returns — and more importantly it NEVER returns
- * the token (the DB holds only the hash). Typing this as `Share` would let the component believe it
- * holds a plaintext that does not exist. Conversely, the list carries two things the storage layer
+ * `createdAnonId`, none of which the list endpoint returns — the management response also includes a recoverable URL for new links. The list carries things the storage layer
  * lacks: the server-computed `status`, and the people list for the "people" tier (which is why there
  * is no `GET …/grants` route, nor any need for one).
  */
 export interface ShareListItem {
+  revision?: number;
+  source?: "publish" | "manual" | null;
+  url?: string | null;
   mode?: "view" | "comment" | "edit";
   versionId?: string | null;
   id: string;
@@ -392,8 +393,7 @@ export interface MintedShare {
 
 /**
  * Parsing the plaintext link must be lenient: the API may return a full `url`, or only a `token` for
- * the frontend to assemble. A parse failure loses the link the user just created FOREVER (the DB
- * holds only the hash), so both forms are accepted and null is returned only when neither exists.
+ * the frontend to assemble. Both forms are accepted for compatibility with older servers.
  */
 export function readMinted(body: unknown, origin: string): MintedShare | null {
   const o = asObject(body);
@@ -446,4 +446,36 @@ export function readFreshPasscode(body: unknown): string | null {
 export function errorText(body: unknown, fallback: string): string {
   const o = asObject(body);
   return str(o.error) ?? str(o.message) ?? fallback;
+}
+
+/** Only edited values are sent: saving a different field must not restart expiry. */
+export interface ShareSettingsDraft {
+  label?: string;
+  mode?: "view" | "comment" | "edit";
+  policy?: SharePolicy;
+  allowAi?: boolean;
+  expiry?: ExpiryChoice;
+  people?: PickedPerson[];
+}
+
+export function shareSettingsPatch(share: ShareListItem, draft: ShareSettingsDraft, now: number): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if (draft.label !== undefined && (draft.label.trim() || null) !== share.label) patch.label = draft.label.trim() || null;
+  if (draft.mode !== undefined && draft.mode !== (share.mode ?? "view")) patch.mode = draft.mode;
+  if (draft.policy !== undefined && draft.policy !== share.policy) patch.policy = draft.policy;
+  if (draft.allowAi !== undefined && draft.allowAi !== (share.allowAi === true)) patch.allowAi = draft.allowAi;
+  if (draft.expiry !== undefined && draft.expiry !== expiryChoiceOf(share.expiresAt, now)) patch.expiresInDays = expiryDaysFor(draft.expiry);
+  if ((draft.policy ?? share.policy) === "people" && draft.people) {
+    const keys = (people: PickedPerson[]) => people.map(personKey).sort().join("\n");
+    if (keys(draft.people) !== keys(readListedGrants(share))) {
+      patch.grants = draft.people.map(p => p.userId ? { userId: p.userId } : { email: p.email });
+    }
+  }
+  return patch;
+}
+
+/** Distinguish a stale form from a permanently revoked link. */
+export function shareConflictCode(body: unknown): "share_revision_conflict" | "share_revoked" | null {
+  const code = asObject(body).code;
+  return code === "share_revision_conflict" || code === "share_revoked" ? code : null;
 }

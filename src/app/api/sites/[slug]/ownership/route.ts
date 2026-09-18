@@ -13,7 +13,7 @@ import {
 } from "@/lib/db";
 import { getSiteView } from "@/lib/sites";
 import { apiAuditContext, recordSiteAudit } from "@/lib/audit";
-import { requireActor, resolveCapability, resolveViewer, atLeast } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import { AuthError, EditForbiddenError } from "@/lib/auth";
 import { csrfSafe, resolveSession } from "@/lib/session";
 import { errorResponse, json } from "../../../_util";
@@ -37,8 +37,7 @@ export async function POST(
     if (!view) return json({ error: "site not found" }, 404);
     if (!view.site.ownerId) throw new EditForbiddenError("Claim anonymous sites explicitly in Workspaces before transferring ownership");
     const session = await resolveSession(request);
-    if (!atLeast(await resolveCapability(resolveViewer(request, session), view.site), "owner"))
-      throw new EditForbiddenError("Site ownership access required");
+    await requirePermission(request, view.site, "site.owner.transfer", session, false);
 
     const body = (await request.json()) as { email?: unknown };
     const email = typeof body.email === "string" ? body.email.trim() : "";
@@ -63,7 +62,7 @@ export async function POST(
       );
       if (!row) throw new AuthError("Site no longer exists");
       const site = toSite(row);
-      const { actor } = await requireActor(request, site, "owner", session);
+      const { actor } = await requirePermission(request, site, "site.owner.transfer", session);
       const members = await q(
         "SELECT m.user_id FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.user_id=$2 AND u.disabled_at IS NULL",
         [site.tenantId, target.id],

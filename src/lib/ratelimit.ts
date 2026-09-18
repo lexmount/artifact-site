@@ -102,3 +102,8 @@ export function checkRateLimit(
 export function __resetRateLimitForTests(): void {
   buckets.clear();
 }
+
+/** File transfers do not spend the budget reserved for creation and commit. */
+export function checkUploadRateLimit(request: Request): void {
+  checkRateLimit(request, Date.now(), `upload:${clientKey(request)}`, cfg.burst * 12, cfg.perMin * 12);
+}

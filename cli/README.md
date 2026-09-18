@@ -133,3 +133,34 @@ the old designation without changing the latest version or any snapshot contents
 flags take effect in the same transaction as publication; they require management permission
 when updating an existing site. The `official` commands read the current designation revision
 and refuse concurrent changes. `info` and `--json` include official version metadata.
+
+## Recoverable publishing
+
+`artifact-site publish ./report --share none` accepts an HTML file, a directory or a ZIP.
+Large ZIPs are extracted into a private temporary directory and uploaded file by file. Extraction
+rejects unsafe paths, duplicates and expanded content over the deployment limits advertised by
+`GET /api/auth/me` (`uploadLimits`). Older servers fall back to 300 MiB / 250 MiB per file /
+2000 files. Hidden paths and excluded directories are skipped and reported for both ZIPs and
+directories; inline ZIP uploads contain only the filtered files. A tree needs an HTML entry; a folder of images alone is rejected before upload.
+Large HTML and PDF files use the same streaming route. Office files still require inline conversion.
+
+With an authenticated client, rerun the same command and unchanged files after an interruption.
+The client keeps an atomic, mode-0600 journal in `<config-dir>/uploads/`, resumes completed files,
+and checks the commit outcome before retrying. Completed files are matched by SHA-256, and ZIP
+packing uses stable timestamps so a retry has the same request fingerprint. Local locks record process
+birth identity so a recycled PID cannot block recovery. Journals do not store bearer, edit or claim tokens.
+A successful repeat returns the same artifact; use `--operation-key <new-key>` to intentionally
+publish a second copy. Reusing an explicit operation key with different files/options is rejected.
+The `update` command supports the same option and recovery behavior. Anonymous publication has
+no durable cross-process recovery because its cookie is intentionally not saved in the journal.
+
+Results can be recovered for seven days; unfinished upload sessions expire after six hours.
+After seven days, inspect the previous artifact before choosing a new operation key. Automatic
+fallback happens only on the application's structured pre-publication 413, never an unknown gateway
+response. Server errors do not automatically replay non-idempotent POST requests. On legacy servers
+without operation-status support, uncertain writes require manual outcome verification.
+
+Library callers can use `client.withOperation(key, () => client.createPaste(html))`,
+`client.operationStatus(key)` and `client.uploadStatus(versionId)`. Persist the key before calling.
+
+Cached publication results are checked against the server before reuse. If the artifact was deleted, inspect the previous publication and choose a new `--operation-key` to publish again.

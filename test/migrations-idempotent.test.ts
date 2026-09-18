@@ -55,3 +55,22 @@ describe("migrations", () => {
     await store.close();
   });
 });
+
+
+it("upgrades legacy share columns through the tracked migration and tolerates pre-existing columns", async () => {
+  freshDataDir();
+  const store = new SqliteStore();
+  await store.init();
+  await store.rbacQuery("DELETE FROM schema_migrations WHERE id='0003-share-token-source'");
+  await store.rbacQuery("ALTER TABLE site_shares DROP COLUMN token");
+  await store.rbacQuery("ALTER TABLE site_shares DROP COLUMN source");
+  await store.init();
+  expect((await store.rbacQuery("PRAGMA table_info(site_shares)")).map(row => row.name)).toEqual(expect.arrayContaining(["token", "source"]));
+  const [tracked] = await store.rbacQuery("SELECT checksum FROM schema_migrations WHERE id='0003-share-token-source'");
+  expect(tracked.checksum).toMatch(/^[a-f0-9]{64}$/);
+  await store.rbacQuery("DELETE FROM schema_migrations WHERE id='0003-share-token-source'");
+  await store.init();
+  await store.init();
+  expect(await store.rbacQuery("SELECT checksum FROM schema_migrations WHERE id='0003-share-token-source'")).toEqual([tracked]);
+  await store.close();
+});

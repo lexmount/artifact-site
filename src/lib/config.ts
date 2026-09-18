@@ -88,6 +88,23 @@ export function __resetWarnedForTests(): void {
 }
 
 export const config = {
+  /** Opt-in GA4, supplied at runtime; never baked into the public image. */
+  get gaMeasurementId(): string {
+    const id = (process.env.ARTIFACT_GA_MEASUREMENT_ID || "").trim();
+    if (id && !/^G-[A-Z0-9]+$/.test(id)) {
+      warnOnce("Invalid ARTIFACT_GA_MEASUREMENT_ID; analytics disabled.");
+      return "";
+    }
+    return id;
+  },
+  get gaHosts(): string[] {
+    const hosts = csv(process.env.ARTIFACT_GA_HOSTS).map((host) => host.toLowerCase());
+    if (hosts.length) return hosts;
+    try {
+      const url = new URL(this.publicUrl);
+      return ["http:", "https:"].includes(url.protocol) ? [url.hostname] : [];
+    } catch { return []; }
+  },
   get previewSigningSecret(): string { return process.env.PREVIEW_SIGNING_SECRET?.trim() || ""; },
   /** Root of all on-disk state: sites/<siteId>/<versionId>/… (and the test suite's sqlite file). */
   get dataDir(): string {
@@ -132,6 +149,13 @@ export const config = {
    */
   get anonymousSites(): "full" | "read-only" {
     return (process.env.ARTIFACT_ANONYMOUS_SITES || "").trim().toLowerCase() === "read-only" ? "read-only" : "full";
+  },
+  /** View details: opt-in retention, at least the seven-day statistics window. */
+  get viewRetentionDays(): number {
+    const raw = process.env.ARTIFACT_VIEW_RETENTION_DAYS ?? "0";
+    if (!/^\d+$/.test(raw)) return 0;
+    const days = Number(raw);
+    return Number.isSafeInteger(days) && days >= 7 && days <= 3650 ? days : 0;
   },
   /** Audit retention: 0 keeps records forever. Invalid values fail safe to no deletion. */
   get auditRetentionDays(): number {

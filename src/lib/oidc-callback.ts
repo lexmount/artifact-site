@@ -42,6 +42,12 @@ export async function handleOidcCallback(request: Request): Promise<NextResponse
   const dest = new URL(`${base}${claims.returnTo}`);
   dest.searchParams.set("welcome", String(adopted));
   const res = NextResponse.redirect(dest.toString(), 302);
+  // ResponseCookies.set rewrites Set-Cookie: always finish it before appending session/flow cookies.
+  if (config.gaMeasurementId && config.gaHosts.includes(dest.hostname)) {
+    res.cookies.set("artifact_analytics_auth", user.created ? "new" : "login", {
+      path: "/", maxAge: 120, sameSite: "lax", secure: dest.protocol === "https:", httpOnly: false,
+    });
+  }
   res.headers.append("set-cookie", cookie);
   res.headers.append("set-cookie", clearFlowCookie(request)); // one-shot: burn it either way
   return res;

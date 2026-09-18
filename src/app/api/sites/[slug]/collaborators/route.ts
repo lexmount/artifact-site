@@ -2,7 +2,7 @@ import { assertSessionCurrent } from "@/lib/authorized-commit";
 import type { NextResponse } from "next/server";
 import { toSite, getUserByVerifiedEmail, rbacQuery, rbacTransaction } from "@/lib/db";
 import { getSiteView } from "@/lib/sites";
-import { requirePermission, resolveCapability, resolveViewer, atLeast } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import { memberRole, recordRbacAudit } from "@/lib/rbac-access";
 import { csrfSafe, resolveSession } from "@/lib/session";
 import { AuthError, EditForbiddenError } from "@/lib/auth";
@@ -44,8 +44,7 @@ export async function POST(
     if (!view) return json({ error: "site not found" }, 404);
     const session = await resolveSession(request);
     // Reject unauthorized callers before resolving the target email; the transaction rechecks roles.
-    if (!atLeast(await resolveCapability(resolveViewer(request, session), view.site), "manage"))
-      throw new EditForbiddenError("Site management access required");
+    await requirePermission(request, view.site, "site.members.manage", session, false);
     const body = await request.json();
     const role = body.role ?? "editor";
     if (role !== "admin" && role !== "editor")

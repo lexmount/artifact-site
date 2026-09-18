@@ -210,3 +210,129 @@ Platform administrators can rotate the key in **Administration → Settings → 
 Platform administrators configure **Administration → Settings → Audit log retention (days)** for all three audit tables. The default is **0 (keep forever)**; valid values are 0–3650 whole days. A console value is persisted in the global `settings` table and overrides `ARTIFACT_AUDIT_RETENTION_DAYS`; “Use environment” removes the override. Every change is audited. Settings-change and maintenance entries follow the same retention window as other administrator logs. Cleanup reads the current persisted value inside its deletion transaction, without the policy cache, and serializes with settings updates across replicas.
 
 The request-driven maintenance tick runs at most once an hour per process when create or search routes are used. Each tick drains expired records in batches of up to 1,000 **per table**, until no batch is full or a 20-second budget is consumed. Each batch has its own transaction, releases the RBAC lock and re-reads retention; queued policy changes can stop or adjust subsequent batches. The budget is soft: an in-flight batch finishes before stopping. Idle deployments do not run a timer; remaining backlogs resume on the next tick, so retention is a target rather than an exact expiration deadline. **Administration → System → Prune expired audit logs** runs the same budgeted job on demand (`POST /api/admin/maintenance` with `{"task":"prune-audit"}`). Only the `reconcile` maintenance task supports `dryRun: true`; all other tasks reject it before execution. Records exactly at the cutoff are retained. Increasing retention or setting it to 0 cannot recover deleted records; database backups have their own retention policy.
+
+## Publication recovery
+
+The metadata migration adds `publish_operations`. Site/version writes and their idempotency results
+commit in the same database transaction, so all replicas can recover a lost response. Results have
+seven-day retention; expired key hashes remain as tombstones to prevent accidental reuse. Expired
+result payloads are cleared lazily on subsequent keyed writes. Staged upload bytes still expire after
+six hours, independently of result retention. Back up this table with the rest of the database.
+
+File PUTs have a separate per-process rate-limit bucket with 12 times the configured write burst
+and refill rate. They do not consume creation/commit tokens. Gateway body and timeout limits still
+apply to each file; a streamed upload does not bypass the gateway. Keep the inline request ceiling
+as a memory safeguard rather than raising it to accommodate an entire project.
+
+## Optional GA4 analytics
+
+Set `ARTIFACT_GA_MEASUREMENT_ID` to your `G-` measurement ID. The allowed hostname
+defaults to the existing `ARTIFACT_PUBLIC_URL`, so a single-domain instance needs
+no additional domain configuration. For multiple aliases on one instance, set
+`ARTIFACT_GA_HOSTS` to the complete comma-separated list of allowed hostnames
+(this overrides the default). Separate instances may share the same measurement
+ID and each use their own `ARTIFACT_PUBLIC_URL`.
+These are runtime settings: restart/recreate the app with the new environment; no
+image rebuild is needed for configuration changes. An empty ID disables analytics.
+A malformed ID logs one warning and disables analytics without breaking the site;
+`make doctor` still reports the configuration error.
+Unlisted hosts do not load the Google script or send events. Keep development and
+test hosts out of this list. Each installation supplies its own ID.
+
+Use one GA4 web stream for the product's domains. Disable Enhanced Measurement in
+that stream: the app sends page views explicitly on pathname changes. For journeys
+between different root domains, configure cross-domain measurement in GA4's
+Google tag settings and verify linker parameters survive redirects. Sharing a
+measurement ID alone does not merge anonymous users across domains.
+
+The browser sends `page_view`, `ui_click` (upload/login/share/download/update),
+`login`, `sign_up`, `artifact_publish_success`, `artifact_update_success`,
+`artifact_operation_failed`, and `share_link_copy`. `sign_up` means the first
+creation of a local OIDC account, not registration at the external identity provider.
+A two-minute analytics cookie carries the callback result to the browser and is
+cleared after consumption during normal navigation. It is intentionally readable
+and writable by JavaScript: a user can recreate it and inflate login/signup events.
+It is an untrusted telemetry hint, never proof of authentication or account creation.
+Signing this hint would not make GA4 browser events authoritative, since the client
+can also send those events directly. Use server-side account records for trusted
+signup counts, billing, authorization, or audit decisions.
+Login success includes first-time sign-ins; signup is an additional event for them.
+Keyboard saves and document replacement report update results; download clicks do
+not imply a completed download. Failure events cover non-2xx write responses
+(including conflicts) and rejected network requests, not no-op edits, preflight
+validation, or UI writeback errors. Visual update success requires an actual write
+and completed editor writeback. No CLI/MCP or iframe-content events are collected.
+Page views start independently of the auth request; identity is attached when it
+becomes available. Initial events can therefore be sent without `user_id`, even
+for an already signed-in visitor. They still count as page views; this can happen
+on each full page load, not just at the start of a GA4 session. The app does not
+resend those events after identification, which would double-count visits.
+
+Google documents [same-session association of events before User-ID is set](https://support.google.com/analytics/answer/9213390?hl=en).
+With a reporting identity that includes User-ID (Observed or Blended), earlier
+events can be associated with the user once later events carry that ID. This
+reporting association is different from the original request containing a
+`user_id`; do not assume the first page view is always missing from user reports,
+or that setting the ID alone guarantees association without a subsequent event.
+If identification never succeeds or no identified event reaches GA4, the visit
+can remain anonymous. Previously collected historical data is not reprocessed.
+A failed auth read leaves the login hint intact until retry or its two-minute
+expiry. Verify a signed-in page reload followed by an identified interaction in
+both the collect requests and processed GA4 reports when validating deployment.
+
+Register event-scoped custom dimensions for `page_type`, `button_name`,
+`upload_method`, `method`, `operation`, `error_code`, and `share_type` as needed.
+Use Hostname to split domains, event reports for actions, funnel exploration for
+conversion, and user exploration for individual activity. Enable debug mode with
+Google Tag Assistant for DebugView, then verify in Realtime. Standard reporting
+can take 24–48 hours.
+
+Before enabling production reporting, validate both explicit and automatic events
+with GA4 DebugView and the browser Network panel:
+
+- In a fresh browser session, visit an artifact and a share URL with recognizable
+  test-only slug/token/query/title markers, navigate between pages, and leave the
+  page after engagement.
+- Check `page_view` and automatic `session_start`, `first_visit`, and
+  `user_engagement` events when emitted. Their `page_location`, `page_referrer`,
+  and `page_title` must contain only the normalized values.
+- Inspect the decoded `dl`, `dr`, and `dt` fields in every Google collect request
+  (including unload requests). None may contain real slugs, share tokens, query
+  credentials, or user-authored titles. Verify this separately from the app's
+  command-queue tests: automatic-event behavior depends on the loaded Google tag.
+- Repeat across configured domains and with Enhanced Measurement disabled. Treat
+  any raw value as a release blocker; command-queue tests alone do not verify live
+  Google collection. Recheck after changing the tag's remote configuration.
+
+
+Only internal user IDs are sent, cleared on logout. URLs retain the current origin
+but replace artifact slugs/share tokens with fixed route labels. Query parameters,
+fragments, document titles, file names, content, email and raw error text are not
+sent. This also intentionally omits UTM/query-based attribution in this first version;
+external referrers retain only their origin. Individual artifacts cannot be
+identified from the normalized page path. No preview CSP changes are needed.
+Keep Enhanced Measurement off to preserve these boundaries. Network or browser
+blocking can lose events; this is analytics, not an audit log. Operators should
+only enable collection under their site's applicable consent/privacy policy.
+
+### View history retention
+
+`ARTIFACT_VIEW_RETENTION_DAYS` defaults to `0` (keep details). Set it to 7–3650 days to enable
+request-driven hourly cleanup. Each tick alternates 1,000-row batches between the two view tables
+until both are drained or a soft 20-second budget is consumed. Each batch releases its locks and
+yields; an in-flight batch may finish after the deadline. Invalid values disable cleanup. The minimum preserves the seven-day external-audience summary. Idle deployments do not run
+a timer; a backlog drains over subsequent ticks. Cleanup atomically archives counts before deleting
+details, so cumulative opens do not decrease. The view history and last-open time use retained details;
+old identities, IP addresses and user agents are not kept in the archived counts. Backups have their
+own retention. This does not change audit-log retention.
+
+New openings are collapsed per reader and site across direct and share links for 30 minutes. The first
+entrance in that window is retained as the source. Historical rows keep their previous per-link counting
+rules; deployment does not rewrite historical counts. Anonymous viewers without a browser identity fall
+back to IP, so viewer counts are approximate rather than a count of individual people.
+
+Direct viewer 404s deliberately do not distinguish a missing site from an inaccessible site.
+Opening either removes that exact entrance from this browser's Recently viewed history. This means
+an expired session or lost access can also remove a still-existing private site; after signing in,
+owners can reopen it from My sites to record it again. Share-link login and passcode prompts keep
+history. No client-visible deletion/access-denial signal is added.

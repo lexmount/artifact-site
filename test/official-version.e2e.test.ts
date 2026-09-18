@@ -37,10 +37,13 @@ function buildPdf(pages: number): Uint8Array<ArrayBuffer> {
 const base = process.env.VIEWER_E2E_URL;
 describe.skipIf(!base)("official version browser acceptance", () => {
   let browser: Browser, page: Page, dir: string;
+  const hydrationErrors: string[] = [];
   beforeAll(async () => {
     const puppeteer = await import("puppeteer-core");
     browser = await puppeteer.launch({ executablePath: process.env.E2E_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, args: process.env.CI ? ["--no-sandbox"] : [] });
     page = await browser.newPage();
+    page.on("console", message => { if (/hydration|hydrating|server rendered html/i.test(message.text())) hydrationErrors.push(message.text()); });
+    page.on("pageerror", error => { if (/hydration|hydrating|server rendered html/i.test(String(error))) hydrationErrors.push(String(error)); });
     await page.setViewport({ width: 1440, height: 960 });
     await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
     dir = await mkdtemp(path.join(tmpdir(), "official-browser-"));
@@ -97,6 +100,7 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     // Metadata failures must still remount the known snapshot on an explicit refresh.
     for (const failure of ["http", "network"]) {
       const frame = await page.$("iframe.fs-frame");
+      const knownVersion = await frame!.evaluate(element => new URL((element as HTMLIFrameElement).src).searchParams.get("v"));
       await page.setRequestInterception(true);
       const intercept = (request: HTTPRequest) => {
         if (request.interceptResolutionState().action === "disabled") return;
@@ -111,6 +115,7 @@ describe.skipIf(!base)("official version browser acceptance", () => {
         // Keep interception active until the replacement iframe has loaded. Turning it
         // off while its navigation is paused can strand the request on slow CI runners.
         await frameText("Second report");
+        expect(await page.$eval("iframe.fs-frame", element => new URL((element as HTMLIFrameElement).src).searchParams.get("v"))).toBe(knownVersion);
       } finally {
         page.off("request", intercept);
         await page.setRequestInterception(false);
@@ -124,7 +129,9 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     try {
       await reader.goto(`${base}/s/${slug}`, { waitUntil: "networkidle2" });
       await reader.waitForSelector(".official-bar");
-      expect(await reader.$(".official-bar button")).toBeNull();
+      await reader.click(".official-version-trigger");
+      expect(await reader.$(".official-designate")).toBeNull();
+      await reader.keyboard.press("Escape");
       const initialReads = officialReads;
       await new Promise(resolve => setTimeout(resolve, 11_000));
       expect(officialReads).toBe(initialReads);
@@ -150,8 +157,11 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     await page.setViewport({ width: 1440, height: 960 });
     await page.goto(`${base}/s/${slug}`, { waitUntil: "networkidle2" });
     await page.waitForSelector(".official-bar button");
+    await page.click(".official-version-trigger");
     await clickText("Set this version as official");
-    await page.waitForFunction(() => document.querySelector(".official-bar")?.textContent?.includes("Official version updated"));
+    await page.waitForSelector(".official-confirmation[open]");
+    await clickText("Confirm");
+    await page.waitForFunction(() => document.querySelector(".official-feedback")?.textContent?.includes("Official version updated"));
     const changed = await page.evaluate(async slug => (await fetch(`/api/sites/${slug}/official`)).json(), slug);
     expect(changed.officialVersionId).toBe(result.latest.versionId);
     expect(changed.versions.filter((v: { official: boolean }) => v.official)).toHaveLength(1);
@@ -320,5 +330,192 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.setViewport({ width: 1440, height: 960 });
   }, 60000);
+
+  it("keeps version controls in one toolbar row and confirms against the visible revision", async () => {
+    await page.setViewport({ width: 1440, height: 960 });
+    await page.goto(base!, { waitUntil: "networkidle2" });
+    const fixture = await page.evaluate(async () => {
+      const first = await (await fetch("/api/sites", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "paste", html: "<h1>Report content</h1>", title: "Artifact Hub RBAC：权限模型、协作边界与实现现状" }) })).json();
+      localStorage.setItem(`sites:editToken:${first.slug}`, first.editToken);
+      const versions = [first.versionId];
+      for (let i = 2; i <= 4; i++) {
+        const next = await (await fetch(`/api/sites/${first.slug}/versions`, { method: "POST", headers: { "content-type": "application/json", "x-edit-token": first.editToken }, body: JSON.stringify({ mode: "paste", html: `<h1>Report content v${i}</h1>` }) })).json();
+        versions.push(next.versionId);
+      }
+      return { ...first, versions };
+    });
+    await page.goto(`${base}/s/${fixture.slug}`, { waitUntil: "networkidle2" });
+    await page.waitForSelector(".official-version-trigger");
+    expect(await page.$eval(".fs-bar", el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(64);
+    expect(await page.$eval(".official-version-trigger", el => el.textContent)).toContain("v4");
+    await shot("compact-latest-desktop");
+    await page.focus(".official-version-trigger");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector('.more-menu:not([hidden]) .official-version-option');
+    expect(await page.$$eval('.more-menu:not([hidden]) .official-version-option', els => els.length)).toBe(4);
+    await shot("compact-version-menu");
+    await page.keyboard.press("Escape");
+    expect(await page.$eval(".official-version-trigger", el => el.getAttribute("aria-expanded"))).toBe("false");
+    await page.click(".official-version-trigger");
+    await clickText("Set this version as official");
+    await page.waitForSelector(".official-confirmation[open]");
+    await clickText("Cancel");
+    expect(await page.evaluate(async slug => (await (await fetch(`/api/sites/${slug}/official`)).json()).officialVersionId, fixture.slug)).toBeNull();
+    await page.click(".official-version-trigger");
+    await clickText("Set this version as official");
+    await page.waitForSelector(".official-confirmation[open]");
+    // A designation changed elsewhere must not be silently overwritten by this confirmation.
+    await page.evaluate(async f => {
+      await fetch(`/api/sites/${f.slug}/official`, { method: "PUT", headers: { "content-type": "application/json", "x-edit-token": f.editToken }, body: JSON.stringify({ versionId: f.versions[0], expectedRevision: 0 }) });
+    }, fixture);
+    await clickText("Confirm");
+    await page.waitForFunction(() => document.querySelector(".official-feedback")?.textContent?.includes("Choose again"));
+    expect(await page.evaluate(async slug => (await (await fetch(`/api/sites/${slug}/official`)).json()).officialVersionId, fixture.slug)).toBe(fixture.versions[0]);
+    await page.click('.official-feedback button');
+    await page.click(".official-version-trigger");
+    await clickText("Set this version as official");
+    await page.waitForSelector(".official-confirmation[open]");
+    expect(await page.$eval(".official-confirmation p", el => el.textContent)).toContain("replaces official v1");
+    await shot("compact-confirmation");
+    await clickText("Confirm");
+    await page.waitForSelector(".official-version-trigger.is-official");
+    await page.click('.official-feedback button');
+    await shot("compact-official-desktop");
+    for (const width of [820, 390]) {
+      await page.setViewport({ width, height: 844 });
+      await page.waitForSelector(".official-version-trigger", { visible: true });
+      expect(await page.$eval(".fs-bar", el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(72);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.click(".official-version-trigger");
+      const bounds = await page.$eval('.more-menu:not([hidden])', el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right }; });
+      expect(bounds.left).toBeGreaterThanOrEqual(0);
+      expect(bounds.right).toBeLessThanOrEqual(width);
+      await shot(`compact-menu-${width}`);
+      await page.keyboard.press("Escape");
+    }
+    await page.setViewport({ width: 1440, height: 960 });
+    await page.click(".official-version-trigger");
+    await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2" }), page.click(`.more-menu:not([hidden]) a[href*="${fixture.versions[1]}"]`)]);
+    await frameText("Report content v2");
+    await page.waitForFunction(() => document.querySelector(".official-version-trigger")?.textContent?.includes("Historical version"));
+    await page.click(".official-version-trigger");
+    await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2" }), page.click(`.more-menu:not([hidden]) a[href*="${fixture.versions[3]}"]`)]);
+    await frameText("Report content v4");
+    await page.waitForSelector(".official-version-trigger.is-official");
+    await page.evaluate(() => { document.cookie = "ah_locale=zh-CN; Path=/"; });
+    await page.reload({ waitUntil: "networkidle2" });
+    await page.waitForSelector(".official-version-trigger.is-official");
+    await page.screenshot({ path: "test-results/official/compact-toolbar-zh.png", clip: { x: 0, y: 0, width: 1440, height: 160 } });
+    await page.click(".official-version-trigger");
+    await page.screenshot({ path: "test-results/official/compact-menu-zh.png", clip: { x: 0, y: 0, width: 1440, height: 440 } });
+    await page.keyboard.press("Escape");
+    await page.setViewport({ width: 390, height: 844 });
+    await page.click(".official-version-trigger");
+    await shot("compact-mobile-zh");
+    await clickText("取消正式版");
+    await page.waitForSelector(".official-confirmation[open]");
+    await clickText("确认");
+    await page.waitForFunction(() => !document.querySelector(".official-version-trigger.is-official"));
+    expect(await page.evaluate(async slug => {
+      const result = await (await fetch(`/api/sites/${slug}/official`)).json();
+      return { official: result.officialVersionId, latest: result.currentVersionId };
+    }, fixture.slug)).toEqual({ official: null, latest: fixture.versions[3] });
+    expect(hydrationErrors).toEqual([]);
+    await page.evaluate(() => { document.cookie = "ah_locale=en; Path=/"; });
+    await page.setViewport({ width: 1440, height: 960 });
+  }, 120_000);
+
+  it("docks artifact actions to the edge and remembers an accessible collapsed preference", async () => {
+    await page.setViewport({ width: 1440, height: 960 });
+    await page.goto(base!, { waitUntil: "networkidle2" });
+    const fixture = await page.evaluate(async () => {
+      localStorage.removeItem("artifact-comment-rail-collapsed");
+      return (await fetch("/api/sites", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "paste", html: '<body style="background:#0c1420;color:white"><h1>Edge toolbar acceptance</h1></body>' }) })).json();
+    });
+    await page.goto(`${base}/s/${fixture.slug}`, { waitUntil: "networkidle2" });
+    const toggle = ".comment-rail-toggle";
+    await page.waitForSelector('.comment-rail[data-collapsed="true"]');
+    async function checkEdge(maxWidth: number) {
+      const geometry = await page.$eval(".comment-rail", el => {
+        const rect = el.getBoundingClientRect();
+        return { right: rect.right, width: rect.width, viewport: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth };
+      });
+      expect(geometry.right).toBe(geometry.viewport);
+      expect(geometry.width).toBeLessThanOrEqual(maxWidth);
+      expect(geometry.overflow).toBe(false);
+    }
+    await checkEdge(26);
+    await shot("rail-collapsed-desktop");
+    await page.focus(toggle);
+    await page.keyboard.press("Enter");
+    await page.waitForSelector('.comment-rail[data-collapsed="false"]');
+    await checkEdge(54);
+    expect(await page.$eval(toggle, el => el.getAttribute("aria-expanded"))).toBe("true");
+    await page.click(".comment-more-trigger");
+    await page.waitForSelector('.more-menu:not([hidden])');
+    await page.keyboard.press("Escape");
+    await shot("rail-expanded-desktop");
+    await page.reload({ waitUntil: "networkidle2" });
+    await page.waitForSelector('.comment-rail[data-collapsed="false"]');
+    await page.click(toggle);
+    await page.reload({ waitUntil: "networkidle2" });
+    await page.waitForSelector('.comment-rail[data-collapsed="true"]');
+    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+    await checkEdge(26);
+    await shot("rail-collapsed-mobile");
+    await page.click(toggle);
+    await page.waitForSelector('.comment-rail[data-collapsed="false"]');
+    await checkEdge(54);
+    await shot("rail-expanded-mobile");
+    await page.click(toggle);
+    await page.setViewport({ width: 1440, height: 960 });
+  }, 120_000);
+
+  it("preserves version controls during transient refresh failures but clears denied access", async () => {
+    await page.goto(base!, { waitUntil: "networkidle2" });
+    const fixture = await page.evaluate(async () => {
+      const created = await (await fetch("/api/sites", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "paste", html: "<h1>Refresh resilience</h1>" }) })).json();
+      localStorage.setItem(`sites:editToken:${created.slug}`, created.editToken);
+      return created;
+    });
+    await page.goto(`${base}/s/${fixture.slug}`, { waitUntil: "networkidle2" });
+    await page.waitForSelector(".official-version-trigger");
+    await page.click(".official-version-trigger");
+    await clickText("Set this version as official");
+    await page.waitForSelector(".official-confirmation[open]");
+    let status = 429;
+    await page.setRequestInterception(true);
+    const intercept = (request: HTTPRequest) => {
+      if (request.interceptResolutionState().action === "disabled") return;
+      if (request.method() === "GET" && new URL(request.url()).pathname === `/api/sites/${fixture.slug}/official`) return request.respond({ status, contentType: "application/json", body: JSON.stringify({ error: "Acceptance refresh failure" }) });
+      return request.continue();
+    };
+    page.on("request", intercept);
+    try {
+      for (const failure of [429, 503]) {
+        status = failure;
+        const response = page.waitForResponse(res => res.url().endsWith(`/api/sites/${fixture.slug}/official`) && res.status() === failure);
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await response;
+        // Let the fetch continuation and React commit run before checking retained UI.
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        expect(await page.$(".official-version-trigger")).not.toBeNull();
+        expect(await page.$(".official-confirmation[open]")).not.toBeNull();
+      }
+      const name = await page.$eval(".official-version-trigger", el => el.getAttribute("aria-label") || el.textContent);
+      expect(name).toContain("v1");
+      expect(name).toContain("Latest version");
+      status = 403;
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await page.waitForSelector(".official-version-trigger", { hidden: true });
+      expect(await page.$(".official-confirmation[open]")).toBeNull();
+    } finally {
+      page.off("request", intercept);
+      await page.setRequestInterception(false);
+    }
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await page.waitForSelector(".official-version-trigger");
+    expect(await page.$(".official-confirmation[open]")).toBeNull();
+  }, 60_000);
 
 });

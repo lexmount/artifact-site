@@ -839,7 +839,7 @@ it("downloads snapshots through the HTTP export gate and audits management downl
     for (const headers of [{}, { "x-management-reason": "" }, { "x-management-reason": "   " }, { "x-management-reason": "x".repeat(501) }]) {
       const denied = await download(admin.cookie, site.currentVersionId, headers);
       expect(denied.status).toBe(403);
-      expect(await denied.json()).toMatchObject({ error: "Unsupported or denied permission: site.source.export" });
+      expect(await denied.json()).toMatchObject({ error: "You do not have permission to perform this action on this report" });
     }
     expect(await rbacQuery("SELECT * FROM rbac_audit WHERE target_id=$1 AND action=$2", [site.id, "site.source.export"])).toHaveLength(0);
     // A download is a read: taking a site down must not prevent the owner or an explicit

@@ -168,3 +168,45 @@ it("preserves bearer identity while forwarding tenant and share context", async 
     expect(h.get("x-artifact-share")).toBe("shared-report");
   }
 });
+
+it("does not retry an unsafe write after a 5xx response", async () => {
+  let calls = 0;
+  const c = new ArtifactSiteClient({ baseUrl: "http://test.local", token: "secret", fetch: async () => { calls++; return Response.json({ error: "unavailable" }, { status: 503 }); }, sleep: async () => {} });
+  await expect(c.createPaste("<h1>No duplicate</h1>")).rejects.toMatchObject({ status: 503 });
+  expect(calls).toBe(1);
+});
+it("reopens a streamed file for each safe retry", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "upload-retry-")); const file = path.join(dir, "index.html"); await writeFile(file, "retry bytes");
+  const bodies: string[] = [];
+  const c = new ArtifactSiteClient({ baseUrl: "http://test.local", fetch: async (url, init) => {
+    bodies.push(await new Request(url, init).text());
+    return bodies.length === 1 ? Response.json({ error: "busy" }, { status: 503 }) : Response.json({ relpath: "index.html", bytes: 11 });
+  }, sleep: async () => {} });
+  await c.uploadFile("ver_retry", "index.html", file);
+  expect(bodies).toEqual(["retry bytes", "retry bytes"]);
+});
+
+it("shares one identity request across concurrent and repeated publication preflights", async () => {
+  let requests = 0;
+  const uploadLimits = { maxBytes: 1000, maxFileBytes: 900, maxFiles: 50 };
+  const c = new ArtifactSiteClient({ baseUrl: "http://test.invalid", token: "test", fetch: async () => {
+    requests++; return Response.json({ user: { id: "owner" }, oidcEnabled: false, uploadLimits });
+  } });
+  const [limits, identity] = await Promise.all([c.uploadLimits(), c.recoveryIdentity()]);
+  expect(limits).toEqual(uploadLimits); expect(identity).toBeTruthy();
+  await c.uploadLimits(); await c.recoveryIdentity(); expect(requests).toBe(1);
+  await c.me(); expect(requests).toBe(2); // Explicit identity checks remain live.
+  c.setContext({ tenantId: "other-tenant" });
+  expect(await c.recoveryIdentity()).not.toBe(identity); expect(requests).toBe(3);
+});
+
+it("retries identity lookup after a failed shared preflight", async () => {
+  let requests = 0;
+  const c = new ArtifactSiteClient({ baseUrl: "http://test.invalid", token: "test", retries: 0, fetch: async () => {
+    requests++;
+    return requests === 1 ? Response.json({ error: "temporarily unavailable" }, { status: 503 }) : Response.json({ user: { id: "owner" }, oidcEnabled: false });
+  } });
+  const failed = await Promise.allSettled([c.uploadLimits(), c.recoveryIdentity()]);
+  expect(failed.map(result => result.status)).toEqual(["rejected", "rejected"]); expect(requests).toBe(1);
+  await c.recoveryIdentity(); await c.uploadLimits(); expect(requests).toBe(2);
+});

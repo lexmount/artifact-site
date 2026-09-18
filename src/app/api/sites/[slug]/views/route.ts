@@ -11,7 +11,7 @@
 import type { NextResponse } from "next/server";
 import { getSiteViewStats, getUser, listCollaborators, listSiteOpens } from "@/lib/db";
 import { getSiteView } from "@/lib/sites";
-import { requireCapability } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import type { User } from "@/lib/types";
 import { errorResponse, json } from "../../../_util";
 
@@ -24,7 +24,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    await requireCapability(request, view.site, "manage");
+    await requirePermission(request, view.site, "site.audit.read");
 
     const raw = Number(new URL(request.url).searchParams.get("limit"));
     const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), MAX_LIMIT) : DEFAULT_LIMIT;

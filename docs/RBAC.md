@@ -216,3 +216,49 @@ Anonymous receipt exchange uses one HttpOnly cookie, bounded to eight recently o
 artifacts and 3,000 encoded bytes, with a one-hour lifetime. Listing artifacts only verifies
 headers and never mints cookies. Evicted receipts remain in local storage and can be exchanged
 again on opening an artifact; the creating-browser cookie remains the normal creator proof.
+
+
+### Authorization consolidation and upgrade compatibility
+
+Production report routes gate named permissions (`site.content.edit`, `site.rename`,
+`site.sharing.manage`, etc.). The old `requireActor` and `requireCapability` gates are removed. Capability ranks remain
+only as a compatibility projection for legacy tests, not an API authorization path. Retired `edit_policy`, `claim_token` and collaborator records
+remain for migration compatibility; they do not grant runtime permissions. Anonymous creator
+proof still applies only to ownerless reports in the anonymous tenant. Personal tokens and
+OAuth/MCP connections keep their existing identities, revocation and scope checks.
+
+Report readers, comment access and keyed previews share `readerVersionAllowed`: an unpinned
+reader may read current or official; a fixed share may read only its snapshot. Keyed previews
+recheck this range on every request. Members with history permission retain history access.
+
+Share PATCH reloads the row inside the permission transaction before merging omitted fields.
+Responses include `revision`; clients should send it as `expectedRevision`. A stale revision
+returns HTTP 409 with `code: "share_revision_conflict"` and the current `revision`, without
+writes. A revoked share instead returns HTTP 409 with `code: "share_revoked"`; it cannot be
+revived. Refresh and review settings before retrying a conflict. If supplied, `expectedRevision` must be a nonnegative
+integer; `null` is invalid (HTTP 400), not an instruction to bypass conflict detection. The UI refreshes settings for review. Legacy clients may omit
+it; omitted fields still merge against the current row, but conflicting explicit edits remain
+last-writer-wins. Grant changes and revocation also invalidate the revision.
+
+Migration 0005 requires PostgreSQL 15 or newer for the column-specific
+[`ON DELETE SET NULL` action](https://www.postgresql.org/docs/15/sql-createtable.html).
+CI and the default local integration setup use PostgreSQL 18.
+
+Migrations 0004–0005 add share revisions and tenant/same-report version foreign keys. PostgreSQL
+constraints start `NOT VALID`: new writes are checked, historical records are preserved rather
+than silently transferred or deleted. Operators can locate historical violations with:
+
+```sql
+SELECT s.id FROM sites s LEFT JOIN tenants t ON t.id=s.tenant_id WHERE t.id IS NULL;
+SELECT s.id FROM sites s LEFT JOIN versions v ON v.id=s.official_version_id AND v.site_id=s.id
+WHERE s.official_version_id IS NOT NULL AND v.id IS NULL;
+SELECT s.id FROM site_shares s LEFT JOIN versions v ON v.id=s.version_id AND v.site_id=s.site_id
+WHERE s.version_id IS NOT NULL AND v.id IS NULL;
+```
+
+After resolving any historical violations according to their actual ownership, validate with
+`ALTER TABLE sites VALIDATE CONSTRAINT sites_tenant_fk`,
+`ALTER TABLE sites VALIDATE CONSTRAINT official_site_version_fk`, and
+`ALTER TABLE site_shares VALIDATE CONSTRAINT shares_site_version_fk`.
+Recoverable share-link storage remains the explicit exception documented in SECURITY.md;
+this change does not rotate credentials or invalidate existing links.

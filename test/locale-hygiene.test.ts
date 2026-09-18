@@ -17,6 +17,19 @@ const sources = walk(abs("src")).filter((f) => !f.includes("/locales/")).map((f)
 const literals = new Set([...sources.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)].map((m) => m[1].replace(/\\"/g, '"')));
 
 describe("zh-CN locale hygiene", () => {
+  it("has no keys shadowed by another feature dictionary", () => {
+    const owners = new Map<string, string>();
+    const duplicates: string[] = [];
+    for (const file of readdirSync(abs("src/locales/zh-CN")).filter(f => f.endsWith(".ts") && f !== "index.ts")) {
+      const source = readFileSync(abs(`src/locales/zh-CN/${file}`), "utf8");
+      for (const match of source.matchAll(/^\s*"((?:[^"\\]|\\.)*)":/gm)) {
+        const previous = owners.get(match[1]);
+        if (previous) duplicates.push(`${match[1]}: ${previous}, ${file}`);
+        owners.set(match[1], file);
+      }
+    }
+    expect(duplicates).toEqual([]);
+  });
   for (const file of readdirSync(abs("src/locales/zh-CN")).filter((f) => f.endsWith(".ts") && f !== "index.ts")) {
     it(`${file}: every key is referenced by a source string literal`, () => {
       const src = readFileSync(abs(`src/locales/zh-CN/${file}`), "utf8");

@@ -1,3 +1,6 @@
+import { resolveUploadTarget } from "@/lib/upload";
+import { recoverMcpOperation } from "@/lib/publish-operation";
+import { createHash } from "node:crypto";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -34,22 +37,53 @@ function uploadBody(args: { html?: string; files?: z.infer<typeof file>[]; title
   return form;
 }
 
+/** A confirmed inline refusal can safely reuse the existing per-file protocol. */
+async function publishContent(request: Request, args: { html?: string; files?: z.infer<typeof file>[]; title?: string; official?: boolean }, targetSlug?: string, expectedVersion?: string) {
+  try { return await callApi(request, targetSlug ? "update" : "publish", { slug: targetSlug, query: expectedVersion ? { expected_version: expectedVersion } : undefined, body: uploadBody(args) }); }
+  catch (error) {
+    const e = error as { statusCode?: number; data?: { code?: string; effect?: string } };
+    if (e.statusCode !== 413 || e.data?.code !== "inline_upload_too_large" || e.data.effect !== "none") throw error;
+  }
+  const files = args.html !== undefined ? [{ path: "index.html", content: args.html, encoding: "utf8" as const }] : args.files!;
+  resolveUploadTarget(files.map(f => safeRelativePath(f.path)));
+  const headers = new Headers(request.headers);
+  const key = headers.get("idempotency-key");
+  if (key) headers.set("idempotency-key", createHash("sha256").update(`${key}:inline-fallback-start`).digest("hex"));
+  const startRequest = new Request(request.url, { headers, signal: request.signal });
+  const { versionId } = await callApi(startRequest, "upload_start", { body: { title: args.title, slug: targetSlug } });
+  const status = await callApi(request, "upload_status", { versionId });
+  for (const file of files) {
+    const bytes = Buffer.from(file.content, file.encoding === "base64" ? "base64" : "utf8");
+    if (status.files.some((uploaded: { relpath: string; bytes: number; sha256?: string }) => uploaded.relpath === file.path && uploaded.bytes === bytes.length && uploaded.sha256 === createHash("sha256").update(bytes).digest("hex"))) continue;
+    await callApi(request, "upload_file", { versionId, file: safeRelativePath(file.path), raw: bytes });
+  }
+  // The inline 413 occurs before key reservation in withPublishOperation. Keep the original
+  // key here so operation_status and recoverMcpOperation can recover after session cleanup.
+  return callApi(request, "upload_commit", { versionId, body: { title: args.title, official: args.official }, query: expectedVersion ? { expected_version: expectedVersion } : undefined });
+}
+
 export function createRemoteMcpServer(request: Request) {
   const publicHeaders = new Headers(request.headers);
   if (!publicHeaders.has("host")) publicHeaders.set("host", new URL(request.url).host);
   if (!publicHeaders.has("x-forwarded-proto")) publicHeaders.set("x-forwarded-proto", new URL(request.url).protocol.slice(0, -1));
   const publicBase = resolvePublicBase(publicHeaders);
-  const server = new McpServer({ name: "artifact-site", version: "0.1.0" }, {
+  const server = new McpServer({ name: "artifact-site", version: "0.2.0" }, {
     instructions: "Artifact Site is the connected remote library for AI-generated pages, reports, charts, prototypes and documents. Use its tools when users ask about their artifacts or want to publish, find, read, update or share previous work. Start with artifact_site_find for 'my artifacts'; no slug is needed. Explicit local filesystem requests belong to local file tools. Authentication is already supplied by the host; never ask users to paste tokens into chat. Use connection only to diagnose identity/limits, not before every task. Read artifact-site://skill when building hosted content. Uploaded paths are relative filenames, never local server paths."
   });
   function tool<S extends z.ZodRawShape>(name: string, title: string, description: string, inputSchema: S, action: (args: z.infer<z.ZodObject<S>>, request: Request) => Promise<unknown>) {
-    server.registerTool(name, { title, description, inputSchema: z.strictObject({...inputSchema, tenant_id:id.optional().describe("Destination tenant for creation; defaults to the account tenant."), share_token:z.string().max(512).optional().describe("Token from a user-provided share URL; carries only that share permission.")}), annotations: { idempotentHint: ["artifact_site_upload_write", "artifact_site_upload_cancel", "artifact_site_delete"].includes(name), readOnlyHint: readOnlyMcpTools.has(name), destructiveHint: ["artifact_site_update", "artifact_site_edit", "artifact_site_share", "artifact_site_rollback", "artifact_site_delete"].includes(name) } }, async (args: unknown): Promise<CallToolResult> => {
-      try { request.signal.throwIfAborted(); const {tenant_id,share_token,...operationArgs} = args as Record<string,unknown>;
+    server.registerTool(name, { title, description, inputSchema: z.strictObject({...inputSchema, ...(["artifact_site_publish", "artifact_site_update", "artifact_site_edit", "artifact_site_upload_start"].includes(name) ? { operation_key: z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/).optional().describe("Persist a unique key before this write. Reuse exactly the same key and arguments after errors; recover results for seven days using operation_status.") } : {}), tenant_id:id.optional().describe("Destination tenant for creation; defaults to the account tenant."), share_token:z.string().max(512).optional().describe("Token from a user-provided share URL; carries only that share permission.")}), annotations: { idempotentHint: ["artifact_site_upload_write", "artifact_site_upload_cancel", "artifact_site_delete"].includes(name), readOnlyHint: readOnlyMcpTools.has(name), destructiveHint: ["artifact_site_update", "artifact_site_edit", "artifact_site_share", "artifact_site_rollback", "artifact_site_delete"].includes(name) } }, async (args: unknown): Promise<CallToolResult> => {
+      try { request.signal.throwIfAborted(); const {operation_key,tenant_id,share_token,...operationArgs} = args as Record<string,unknown>;
         const scopedHeaders = new Headers(request.headers);
+        scopedHeaders.delete("idempotency-key"); scopedHeaders.delete("x-artifact-operation-input");
         if (typeof tenant_id === "string") scopedHeaders.set("x-artifact-tenant",tenant_id);
         if (typeof share_token === "string") scopedHeaders.set("x-artifact-share",share_token);
+        if (typeof operation_key === "string") {
+          scopedHeaders.set("idempotency-key", operation_key);
+          scopedHeaders.set("x-artifact-operation-input", createHash("sha256").update(JSON.stringify([name, operationArgs, tenant_id, share_token])).digest("hex"));
+        }
         const scoped = new Request(request.url,{headers:scopedHeaders,signal:request.signal});
-        const data = await action(operationArgs as z.infer<z.ZodObject<S>>,scoped); return { content: [{ type: "text" as const, text: JSON.stringify(data) }] }; }
+        const recovered = await recoverMcpOperation(scoped);
+        const data = recovered ?? await action(operationArgs as z.infer<z.ZodObject<S>>,scoped); return { content: [{ type: "text" as const, text: JSON.stringify(data) }] }; }
       catch (error) {
         const known = error as { statusCode?: number; data?: unknown };
         if (!known.statusCode) console.error("[mcp]", name, error);
@@ -66,9 +100,9 @@ export function createRemoteMcpServer(request: Request) {
   tool("artifact_site_publish", "Publish a site", "Save a new AI-generated page, report, chart, prototype or document to the remote Artifact Site library and get its address. Use for 'publish this report' or 'give this page a link'. Supply inline HTML, a UTF-8/base64 file tree, or a completed upload_id. For requests over 2 MiB, use upload_start and upload_write first. Creates a PUBLIC share by default; use share:false for unshared work. To change an existing artifact at the same URL, use update or edit instead. Returns the created artifact and share result; if sharing fails, retry share rather than publishing again.", { ...content, upload_id: uploadId, share: z.union([policies, z.literal(false)]).default("public").describe("Share policy. Defaults to public; false creates no share link.") }, async (args, request) => {
     checkSource(args);
     if (args.upload_id) await assertUploadTarget(request, args.upload_id);
-    const site = args.upload_id ? await commitUpload(request, args.upload_id, args.title, undefined, args.official) : await callApi(request, "publish", { body: uploadBody(args) });
+    const site = args.upload_id ? await commitUpload(request, args.upload_id, args.title, undefined, args.official) : await publishContent(request, args);
     if (!args.share) return site;
-    try { return { ...site, share: await callApi(request, "share", { slug: site.slug, body: { policy: args.share } }) }; }
+    try { return { ...site, share: await callApi(request, "share", { slug: site.slug, body: { policy: args.share, source: "publish" } }) }; }
     catch { return { ...site, shareError: "Site created; sharing failed. Retry with artifact_site_share." }; }
   });
   tool("artifact_site_update", "Update a site", "Update an existing remote artifact while keeping its address, or rename its display title. For 'replace this report with the new version', supply exactly one of html/files/upload_id AND expected_version from get_site/export. This replaces ALL contents; omitted files are removed. For 'rename this artifact', supply only slug and title: no content version is created. Do not combine a rename-only request with upload fields. Use edit for one text file. A 409 means someone changed the artifact: inspect it before explicitly choosing what to keep; staged bytes remain available.", { ...slug, ...content, upload_id: uploadId, expected_version: id.optional().describe("Required for content replacement; version ID read before editing. Omit for title-only changes.") }, async ({ slug, expected_version, ...args }, request) => {
@@ -82,7 +116,7 @@ export function createRemoteMcpServer(request: Request) {
       await assertUploadTarget(request, args.upload_id, slug);
       return commitUpload(request, args.upload_id, args.title, expected_version, args.official);
     }
-    return callApi(request, "update", { slug, query: { expected_version }, body: uploadBody(args) });
+    return publishContent(request, args, slug, expected_version);
   });
   tool("artifact_site_edit", "Edit a file", "Change one text file in an existing remote page or website, keeping the other files and the artifact URL. Use for 'fix the heading' or 'update this chart script'. Read the file first, then submit its complete replacement text and the version you read. Creates a new version. A 409 requires reading the latest version before retrying; do not blindly overwrite a concurrent edit. Use update for a whole project or binary document.", { ...slug, path: z.string().describe("Relative text filename from get_site, such as index.html."), content: z.string().describe("Complete new text of this file, not a diff."), expected_version: id.describe("Version ID read before the edit.") }, async ({ slug, expected_version, ...body }, request) => {
     safeRelativePath(body.path);
@@ -96,7 +130,7 @@ export function createRemoteMcpServer(request: Request) {
     }
     return { scope: "discoverable", ...await callApi(request, "search", { query: { q: query, limit: String(limit ?? 20) } }) };
   });
-  tool("artifact_site_get_site", "Get a site", "Inspect a known remote artifact: title, kind, current version and file names. Use before editing, to check what files exist, or to review version history and sharing status. Optionally include versions and/or shares; shares require owner permissions and contain summaries, not the original secret link tokens. Metadata with filenames requires source access (editor or higher). File contents are returned by read (text) or export (original bytes).", { ...slug, include: z.array(z.enum(["versions", "shares"])).optional().describe("Optional additional details; shares require owner permission. Omit for metadata and filenames only.") }, async ({ slug, include }, request) => {
+  tool("artifact_site_get_site", "Get a site", "Inspect a known remote artifact: title, kind, current version and file names. Use before editing, to check what files exist, or to review version history and sharing status. Optionally include versions and/or shares; shares require owner permissions and contain summaries and recoverable addresses for new links. Metadata with filenames requires source access (editor or higher). File contents are returned by read (text) or export (original bytes).", { ...slug, include: z.array(z.enum(["versions", "shares"])).optional().describe("Optional additional details; shares require owner permission. Omit for metadata and filenames only.") }, async ({ slug, include }, request) => {
     const result = await callApi(request, "get", { slug }); delete result.content;
     const { officialVersionId, officialRevision, officialSetAt } = await callApi(request, "official", { slug });
     Object.assign(result, { officialVersionId, officialRevision, officialSetAt });
@@ -106,7 +140,7 @@ export function createRemoteMcpServer(request: Request) {
   });
   tool("artifact_site_read", "Read a site", "Read an existing remote report, page or document to summarize it, answer questions, or reuse earlier work. Find its slug with find if needed. Without file, returns extracted plain text; with file, returns the original text of that relative file. Results include versionId and truncation information. Use get_site for filenames, edit to change one file, and export for binary files or a complete backup. Respects the artifact's text/AI access policy.", { ...slug, file: z.string().optional().describe("Relative text filename; omit for extracted document/page text."), max_chars: z.number().int().min(1).max(300000).default(20000).describe("Maximum returned characters; increase if the response is truncated.") }, async ({ slug, file, max_chars }, request) => callApi(request, "read", { slug, query: { ...(file ? { file } : {}), max_chars: String(max_chars) } }));
   tool("artifact_site_fork", "Fork a site", "Make an independent copy of a remote artifact, for example 'use this report as a template' or 'create my own version'. Returns a new artifact identifier and address; the source is unchanged. Requires permission to copy its contents. Use update/edit when the user wants changes at the existing address instead.", slug, async (args, request) => callApi(request, "fork", args));
-  tool("artifact_site_share", "Create a share link", "Create a reader link for an existing remote artifact when the user wants to share a report or page. Choose public, signed-in, email-restricted or passcode access explicitly. A public link opens only that share URL; the original artifact visibility stays unchanged. Returns the new link and any generated passcode; keep these for the user because later listing returns only summaries. Requires owner permission. Use get_site include:[shares] to inspect existing sharing records.", { ...slug, mode: z.enum(["view","comment","edit"]).default("view").describe("Share role; edit requires sign-in and the latest version."), versionId: id.optional().describe("Pin a view/comment link to this version; omit for latest."), policy: policies.describe("Required access policy: public, login, people, or passcode; email is a compatibility alias."), label: z.string().optional().describe("Optional name to distinguish this link."), expiresInDays: z.union([z.literal(7), z.literal(30), z.literal(90)]).optional().describe("Optional expiration in days."), passcode: z.string().optional().describe("Only for passcode policy; omitted means generate one.") }, async ({ slug, ...body }, request) => callApi(request, "share", { slug, body }));
+  tool("artifact_site_share", "Create a share link", "Create a reader link for an existing remote artifact when the user wants to share a report or page. Choose public, signed-in, email-restricted or passcode access explicitly. A public link opens only that share URL; the original artifact visibility stays unchanged. Returns the new link and any generated passcode; passcodes are shown once, while new link addresses can be retrieved later. Requires owner permission. Use get_site include:[shares] to inspect existing sharing records.", { ...slug, mode: z.enum(["view","comment","edit"]).default("view").describe("Share role; edit requires sign-in and the latest version."), versionId: id.optional().describe("Pin a view/comment link to this version; omit for latest."), policy: policies.describe("Required access policy: public, login, people, or passcode; email is a compatibility alias."), label: z.string().optional().describe("Optional name to distinguish this link."), expiresInDays: z.union([z.literal(7), z.literal(30), z.literal(90)]).optional().describe("Optional expiration in days."), passcode: z.string().optional().describe("Only for passcode policy; omitted means generate one.") }, async ({ slug, ...body }, request) => callApi(request, "share", { slug, body }));
   tool("artifact_site_set_official", "Set official version", "Designate a specific current or historical version as the only official version. Replaces the previous designation; latest and immutable contents do not change. Use expected_revision from get_site to reject stale changes.", { ...slug, version_id: id, expected_revision: z.number().int().nonnegative().optional() }, async ({ slug, version_id, expected_revision }, request) => callApi(request, "official_set", { slug, body: { versionId: version_id, expectedRevision: expected_revision } }));
   tool("artifact_site_clear_official", "Clear official version", "Remove the official designation. Does not delete or edit any version.", { ...slug, expected_revision: z.number().int().nonnegative().optional() }, async ({ slug, expected_revision }, request) => callApi(request, "official_clear", { slug, body: { expectedRevision: expected_revision } }));
   tool("artifact_site_rollback", "Roll back a site", "Restore an earlier remote artifact version as a new current version, keeping the address and history. Use when the user explicitly wants to undo a publication/update. Get version IDs with get_site include:[versions]. This changes current contents; establish the user's intended version before calling. Returns the new version identifier.", { ...slug, version_id: id.describe("Historical version to restore, from get_site with versions included.") }, async ({ slug, version_id }, request) => callApi(request, "rollback", { slug, body: { versionId: version_id } }));
@@ -121,6 +155,8 @@ export function createRemoteMcpServer(request: Request) {
     const data = await getStorage().readRange(view.site.id, version_id, safeRelativePath(path), offset, offset + length - 1);
     return { versionId: version_id, path, offset, total: data.total, base64: Buffer.from(data.bytes).toString("base64"), nextOffset: offset + data.bytes.length, done: offset + data.bytes.length >= data.total };
   });
+  tool("artifact_site_operation_status", "Publication status", "Recover the outcome of a write by its operation_key, including after a lost response. Completed results are retained for seven days. Never start a new publication to recover an uncertain result.", { key: id.describe("The operation_key used for the original write.") }, async ({ key }, request) => callApi(request, "operation_status", { key }));
+  tool("artifact_site_upload_status", "Upload progress", "Inspect an unfinished upload and its finalized files before resuming. Sessions expire after six hours. Use operation_status for a commit whose response was lost.", { upload_id: id.describe("Upload session versionId returned by upload_start.") }, async ({ upload_id }, request) => callApi(request, "upload_status", { versionId: upload_id }));
   tool("artifact_site_upload_start", "Start an upload", "Prepare a large document or multi-file website for remote publication when inline publish/update would exceed the 2 MiB MCP request limit. Returns versionId, used as upload_id in upload_write and publish/update. Omit slug for a new artifact; include it for whole-content replacement of that artifact. Send actual bytes using upload_write, never a path on your local machine. Check connection for deployment limits. Incomplete uploads expire after six hours.", { slug: id.optional().describe("Existing artifact to replace; omit when creating a new artifact."), title: z.string().max(500).optional().describe("Optional title for the completed artifact.") }, async (body, request) => callApi(request, "upload_start", { body }));
   tool("artifact_site_upload_write", "Write upload content", "Transfer one file's bytes into a remote upload. Use after upload_start; file creation and assembly are automatic. Send files and chunks sequentially, index starting at 0 for each relative path, at most 256 KiB decoded bytes per chunk. Set final:true on the last chunk of EVERY file (empty files use empty base64). Identical chunk retries are safe, including the final chunk; finalized files cannot be changed in this upload. After all files finish, use publish with upload_id or update with slug, upload_id and expected_version. Does not publish by itself.", { upload_id: id.describe("versionId returned by upload_start."), path: z.string().min(1).max(1024).describe("Relative uploaded filename, e.g. assets/chart.png; never an absolute local path."), index: z.number().int().min(0).describe("Zero-based sequential chunk index within this file."), base64: z.string().max(349528).describe("Base64-encoded bytes, at most 262144 decoded bytes."), final: z.boolean().describe("True only for the last chunk of this file.") }, async ({ upload_id, path, index, base64, final }, request) => writeFileChunk(request, upload_id, path, index, base64, final));
   tool("artifact_site_upload_cancel", "Cancel an upload", "Abandon an unfinished remote upload when the user cancels publication or wants to restart it. Invalidates the upload and reclaims staged project bytes and temporary chunk parts. Does not delete a published artifact. Supply the upload ID from upload_start.", { upload_id: id.describe("versionId returned by upload_start, not a published artifact slug.") }, async ({ upload_id }, request) => cancelUpload(request, upload_id));

@@ -6,6 +6,7 @@
 // opens. That shape is what leaves room for "User settings" and everything else that will want to hang off
 // an identity — a second top-level button per account action does not scale, and "Sign out" sitting
 // permanently in the toolbar gives the least-used action the most prominent slot.
+import { setAnalyticsUser } from "@/lib/analytics";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogIn, LogOut, ShieldCheck, User2 } from "lucide-react";
@@ -85,8 +86,10 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
             onClick={async () => {
               setBusy(true);
               // Origin is checked server-side on every cookie-authenticated write, including this one.
-              await fetch("/api/auth/logout", { method: "POST", headers: { origin: window.location.origin } })
-                .catch(() => {});
+              const response = await fetch("/api/auth/logout", { method: "POST", headers: { origin: window.location.origin } })
+                .catch(() => null);
+              // Clear gtag's identity before unload events, not just the in-memory app state.
+              if (response?.ok) setAnalyticsUser(null);
               resetAuthCache();
               window.location.reload();
             }}

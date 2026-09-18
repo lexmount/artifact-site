@@ -1,3 +1,4 @@
+import { withPublishOperation } from "@/lib/publish-operation";
 // POST /api/uploads/<versionId>/commit — turn the uploaded files into a version.
 //
 // This step **never touches content**: the bytes streamed into storage during the individual PUTs,
@@ -16,7 +17,7 @@ import { completeUploadSession, discardUploadSession, getUploadSession, ownerKey
 import { CROSS_SITE_REJECTED, isCrossSiteForTarget } from "@/lib/upload-csrf";
 import { commitUploadedVersion, getSiteView } from "@/lib/sites";
 import { apiAuditContext } from "@/lib/audit";
-import { requirePermission, requireCapability } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import { isAdmin, assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
 import { resolveSession } from "@/lib/session";
 import { anonIdFromRequest } from "@/lib/anon";
@@ -24,6 +25,10 @@ import type { Actor } from "@/lib/types";
 import { errorResponse, json, versionConflictResponse, parseExpectedVersion } from "../../../_util";
 
 export async function POST(request: Request, context: { params: Promise<{ versionId: string }> }): Promise<NextResponse> {
+  return withPublishOperation(request, r => executePost(r, context));
+}
+
+async function executePost(request: Request, context: { params: Promise<{ versionId: string }> }): Promise<NextResponse> {
   try {
     checkRateLimit(request);
     const { versionId } = await context.params;
@@ -43,7 +48,7 @@ export async function POST(request: Request, context: { params: Promise<{ versio
     if (session.targetSlug) {
       const view = await getSiteView(session.targetSlug);
       if (!view) return json({ error: "site not found" }, 404);
-      await requireCapability(request, view.site, "content");
+      await requirePermission(request, view.site, "site.content.edit");
       if (body.official) await requirePermission(request, view.site, "site.version.official.manage", undefined, false);
       target = resolveUploadTargetForSite(view.site.kind, relpaths);
     } else {
@@ -59,14 +64,17 @@ export async function POST(request: Request, context: { params: Promise<{ versio
       official: body.official, session, entry: target.entry, document: target.document, expectedVersionId: expected.value,
       title: body.title ?? session.title ?? undefined, ctx: apiAuditContext(request, actor),
     });
-    await completeUploadSession(versionId);
+    await completeUploadSession(versionId).catch(error => console.error("[upload] session cleanup", error));
     return json(result, 201);
   } catch (error) {
     // If the commit fails (entry not found, wrong permissions), reclaim the bytes already uploaded — kept, they waste space and nobody claims them.
     const conflict = error as { statusCode?: number; currentVersionId?: string };
     if (conflict.statusCode === 409 && conflict.currentVersionId) return versionConflictResponse(conflict.currentVersionId);
-    const { versionId } = await context.params;
-    await discardUploadSession(versionId).catch(() => {});
+    // Recovery-aware clients retain their draft; legacy calls keep their cleanup contract.
+    if (!request.headers.has("idempotency-key")) {
+      const { versionId } = await context.params;
+      await discardUploadSession(versionId).catch(() => {});
+    }
     return errorResponse(error);
   }
 }

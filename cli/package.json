@@ -1,6 +1,6 @@
 {
   "name": "@artifact-site/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Command-line client for artifact-site: publish, update, search, share and export sites.",
   "license": "(Apache-2.0 OR MIT)",
   "repository": {

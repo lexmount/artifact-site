@@ -7,8 +7,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   EMAIL_EXACT_NOTICE, EDIT_POLICY_LOCK_NOTICE, EXPIRY_CHOICES, NO_NOTIFY_NOTICE, POLICY_HINT,
-  POLICY_LABEL, POLICY_SHORT, SHARE_POLICY_MENU, TOKEN_ONCE_NOTICE, VISIBILITY_LABEL,
-  addPerson, errorText, expiresAtFor, expiryChoiceOf, expiryDaysFor, expiryText, isEmailLike,
+  POLICY_LABEL, POLICY_SHORT, SHARE_POLICY_MENU, LINK_REUSE_NOTICE, VISIBILITY_LABEL,
+  shareSettingsPatch, addPerson, errorText, expiresAtFor, expiryChoiceOf, expiryDaysFor, expiryText, isEmailLike,
   isPendingPerson, needsPrivateNudge, personKey, personLabel, privateNudgeText, readFreshPasscode,
   readGrantResult, readGrants, readListedGrants, readMinted, readShares, readViews,
   reconcileSharing, removePerson, searchShouldRun, shareState, shareStateOf, shareUrl, viaLabel,
@@ -446,9 +446,9 @@ describe("the two hard-constraint notices must actually render", () => {
     expect(picker).toContain("{t(EMAIL_EXACT_NOTICE)}");
   });
 
-  it("'the link is shown only once' appears together with the reveal block", () => {
-    expect(TOKEN_ONCE_NOTICE).toContain("shown only once");
-    expect(links).toContain("{t(TOKEN_ONCE_NOTICE)}");
+  it("link reuse is explained alongside the reveal block", () => {
+    expect(LINK_REUSE_NOTICE).toContain("at any time");
+    expect(links).toContain("{t(LINK_REUSE_NOTICE)}");
   });
 });
 
@@ -480,10 +480,12 @@ describe("defaults and options for a new share link", () => {
 });
 
 describe("the 'Copy link' in the list must not be fake", () => {
-  it("only links minted in this session get a copy button; the rest say plainly that they cannot be retrieved", () => {
-    // The store holds only tokenHash; the list endpoint cannot return the plaintext — a button that does nothing when clicked is worse than none.
-    expect(links).toContain("secret?.url ? (");
-    expect(links).toContain("shown only once, when it was created");
+  it("retrieved URLs and freshly minted links both get a copy button", () => {
+    // Legacy links still have an explicit recovery limitation.
+    expect(links).toContain("const url = s.url || secret?.url");
+    expect(links).toContain("This link was created earlier.");
+    expect(links).toContain("Created during publication");
+    expect(links).toContain("Share link · {id}");
   });
 });
 
@@ -522,5 +524,28 @@ describe("styling follows the paper-and-ink system without introducing a second 
     }
     expect(used.size).toBeGreaterThan(8);
     for (const cls of used) expect(cssCode, `.${cls} 没有样式`).toContain(`.${cls}`);
+  });
+});
+
+
+describe("staged share settings", () => {
+  it("renaming changes only the label and clearing a name is explicit", () => {
+    expect(shareSettingsPatch(share({label: "Team"}), {label: " Team "}, NOW)).toEqual({});
+    expect(shareSettingsPatch(share({label: "Team"}), {label: "Client"}, NOW)).toEqual({label: "Client"});
+    expect(shareSettingsPatch(share({label: "Team"}), {label: " "}, NOW)).toEqual({label: null});
+  });
+  it("does not persist untouched fields or reset expiry when only the audience changes", () => {
+    expect(shareSettingsPatch(share({ policy: "public", expiresAt: NOW + 7 * DAY }), { policy: "login" }, NOW)).toEqual({ policy: "login" });
+    expect(shareSettingsPatch(share(), {}, NOW)).toEqual({});
+  });
+  it("treats reverted edits as clean and only changes expiry on explicit edits", () => {
+    const original = share({ policy: "login", expiresAt: NOW + 7 * DAY });
+    expect(shareSettingsPatch(original, { policy: "login", expiry: "7d" }, NOW)).toEqual({});
+    expect(shareSettingsPatch(original, { expiry: "30d" }, NOW)).toEqual({ expiresInDays: 30 });
+  });
+  it("stages the people list without confusing order with an access change", () => {
+    const original = share({ policy: "people", grants: [{ userId: "u1", email: null }] });
+    expect(shareSettingsPatch(original, { people: [{ userId: "u1", email: null }] }, NOW)).toEqual({});
+    expect(shareSettingsPatch(original, { people: [] }, NOW)).toEqual({ grants: [] });
   });
 });

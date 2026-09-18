@@ -1,15 +1,15 @@
 // Cross-driver schema parity.
 //
 // The two metadata backends must describe the same tables and columns, and nothing enforces that
-// but discipline: a schema change is written twice, in two files, in two dialects. Miss one side
+// but discipline: legacy schema changes were written twice, in two files and dialects. Miss one side
 // and everything still compiles, the whole suite still passes (it runs on SQLite), and the defect
 // only appears in production — which is the Postgres side, the one the tests never touch.
 //
 // SQLite is introspected for real: open it, let init() run every CREATE and ALTER, then ask the
 // database what it ended up with. Postgres cannot be opened here, so its MIGRATIONS array is read
-// as text. That asymmetry is fine — the point is to compare the two declarations against each
+// and numbered migration modules are read as text. That asymmetry is fine — the point is to compare the two declarations against each
 // other, and a drift in either direction fails.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -33,14 +33,22 @@ afterEach(async () => {
 async function sqliteSchema(): Promise<Map<string, Set<string>>> {
   await getSite("trigger-init"); // any call opens the store and runs init()
   const { DatabaseSync } = await import("node:sqlite");
-  const db = new DatabaseSync(join(process.env.ARTIFACT_DATA_DIR!, "sites.sqlite"));
+  const db = new DatabaseSync(
+    join(process.env.ARTIFACT_DATA_DIR!, "sites.sqlite"),
+  );
   const out = new Map<string, Set<string>>();
-  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
+  const tables = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+    )
+    .all() as { name: string }[];
   for (const { name } of tables) {
     // The FTS5 virtual table and its shadow tables are SQLite's stand-in for site_texts.tokens
     // (a tsvector column on Postgres); the row table itself is compared like any other.
     if (name.startsWith("site_texts_fts")) continue;
-    const cols = db.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[];
+    const cols = db.prepare(`PRAGMA table_info(${name})`).all() as {
+      name: string;
+    }[];
     out.set(name, new Set(cols.map((c) => c.name)));
   }
   db.close();
@@ -48,32 +56,71 @@ async function sqliteSchema(): Promise<Map<string, Set<string>>> {
 }
 
 /**
- * Tables → columns, as db-postgres.ts declares them. Reads the whole file, not just MIGRATIONS:
- * `sites` and `versions` predate that array and are created inline in init().
+ * Tables → columns from the PostgreSQL bootstrap, RBAC baseline, and numbered migration modules.
+ * The registry file also declares schema_migrations. Shared SQL is checked against actual SQLite.
  */
 function postgresSchema(): Map<string, Set<string>> {
-  const source = ["src/lib/db-postgres.ts", "src/lib/rbac-store.ts"].map(path => readFileSync(join(process.cwd(), path), "utf8")).join("\n");
+  const source = [
+    "src/lib/db-postgres.ts",
+    "src/lib/rbac-store.ts",
+    ...readdirSync(join(process.cwd(), "src/lib/migrations"))
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => `src/lib/migrations/${name}`),
+  ]
+    .map((path) => readFileSync(join(process.cwd(), path), "utf8"))
+    .join("\n");
   const out = new Map<string, Set<string>>();
 
-  // Stop the body at the line that closes the paren, so a `REFERENCES users(id)` inside a column
-  // definition cannot end the match early.
-  for (const m of source.matchAll(/CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(([\s\S]*?)\n\s*\)[`;\s]/g)) {
-    const [, table, body] = m;
-    const cols = new Set<string>();
-    for (const line of body.split("\n")) {
-      const name = line.trim().match(/^(\w+)\s+(TEXT|BIGINT|INTEGER|BOOLEAN|BIGSERIAL)\b/i)?.[1];
-      if (name) cols.add(name);
+  // Numbered migrations share SQL across drivers and may format a statement on one line.
+  // Split only top-level commas: CHECK clauses and composite foreign keys contain nested commas.
+  for (const match of source.matchAll(
+    /CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(/g,
+  )) {
+    const table = match[1];
+    let depth = 1,
+      quoted = false,
+      current = "";
+    const definitions: string[] = [];
+    for (
+      let i = match.index! + match[0].length;
+      i < source.length && depth > 0;
+      i++
+    ) {
+      const char = source[i];
+      if (char === "'" && source[i - 1] !== "\\") quoted = !quoted;
+      if (!quoted) {
+        if (char === "(") depth++;
+        if (char === ")") depth--;
+      }
+      if (depth === 0 || (!quoted && depth === 1 && char === ",")) {
+        definitions.push(current);
+        current = "";
+      } else current += char;
     }
-    out.set(table, cols);
+    const columns = new Set<string>();
+    for (const definition of definitions) {
+      const column = definition
+        .trim()
+        .match(
+          /^(\w+)\s+(TEXT|BIGINT|INTEGER|BOOLEAN|BIGSERIAL|JSONB)\b/i,
+        )?.[1];
+      if (column) columns.add(column);
+    }
+    out.set(table, columns);
   }
-  for (const m of source.matchAll(/ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)/g)) {
+  for (const m of source.matchAll(
+    /ALTER TABLE\s+(\w+)\s+ADD COLUMN (?:IF NOT EXISTS\s+)?(\w+)/g,
+  )) {
     out.get(m[1])?.add(m[2]);
   }
   return out;
 }
 
 // Columns that legitimately exist on one side only, each with the reason it is not a drift.
-const EXPECTED_DIFFERENCES: Record<string, { pgOnly?: string[]; sqliteOnly?: string[] }> = {
+const EXPECTED_DIFFERENCES: Record<
+  string,
+  { pgOnly?: string[]; sqliteOnly?: string[] }
+> = {
   // BIGSERIAL has no SQLite equivalent; the SQLite backend orders by the implicit rowid instead.
   versions: { pgOnly: ["seq"] },
   // Same reason: audit_log.seq is the Postgres stand-in for the rowid SQLite already has, and both
@@ -101,10 +148,12 @@ describe("schema parity between the two metadata backends", () => {
       if (!sqliteCols) continue; // reported by the table test
       const allowed = EXPECTED_DIFFERENCES[table] ?? {};
       for (const c of pgCols) {
-        if (!sqliteCols.has(c) && !(allowed.pgOnly ?? []).includes(c)) drift.push(`${table}.${c} 只在 postgres 有`);
+        if (!sqliteCols.has(c) && !(allowed.pgOnly ?? []).includes(c))
+          drift.push(`${table}.${c} 只在 postgres 有`);
       }
       for (const c of sqliteCols) {
-        if (!pgCols.has(c) && !(allowed.sqliteOnly ?? []).includes(c)) drift.push(`${table}.${c} 只在 sqlite 有`);
+        if (!pgCols.has(c) && !(allowed.sqliteOnly ?? []).includes(c))
+          drift.push(`${table}.${c} 只在 sqlite 有`);
       }
     }
     expect(drift).toEqual([]);

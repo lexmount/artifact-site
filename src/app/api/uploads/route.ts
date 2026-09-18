@@ -1,3 +1,4 @@
+import { withPublishOperation } from "@/lib/publish-operation";
 import { assertMutationOrigin } from "@/lib/request-auth";
 import { creationTenant } from "@/lib/rbac-access";
 // POST /api/uploads — open a chunked upload session.
@@ -12,13 +13,17 @@ import { NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { createUploadSession, ownerKeyFor, sweepExpiredSessions } from "@/lib/upload-session";
 import { getSiteView } from "@/lib/sites";
-import { requireActor } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import { ensureAnonId } from "@/lib/anon";
 import { assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
 import { resolveSession } from "@/lib/session";
 import { errorResponse, json } from "../_util";
 
 export async function POST(request: Request): Promise<NextResponse> {
+  return withPublishOperation(request, r => executePost(r));
+}
+
+async function executePost(request: Request): Promise<NextResponse> {
   try {
     checkRateLimit(request);
     // Lazy cleanup: someone opening a new session means the system is in use, so collect the expired orphans while here. No timer needed.
@@ -38,7 +43,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Uploading a new version to an existing site needs the same tier of permission as /edit; creating a new site follows the deployment create policy.
       const view = await getSiteView(body.slug);
       if (!view) return json({ error: "site not found" }, 404);
-      await requireActor(request, view.site, "content");
+      await requirePermission(request, view.site, "site.content.edit");
       // Every cookie-authenticated upload step uses the same origin check.
       await assertMutationOrigin(request, view.site);
       session = await createUploadSession({ siteId: view.site.id, targetSlug: body.slug, title: body.title, ownerKey });

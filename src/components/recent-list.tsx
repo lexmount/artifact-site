@@ -4,6 +4,7 @@
 // newest first, in the same rows as the site lists. History is the browser's, not the account's:
 // a row can be removed from it, the whole shelf cleared, and neither touches the site itself.
 import Link from "next/link";
+import SiteLink from "@/components/site-link";
 import MoreMenu from "@/components/more-menu";
 import { kindLabel } from "@/components/artifact-card";
 import { VisibilityCell } from "@/components/my-sites";
@@ -18,7 +19,13 @@ const NO_TOKENS: Readonly<Record<string, string | undefined>> = {};
 export default function RecentList({ shelf }: { shelf: RecentShelf }) {
   const t = useT();
   const locale = useLocale();
-  const { toast, copyLink } = useSiteActions(NO_TOKENS);
+  const { toast, flash } = useSiteActions(NO_TOKENS);
+
+  async function copyRecentLink(href: string) {
+    const url = new URL(href, window.location.origin).href;
+    try { await navigator.clipboard.writeText(url); flash(t("Link copied")); }
+    catch { flash(url); }
+  }
 
   if (shelf.items.length === 0) {
     return (
@@ -31,16 +38,17 @@ export default function RecentList({ shelf }: { shelf: RecentShelf }) {
 
   return (
     <>
+      <p className="drawer-note">{t("Only in this browser. Up to 50 sites.")}</p>
       <div className="site-list">
         <div className="list-header"><span>{t("Site")}</span><span>{t("Who can open")}</span><span>{t("Versions")}</span><span>{t("Viewed")}</span><span /></div>
-        {shelf.items.map(({ summary: s, visitedAt }) => (
+        {shelf.items.map(({ summary: s, visitedAt, href, preview }) => (
           <div className="site-row" key={s.slug}>
             <div className="site-name">
-              <Link href={`/s/${s.slug}`} className="mini" aria-hidden="true" tabIndex={-1}>
-                <iframe src={`/api/preview/${s.slug}?thumb=1`} title="" loading="lazy" tabIndex={-1} inert sandbox="" />
-              </Link>
+              <SiteLink slug={s.slug} href={href} className="mini" aria-hidden="true" tabIndex={-1}>
+                <iframe src={preview} title="" loading="lazy" tabIndex={-1} inert sandbox="" />
+              </SiteLink>
               <div>
-                <strong><Link href={`/s/${s.slug}`}>{s.title}</Link></strong>
+                <strong><SiteLink slug={s.slug} href={href}>{s.title}</SiteLink></strong>
                 <small>{kindLabel(s.kind, t)}{s.takenDownAt ? ` · ${t("Taken down")}` : ""}</small>
               </div>
             </div>
@@ -49,8 +57,8 @@ export default function RecentList({ shelf }: { shelf: RecentShelf }) {
             <span className="row-date">{relTime(visitedAt, t, locale)}</span>
             <span className="row-menu-wrap">
               <MoreMenu label={t("Actions for {title}", { title: s.title })} iconOnly buttonClassName="row-more" buttonContent="⋯">
-                <Link role="menuitem" className="menu-item" href={`/s/${s.slug}`}>{t("Open")}</Link>
-                <button type="button" role="menuitem" className="menu-item" onClick={() => void copyLink(s.slug)}>{t("Copy link")}</button>
+                <SiteLink slug={s.slug} role="menuitem" className="menu-item" href={href}>{t("Open")}</SiteLink>
+                <button type="button" role="menuitem" className="menu-item" onClick={() => void copyRecentLink(href)}>{t("Copy link")}</button>
                 <button type="button" role="menuitem" className="menu-item" onClick={() => shelf.remove(s.slug)}>{t("Remove from history")}</button>
               </MoreMenu>
             </span>

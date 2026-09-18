@@ -94,7 +94,7 @@ export function publicSite(site: Site): PublicSite {
     expiresAt: anonymousExpiresAt(site),
     ownerId: site.ownerId,
     visibility: site.visibility,
-    editPolicy: site.editPolicy,
+    editPolicy: "owner",
   };
 }
 
@@ -474,7 +474,7 @@ export async function editSite(
  * listSiteSummaries. Called with no argument it is the stranger's view, which is what any
  * unauthenticated surface must use.
  */
-export async function listSites(viewer?: ListViewer, options?: { withViews?: boolean }): Promise<SiteSummary[]> {
+export async function listSites(viewer?: ListViewer, options?: { withViews?: boolean; ownedOnly?: boolean; limit?: number }): Promise<SiteSummary[]> {
   return listSiteSummaries(viewer, options);
 }
 

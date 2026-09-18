@@ -71,18 +71,31 @@ export interface CommentSpace extends CommentScope { id: string; createdAt: numb
 export interface CommentThread {
   id: string;
   spaceId: string;
+  /** Reserved; no association action is enabled in this release. */
+  resultVersionId?: string | null;
   createdBy: string;
   anchor: CommentAnchor;
   context: CommentContext;
-  resolution: { status: "open" } | { status: "resolved"; resolvedBy: string; resolvedAt: number };
+  resolution: { status: "open" } | { status: "resolved"; resolvedBy: string; resolvedByDisplayName?: string | null; resolvedAt: number };
   revision: number;
   createdAt: number;
   updatedAt: number;
 }
+export const COMMENT_LOCATION_FLASH_MS = 1500;
+export function commentReadScopeKey(versionId: string, shareId?: string, aggregate = false) {
+  return aggregate ? "aggregate" : JSON.stringify([versionId, shareId ?? "main"]);
+}
+export const COMMENT_EMOJI = ["👍", "❤️", "🎉", "👀", "🙏", "😄"] as const;
+/** A validated Unicode emoji sequence; shortcuts do not restrict allowed reactions. */
+export type CommentEmoji = string;
+export interface CommentReaction { emoji: CommentEmoji; count: number; reacted: boolean }
 export interface CommentMessage {
+  reactions?: CommentReaction[];
   id: string;
   threadId: string;
   authorUserId: string;
+  /** Safe account label; never includes email or uploaded HTML. */
+  authorDisplayName?: string | null;
   isRoot: boolean;
   content: { state: "visible"; body: string } | { state: "deleted"; deletedAt: number; deletedBy: string };
   revision: number;
@@ -102,7 +115,7 @@ export interface StoredCommentMessage extends CommentMessage {
   /** Immutable, keyed request digest for conflict detection; never serialize to readers. */
   requestFingerprint: string;
 }
-export interface CommentPage<T> { items: T[]; nextCursor: string | null }
+export interface CommentPage<T> { total?: number; items: T[]; nextCursor: string | null }
 export interface CommentThreadDetail {
   space: CommentSpace;
   thread: CommentThread;
@@ -116,9 +129,9 @@ export interface CommentThreadDetail {
   };
 }
 export type CommentListFilter =
-  | { kind: "space"; scope: CommentScope; status?: "open" | "resolved"; cursor?: string; limit?: number }
-  | { kind: "aggregate"; siteId: string; versionId?: string; entry?: CommentScope["entry"]; status?: "open" | "resolved"; cursor?: string; limit?: number };
-/** Reserved extension; only site targets are enabled by the first implementation. */
+  | { kind: "space"; scope: CommentScope; status?: "open" | "resolved"; unread?: boolean; cursor?: string; limit?: number }
+  | { kind: "aggregate"; authorUserId?: string; sort?: "activity" | "newest" | "oldest"; siteId: string; versionId?: string; entry?: CommentScope["entry"]; status?: "open" | "resolved"; unread?: boolean; cursor?: string; limit?: number };
+/** Site likes and authenticated message emoji use distinct actor and authorization rules. */
 export type ReactionTarget = { kind: "site"; siteId: string } | { kind: "comment_message"; siteId: string; messageId: string };
 export interface AgentCommentBundle {
   schemaVersion: 1;
@@ -133,9 +146,10 @@ export const previewCommentEventSchema = z.strictObject({
   protocol: z.literal("artifact-comments"), schemaVersion: z.literal(1), channelId: z.uuid(),
   scope: commentScopeSchema,
   event: z.discriminatedUnion("type", [
-    z.strictObject({ type: z.literal("ready") }),
+    z.strictObject({ type: z.literal("ready"), filePath: z.string().min(1).max(1024).optional() }),
     z.strictObject({ type: z.literal("selected"), anchor: commentAnchorSchema }),
     z.strictObject({ type: z.literal("cancelled") }),
+    z.strictObject({ type: z.literal("activated"), threadId: id }),
     z.strictObject({ type: z.literal("located"), threadId: id, outcome: z.enum(["exact", "approximate", "missing"]) }),
   ]),
 });
@@ -161,10 +175,14 @@ export const commentListQuerySchema = commentPaginationSchema.extend({
   versionId: id,
   shareId: id.optional(),
   status: z.enum(["open", "resolved"]).optional(),
+  unread: z.literal("true").transform(() => true).optional(),
 });
 export const commentAggregateQuerySchema = commentPaginationSchema.extend({
+  authorUserId: id.optional(),
+  sort: z.enum(["activity", "newest", "oldest"]).optional(),
   versionId: id.optional(),
   shareId: id.optional(),
   entry: z.literal("main").optional(),
   status: z.enum(["open", "resolved"]).optional(),
+  unread: z.literal("true").transform(() => true).optional(),
 }).refine(value => !(value.shareId && value.entry), "Choose main or a share, not both");

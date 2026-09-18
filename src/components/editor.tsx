@@ -1,4 +1,5 @@
 "use client";
+import { track, analyticsRequest } from "@/lib/analytics";
 
 import SiteDownload from "@/components/site-download";
 import { siteFetch as fetch, withShareContext } from "@/lib/share-context";
@@ -183,14 +184,15 @@ export default function Editor(props: {
       const body = kind === "single"
         ? { content: draft[selected] }
         : { path: selected, content: draft[selected] };
-      const res = await fetch(`/api/sites/${slug}/edit?expected_version=${encodeURIComponent(curVersion)}`, {
+      const res = await analyticsRequest("update", () => fetch(`/api/sites/${slug}/edit?expected_version=${encodeURIComponent(curVersion)}`, {
         method: "POST",
         headers: { "content-type": "application/json", ...(editToken ? { "x-edit-token": editToken } : {}) },
         body: JSON.stringify({ ...body, baseVersionId: baseVersion?.id }),
-      });
+      }));
       const data = await res.json().catch(() => ({}));
       if (res.status === 409) throw new Error(t("This report has changed. Your edits are still here; copy them before refreshing to review the latest version."));
       if (!res.ok) throw new Error(data?.error || t("Save failed ({status})", { status: res.status }));
+      track("artifact_update_success", { method: "source" });
       setSaved((prev) => ({ ...prev, [selected]: draft[selected] }));
       if (typeof data?.versionId === "string") setCurVersion(data.versionId);
       setBaseVersion(undefined); // after a save the base is the latest version, consistent with the visual side
@@ -352,11 +354,11 @@ export default function Editor(props: {
             )}
           </MoreMenu>
           {visual ? (
-            <button className="btn primary" type="button" onClick={() => ve?.save()} disabled={!ve?.dirty || !!ve?.busy || !ve?.ready}>
+            <button data-analytics-button="update" className="btn primary" type="button" onClick={() => ve?.save()} disabled={!ve?.dirty || !!ve?.busy || !ve?.ready}>
               {ve?.busy ? <Loader2 size={14} className="spin" /> : <Save size={14} />} {t("Save new version")}
             </button>
           ) : (
-            <button className="btn primary" type="button" onClick={save} disabled={!sourceDirty || busy}>
+            <button data-analytics-button="update" className="btn primary" type="button" onClick={save} disabled={!sourceDirty || busy}>
               {busy ? <Loader2 size={14} className="spin" /> : <Save size={14} />} {t("Save new version")}
             </button>
           )}

@@ -56,7 +56,7 @@ export default function SiteDownload({ slug, editToken, versionId, management = 
   }
 
   return <>
-    <button type="button" role={menuItem ? "menuitem" : undefined} className={menuItem ? "menu-item" : "btn sm ghost"}
+    <button data-analytics-button="download" type="button" role={menuItem ? "menuitem" : undefined} className={menuItem ? "menu-item" : "btn sm ghost"}
       onClick={() => { setError(null); setReason(""); setVersions(null); setSelected(versionId ?? ""); setDone(false); setOpen(true); }}>
       <Download size={14} aria-hidden="true" /> {t(versionId ? "Download this version (ZIP)" : "Download (ZIP)")}
     </button>

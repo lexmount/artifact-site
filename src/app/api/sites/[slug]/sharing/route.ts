@@ -5,7 +5,7 @@ import { assertMutationOrigin } from "@/lib/request-auth";
 import type { NextResponse } from "next/server";
 import { getSiteView } from "@/lib/sites";
 import { apiAuditContext, recordSiteAudit } from "@/lib/audit";
-import { requireActor, requireCapability } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import type { EditPolicy, Visibility } from "@/lib/types";
 import { errorResponse, json } from "../../../_util";
 
@@ -16,15 +16,15 @@ import { errorResponse, json } from "../../../_util";
  * this value precisely because none of that existed yet.
  */
 const VISIBILITY: Visibility[] = ["public", "unlisted", "private"];
-const EDIT_POLICY: EditPolicy[] = ["owner", "login"];
+
 
 export async function GET(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
   try {
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    await requireCapability(request, view.site, "manage");
-    return json({ visibility: view.site.visibility, editPolicy: view.site.editPolicy }, 200);
+    await requirePermission(request, view.site, "site.sharing.manage");
+    return json({ visibility: view.site.visibility, editPolicy: "owner" }, 200);
   } catch (error) {
     return errorResponse(error);
   }
@@ -35,21 +35,14 @@ export async function PUT(request: Request, context: { params: Promise<{ slug: s
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    const { actor } = await requireActor(request, view.site, "manage");
+    const { actor } = await requirePermission(request, view.site, "site.sharing.manage");
     await assertMutationOrigin(request, view.site);
 
     const body = (await request.json()) as { visibility?: unknown; editPolicy?: unknown };
-    if ((body as {editPolicy?: unknown}).editPolicy === "login") return json({error:"Use members or editable share links to grant editing"},400);
     const visibility = body.visibility as Visibility;
-    const editPolicy = body.editPolicy as EditPolicy;
+    const editPolicy: EditPolicy = "owner";
     if (!VISIBILITY.includes(visibility)) return json({ error: "Invalid visibility value" }, 400);
-    if (!EDIT_POLICY.includes(editPolicy)) return json({ error: "Invalid editPolicy value" }, 400);
-    // Write implies read. "Only I can see it, but anyone signed in may edit it" is not a
-    // restriction anyone asked for — it is a deadlock, so reject the pair outright. (Restored
-    // alongside `private` itself, as the note left here in PR#27 asked.)
-    if (visibility === "private" && editPolicy === "login") {
-      return json({ error: "A private site cannot also be open for all signed-in users to edit" }, 400);
-    }
+    if (body.editPolicy !== undefined && body.editPolicy !== "owner") return json({ error: "Editing is controlled by members and share permissions" }, 400);
 
     await withPermissionCommit(request,view.site.id,"site.sharing.manage", q => q("UPDATE sites SET visibility=$1,edit_policy=$2,updated_at=$3 WHERE id=$4",[visibility,editPolicy,Date.now(),view.site.id]));
     await recordSiteAudit(view.site.id, "share", apiAuditContext(request, actor)); // best-effort, non-atomic

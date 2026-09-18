@@ -52,7 +52,7 @@ code=$(head -c 26000000 /dev/zero | curl --http1.1 --max-time 30 -sS -o /dev/nul
 [ "$code" = 413 ] || { echo "Expected 413 for oversized chunked body, got $code" >&2; exit 1; }
 npm --prefix cli ci
 npm --prefix cli run build
-VIEWER_E2E_URL="$base" MCP_E2E_URL="$base" MCP_E2E_TOKEN=image-mcp-acceptance-token npx vitest run test/document-viewer.e2e.test.ts test/agent-guide.e2e.test.ts test/official-version.e2e.test.ts test/remote-mcp.integration.test.ts
+PUBLISH_E2E_URL="$base" PUBLISH_E2E_TOKEN=image-mcp-acceptance-token VIEWER_E2E_URL="$base" MCP_E2E_URL="$base" MCP_E2E_TOKEN=image-mcp-acceptance-token npx vitest run test/recent-home.e2e.test.ts test/document-viewer.e2e.test.ts test/agent-guide.e2e.test.ts test/official-version.e2e.test.ts test/remote-mcp.integration.test.ts test/publish-recovery.integration.test.ts
 
 # Seed identities only in this disposable database, then exercise real role-aware browser pages.
 pg_port="$(docker port "$pg" 5432/tcp | awk -F: '{print $NF}')"

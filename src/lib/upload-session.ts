@@ -1,3 +1,5 @@
+import { recordOperationResult } from "@/lib/publish-operation";
+import { getVersion, rbacTransaction } from "@/lib/db";
 // Chunked upload: a project comes up one file at a time and is committed into a version at the end.
 //
 // Why it is needed: the old path packed the whole project into one request, and the server had to
@@ -19,7 +21,7 @@
 // orphan, collected by expiry cleanup. The version row is written only at the moment of commit, so
 // the database never holds half a version: a version either exists in full or never existed.
 import {
-  createId, deleteUploadSession, getUploadSessionRow, insertUploadSession, listUploadSessionsBefore,
+  createId, deleteUploadSession, getUploadSessionRow, listUploadSessionsBefore,
   setUploadSessionFiles, type UploadSessionRow,
 } from "@/lib/db";
 import { getStorage } from "@/lib/storage";
@@ -60,7 +62,10 @@ export async function createUploadSession(input: { tenantId?: string; siteId?: s
     title: input.title ?? null,
     ownerKey: input.ownerKey,
   };
-  await insertUploadSession(session);
+  await rbacTransaction(async q => {
+    await q("INSERT INTO upload_sessions(version_id,site_id,target_slug,title,owner_key,files,created_at,tenant_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [session.versionId, session.siteId, session.targetSlug ?? null, session.title ?? null, session.ownerKey, "[]", session.createdAt, session.tenantId ?? null]);
+    await recordOperationResult(q, { versionId: session.versionId });
+  });
   return session;
 }
 
@@ -68,6 +73,7 @@ export async function createUploadSession(input: { tenantId?: string; siteId?: s
 export async function getUploadSession(versionId: string, ownerKey?: string | null): Promise<UploadSession | null> {
   const session = await getUploadSessionRow(versionId);
   if (!session) return null;
+  if (await getVersion(versionId)) { await completeUploadSession(versionId); return null; }
   if (Date.now() - session.createdAt > UPLOAD_SESSION_TTL_MS) {
     await discardUploadSession(versionId);
     return null;
@@ -88,10 +94,10 @@ export function assertSessionRoom(session: UploadSession, incoming: number): voi
 }
 
 /** Re-uploading a file with the same name overwrites rather than accumulates — otherwise a few retries would falsely exceed the limit. Mutates the passed-in object in place, then persists. */
-export async function recordUploadedFile(session: UploadSession, relpath: string, bytes: number): Promise<void> {
+export async function recordUploadedFile(session: UploadSession, relpath: string, bytes: number, sha256?: string): Promise<void> {
   const existing = session.files.findIndex((f) => f.relpath === relpath);
-  if (existing >= 0) session.files[existing] = { relpath, bytes };
-  else session.files.push({ relpath, bytes });
+  if (existing >= 0) session.files[existing] = { relpath, bytes, ...(sha256 ? { sha256 } : {}) };
+  else session.files.push({ relpath, bytes, ...(sha256 ? { sha256 } : {}) });
   await setUploadSessionFiles(session.versionId, session.files);
 }
 
@@ -99,7 +105,7 @@ export async function recordUploadedFile(session: UploadSession, relpath: string
 export async function discardUploadSession(versionId: string): Promise<void> {
   const session = await getUploadSessionRow(versionId);
   await deleteUploadSession(versionId);
-  if (session) await getStorage().removeVersion(session.siteId, session.versionId).catch(() => {});
+  if (session && !(await getVersion(versionId))) await getStorage().removeVersion(session.siteId, session.versionId).catch(() => {});
 }
 
 export async function completeUploadSession(versionId: string): Promise<void> {
@@ -119,4 +125,11 @@ export async function sweepExpiredSessions(now: number = Date.now()): Promise<nu
 /** Tests only: clear the session table (bytes included). */
 export async function resetUploadSessionsForTests(): Promise<void> {
   for (const s of await listUploadSessionsBefore(Number.MAX_SAFE_INTEGER)) await discardUploadSession(s.versionId);
+}
+
+/** Invalidate the old receipt BEFORE overwriting storage, including attempts that fail mid-stream. */
+export async function beginUploadedFile(session: UploadSession, relpath: string): Promise<void> {
+  if (!session.files.some(file => file.relpath === relpath)) return;
+  session.files = session.files.filter(file => file.relpath !== relpath);
+  await setUploadSessionFiles(session.versionId, session.files);
 }

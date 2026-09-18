@@ -5,48 +5,34 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
-- Add an installable artifact-site agent skill and streamline README onboarding across all six languages, with a concise hosted-product comparison and clearer CLI/MCP entry points.
+Nothing yet.
 
-- Enforce RBAC consistently across browser, API, CLI and MCP access. Fix title editing for account owners/admins, validate anonymous management tokens, retire owned-site tokens and disable disown without changing ownership, visibility or existing shares.
-- Recheck credentials and roles during upload staging and final publication; close CSRF token-presence bypasses, revoke derived preview grants, and protect private metadata and source/export access.
-- Preserve MCP/personal-token authentication, add tenant/share context and share mode/version controls to clients, and keep `email` as a compatible alias of the `people` share policy.
+## 0.2.0 — 2026-09-17
 
-
-### Fixed
-
-- Public and unlisted artifact viewers now need editor-or-higher source-export permission to fork (Save a copy), download original files or export ZIPs. Rendered content remains readable.
-
-- Prevent concurrent RBAC operations from exhausting the PostgreSQL connection pool while
-  waiting for the administration lock. Keep version access checks free of duplicate read audits.
+Comments and reactions on artifacts, recoverable publishing for large trees, OAuth for MCP
+clients, tenant-scoped RBAC, official versions and the multilingual README. Upgrading applies
+database migrations automatically; no configuration changes are required.
 
 ### Added
 
-- CLI: `artifact-site --version` (and `-v`) prints the installed package's version.
-
-- Version-aware ZIP downloads in the viewer, personal site list/grid, editor, version history
-  and platform site administration. Administrative downloads require a reason and record an
-  export audit, with Unicode and multiline reasons supported. Owners and editors can export saved content after a takedown; deleted sites
-  remain unavailable. ZIPs include all saved files (including document originals), not editor drafts.
-
-- Platform-admin audit retention setting (0–3650 days, default 0 = forever) for site, admin and
-  RBAC logs, with time-budgeted maintenance cleanup, bounded transactions and a manual System action. Console settings
-  override `ARTIFACT_AUDIT_RETENTION_DAYS`; expired deletions are permanent.
-- My sites lists total recorded views and lets owners select or clear an official version from the Versions column with confirmation.
-
-- Designate one current or historical version as official from the viewer, upload confirmation, CLI or MCP. Latest links keep following updates; fixed shares and immutable snapshots stay unchanged.
-
-- Tenant-scoped RBAC with `init` and `anonymous` system tenants, tenant/site administrators,
-  permanent editor memberships, independent view/comment/edit share modes and fixed-version links.
-  Workspaces provides member management and explicit anonymous-artifact claiming. Comment
-  permissions are reserved; comment threads and UI will follow separately. See [RBAC](docs/RBAC.md).
-- Encrypted, version-scoped preview credentials that recheck share revocation and tenant access.
-  A shared database key is generated automatically; platform administrators can rotate it from
-  Settings without a restart. `PREVIEW_SIGNING_SECRET` is an optional first-start seed. Legacy
-  collaborators now have editing rights only; signing in alone no longer grants editing or
-  automatically claims anonymous sites.
-
-- README in 简体中文, 日本語, Deutsch, Français and Español under `docs/`, with a banner that
-  follows GitHub's colour scheme.
+- **Comments.** Version- and share-isolated comment threads with replies, author editing,
+  moderation, resolution, main-link policy settings and audited access. Comments can be anchored
+  to a selection in HTML, image and PDF artifacts (Office documents fall back to whole-file
+  comments), reviewed against the exact version they were written on, and bundled as authorized
+  context for agents. Anonymous visitors can read but not write.
+- **Comment sidebar.** All review happens in the artifact's right sidebar: owner share feedback,
+  version/source/author/status filters, original-version previews, inline replies, resolve/undo,
+  an overlapping-marker chooser, a mobile sheet and per-tab draft recovery that survives
+  sign-in and refreshes. Old review bookmarks redirect to the sidebar.
+- **Reactions and read progress.** Account-scoped emoji reactions on comments and replies with a
+  searchable Unicode picker (categories, recent, skin tones), unread discussion indicators and
+  private cross-device read progress (local for anonymous readers). Migration
+  `0006-comment-engagement`. Signed anonymous artifact likes.
+- **Recoverable publishing.** Authenticated CLI publishing safely extracts ZIPs, preflights HTML
+  entries, uploads large trees file by file, persists credential-free progress and recovers lost
+  commit responses. Publication results are idempotent for seven days with owner-scoped HTTP/MCP
+  status queries, atomic result/version commits and fencing against superseded attempts; staged
+  uploads are kept for six hours. File-transfer rate limits are separate from publication limits.
 - **OAuth for MCP clients.** ChatGPT, Claude and any client that implements MCP authorization
   can connect to `/mcp` by signing in instead of pasting a token: this server is now its own
   OAuth 2.1 authorization server — authorization code with PKCE (S256), refresh tokens with
@@ -56,8 +42,76 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
   operator tokens work unchanged. New settings, also editable from the console:
   `ARTIFACT_OAUTH_CLIENT_HOSTS`, `ARTIFACT_OAUTH_DCR`, `ARTIFACT_OAUTH_APP_SCHEMES`. The agent
   guide's MCP tab offers both ways in.
-- The header links to the project's GitHub repository: a bare GitHub mark next to the
-  language switch, on every page that shares the header.
+- **Tenant-scoped RBAC** with `init` and `anonymous` system tenants, tenant/site administrators,
+  permanent editor memberships, independent view/comment/edit share modes and fixed-version links.
+  Workspaces provides member management and explicit anonymous-artifact claiming. Legacy
+  collaborators now have editing rights only; signing in alone no longer grants editing or
+  automatically claims anonymous sites. See [RBAC](docs/RBAC.md).
+- Encrypted, version-scoped preview credentials that recheck share revocation and tenant access.
+  A shared database key is generated automatically; platform administrators can rotate it from
+  Settings without a restart. `PREVIEW_SIGNING_SECRET` is an optional first-start seed.
+- **Official versions.** Designate one current or historical version as official from the
+  viewer, upload confirmation, My sites, CLI or MCP. Latest links keep following updates; fixed
+  shares and immutable snapshots stay unchanged.
+- **Share link management.** Sharing settings open in a large window; newly created links can be
+  retrieved and copied after reopening; link settings and guest-list changes require an explicit
+  save with an audience-impact confirmation. Links carry names, creation sources and version
+  summaries, drafts are protected, historical links are grouped, and site visibility changes are
+  confirmed. Historical hash-only links remain valid but cannot be recovered.
+- Version-aware ZIP downloads in the viewer, My sites, editor, version history and platform site
+  administration. Administrative downloads require a reason and record an export audit. Owners and
+  editors can export saved content after a takedown; deleted sites remain unavailable. ZIPs include
+  all saved files (including document originals), not editor drafts.
+- Home-page **Recently viewed / Recently updated** tabs (updates show only owned sites, newest
+  first). Browser history now covers unlisted sites and shared/pinned entrances, forgets sites
+  that turned out inaccessible, and stays local to the browser (up to 50 sites).
+- View counts: My sites lists total recorded views; new opens across direct/share entrances are
+  collapsed per reader and site for 30 minutes, preview crawlers are filtered consistently,
+  lifetime opens are distinguished from seven-day external visits, and optional view-detail
+  retention drains in time-budgeted batches while preserving cumulative counts.
+- Platform-admin **audit retention** setting (0–3650 days, default 0 = forever) for site, admin
+  and RBAC logs, with time-budgeted maintenance cleanup and a manual System action. Console
+  settings override `ARTIFACT_AUDIT_RETENTION_DAYS`; expired deletions are permanent.
+- Opt-in **GA4 browser analytics** with runtime configuration, public-URL hostname defaults,
+  redacted page context and explicit account/publishing/sharing events. Configuration errors
+  never break pages; failure telemetry is limited to write-request failures.
+- An installable **agent skill** (`npx skills add lexmount/artifact-site`) and a streamlined README
+  in all six languages with a hosted-product comparison and clearer CLI/MCP entry points. README
+  in 简体中文, 日本語, Deutsch, Français and Español under `docs/`.
+- CLI: `artifact-site --version` (and `-v`) prints the installed package's version.
+- The header links to the project's GitHub repository on every page that shares the header.
+
+### Changed
+
+- Viewer version status, snapshot navigation and official designation are consolidated into a
+  compact toolbar menu; side actions dock to the edge behind a slim, initially collapsed handle.
+- RBAC is enforced consistently across browser, API, CLI and MCP: title editing for account
+  owners/admins, anonymous management token validation, retired owned-site tokens, disabled disown,
+  explicit RBAC actions for report APIs and one version-range rule for previews and comments.
+  Credentials and roles are rechecked during upload staging and final publication; share edits are
+  merged under the authorization transaction and revision-aware clients reject stale settings.
+  Read-only OAuth sessions no longer advertise writes.
+- MCP/personal-token authentication is preserved; clients gain tenant/share context and share
+  mode/version controls. `email` remains a compatible alias of the `people` share policy.
+- The CLI only falls back after confirmed pre-publication 413 errors and no longer automatically
+  retries unsafe writes on server errors.
+
+### Fixed
+
+- Artifact resource queries are kept separate from preview controls so CSS, scripts, images,
+  fonts and data with `?v=` cache tags load correctly.
+- Public and unlisted artifact viewers now need editor-or-higher source-export permission to fork
+  (Save a copy), download original files or export ZIPs. Rendered content remains readable.
+- Concurrent RBAC operations no longer exhaust the PostgreSQL connection pool while waiting for
+  the administration lock; version access checks are free of duplicate read audits.
+- Follow-share preview keys are rechecked after publication; official-version subresources are
+  served; inaccessible latest-version IDs are omitted from agent comment context.
+- Tenant and same-report version constraints are added without rewriting historical ownership or
+  visibility; retired edit-policy values no longer affect sharing responses.
+- Home tab headings use the original section-heading typography; comment quotations are limited to
+  30 characters, whole-file comments are labelled, and reaction tooltips no longer clip. Comment
+  refresh sits with the header actions, the rail marker toggle stays while the panel is open, and
+  expanded filters sit above the read tabs.
 
 ## 0.1.0 — 2026-09-14
 

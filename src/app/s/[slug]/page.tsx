@@ -142,6 +142,7 @@ export default async function ViewerPage({
           needs was already resolved above, so the shelf costs no extra query and no extra fetch. */}
       <RecentTracker
         slug={slug}
+        versionId={requestedVersion}
         title={view.site.title}
         kind={view.site.kind}
         entry={view.version.entry}
@@ -155,10 +156,12 @@ export default async function ViewerPage({
         latestVersionId={view.site.currentVersionId}
         pinnedVersionId={requestedVersion}
         officialVersionId={view.site.officialVersionId ?? null}
+        siteId={view.site.id}
+        versionId={view.version.id}
+        filePath={view.version.entry}
         slug={slug}
         title={view.site.title}
         kind={view.site.kind}
-        versionCount={versionCount}
         published={published === "1"}
         visibility={view.site.visibility}
         permissions={permissions}

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 // An in-memory artifact-site that speaks the same contract as the real API (as documented in
 // /for-agents.md and mirrored in src/client.ts). Enough behaviour to prove the CLI and the MCP
 // server drive every route correctly: modes, chunked upload, optimistic locking, shares, device
@@ -37,16 +38,20 @@ export async function startFakeServer(): Promise<FakeServer> {
   const state: FakeServer["state"] = { sites: new Map(), tokens: new Map(), grants: new Map(), uploads: new Map(), shares: [], requests: [], rateLimitNext: 0, approveAfterPolls: 1 };
   const polls = new Map<string, number>();
 
-  const server: Server = createServer(async (req, res) => {
+  const context = new AsyncLocalStorage<IncomingMessage>();
+  const operations = new Map<string, unknown>();
+  const server: Server = createServer((req, res) => context.run(req, async () => {
     try {
       await handle(req, res);
     } catch (e) {
       send(res, 500, { error: (e as Error).message });
     }
-  });
+  }));
 
   function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
     if (body instanceof Uint8Array) { res.writeHead(status, { "content-type": "application/zip", ...headers }); res.end(Buffer.from(body)); return; }
+    const req = context.getStore();
+    if (req?.method === "POST" && req.headers["idempotency-key"] && status < 300) operations.set(String(req.headers["idempotency-key"]), body);
     res.writeHead(status, { "content-type": "application/json", ...headers });
     res.end(JSON.stringify(body));
   }
@@ -133,6 +138,10 @@ export async function startFakeServer(): Promise<FakeServer> {
     const user = auth(req);
     const p = url.pathname;
 
+    if (method === "GET" && p.startsWith("/api/operations/")) {
+      const result = operations.get(decodeURIComponent(p.slice("/api/operations/".length)));
+      return result ? send(res, 200, { status: "completed", result }) : send(res, 404, { error: "Operation not found", code: "operation_not_found" });
+    }
     if (method === "GET" && p === "/for-agents.md") { res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" }); res.end(`# Publishing artifacts\n\n**Base URL**: http://${req.headers.host}\n`); return; }
     if (method === "GET" && p === "/api/auth/me") {
       // Mirrors the real server: a presented Bearer this server does not know is refused with a reason.

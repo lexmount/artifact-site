@@ -5,10 +5,10 @@ import { assertMutationOrigin } from "@/lib/request-auth";
 // must not be able to widen who can see the site. `manage` is not enough either — a collaborator
 // who could mint a `public` link would have laundered the owner's private site into an open one.
 import type { NextResponse } from "next/server";
-import { createId, createShare, listShares } from "@/lib/db";
+import { createId, createShare, listShareRows } from "@/lib/db";
 import { getSiteView } from "@/lib/sites";
 import { apiAuditContext, recordSiteAudit } from "@/lib/audit";
-import { requireActor, requireCapability } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import { anonIdFromRequest } from "@/lib/anon";
 import { createPasscode, createShareToken, hashPasscode, hashToken } from "@/lib/share";
 import { resolvePublicBase } from "@/lib/publish-skill";
@@ -21,34 +21,33 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    await requireCapability(request, view.site, "manage");
+    await requirePermission(request, view.site, "site.sharing.manage");
 
     // Revoked and expired rows included: the owner's question is "who did I give this to and is it
     // still open", and a list that quietly drops dead links cannot answer the first half.
-    const shares = await listShares(view.site.id);
+    const shares = await listShareRows(view.site.id);
     const users = new Map<string, User | null>(); // one lookup per account across every share
     const now = Date.now();
     const out = [];
-    for (const share of shares) out.push(summarize(share, await loadGrants(share.id, users), now));
-    return json({ shares: out }, 200);
+    for (const share of shares) {
+      out.push({ ...summarize(share, await loadGrants(share.id, users), now),
+        url: share.token ? shareUrl(resolvePublicBase(request.headers), share.token) : null });
+    }
+    const response = json({ shares: out }, 200);
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
   } catch (error) {
     return errorResponse(error);
   }
 }
 
-/**
- * Mint a link.
- *
- * The response is the ONLY time the token is legible — `POST` returns it, every later read returns
- * the hash-backed summary and nothing else. Same for a generated passcode. Losing either means
- * minting a new link, which is the intended remedy: it is also how you take the old one away.
- */
+/** Mint a reusable link. Generated passcodes are still returned only once. */
 export async function POST(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
   try {
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    const { actor, viewer } = await requireActor(request, view.site, "manage");
+    const { actor, viewer } = await requirePermission(request, view.site, "site.sharing.manage");
     await assertMutationOrigin(request, view.site);
 
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
@@ -74,6 +73,8 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
       id: createId("shr"),
       siteId: view.site.id,
       tokenHash: hashToken(token),
+      token,
+      source: body.source === "publish" ? "publish" : "manual",
       policy,
       passcodeHash: passcode ? hashPasscode(passcode) : null,
       label,

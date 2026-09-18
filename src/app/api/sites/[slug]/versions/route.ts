@@ -1,3 +1,4 @@
+import { withPublishOperation } from "@/lib/publish-operation";
 import { assertMutationOrigin } from "@/lib/request-auth";
 // /api/sites/:slug/versions
 //   GET   the version timeline (newest first, each flagged current). Read-only, open.
@@ -10,7 +11,7 @@ import { assertMutationOrigin } from "@/lib/request-auth";
 //         "content", CSRF only for ambient (cookie) credentials.
 import type { NextResponse } from "next/server";
 import { ensureAnonId } from "@/lib/anon";
-import { describePermissions, requirePermission, requireActor } from "@/lib/authz";
+import { describePermissions, requirePermission } from "@/lib/authz";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { readableVersionFilter, canReadSite } from "@/lib/share";
 import { getSiteView, listVersions, replaceDocument, replaceSiteContent, siteUrl } from "@/lib/sites";
@@ -48,6 +49,10 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
 }
 
 export async function POST(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
+  return withPublishOperation(request, r => executePost(r, context));
+}
+
+async function executePost(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
   try {
     checkRateLimit(request);
     const { slug } = await context.params;
@@ -55,7 +60,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     if (!view) return json({ error: "site not found" }, 404);
 
     const { anonId, cookie } = ensureAnonId(request);
-    const { actor } = await requireActor(request, view.site, "content"); // same bar as editing
+    const { actor } = await requirePermission(request, view.site, "site.content.edit"); // same bar as editing
     // CSRF only for ambient credentials — token/Bearer callers set headers deliberately (an
     // attacker's page cannot), and demanding same-origin would 401 every non-browser client.
       await assertMutationOrigin(request, view.site);

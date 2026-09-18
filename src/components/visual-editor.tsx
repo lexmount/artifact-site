@@ -1,4 +1,5 @@
 "use client";
+import { track, analyticsRequest } from "@/lib/analytics";
 import { siteFetch as fetch } from "@/lib/share-context";
 
 // Pure visual editing: double-click text in the live preview to rewrite it directly, with no source code and no
@@ -540,11 +541,11 @@ export default function VisualEditor({
         const body = kind === "single"
           ? { content: result.html, method: "visual" as const }
           : { path: entry, content: result.html, method: "visual" as const };
-        const res = await fetch(`/api/sites/${slug}/edit?expected_version=${encodeURIComponent(versionId)}`, {
+        const res = await analyticsRequest("update", () => fetch(`/api/sites/${slug}/edit?expected_version=${encodeURIComponent(versionId)}`, {
           method: "POST",
           headers: { "content-type": "application/json", ...(editToken ? { "x-edit-token": editToken } : {}) },
           body: JSON.stringify({ ...body, baseVersionId }),
-        });
+        }));
         const data = await res.json().catch(() => ({}));
         if (res.status === 409) throw new Error(t("This report has changed. Your edits are still here; copy them before refreshing to review the latest version."));
         if (!res.ok) throw new Error(data?.error || t("Save failed ({status})", { status: res.status }));
@@ -564,6 +565,7 @@ export default function VisualEditor({
       // Clear only the passages that actually landed; the ones not written back stay in the iframe and still count as "unsaved".
       else port.postMessage({ type: "ah-editor:saved", nonce, keys: plan.savedKeys });
       setNotice(plan.notice);
+      if (posted) track("artifact_update_success", { method: "visual" });
     } catch (e) {
       setError(e instanceof Error ? e.message : t("Save failed"));
     } finally {

@@ -39,8 +39,8 @@ export const AUTO_NOTE_MS = 6_000;
  */
 export const ARTIFACT_REFRESH_EVENT = "artifact:refresh";
 
-export function requestArtifactRefresh(): void {
-  window.dispatchEvent(new CustomEvent(ARTIFACT_REFRESH_EVENT));
+export function requestArtifactRefresh(versionId?: string, automatic = false): boolean {
+  return window.dispatchEvent(new CustomEvent(ARTIFACT_REFRESH_EVENT, { cancelable: true, detail: { versionId, automatic } }));
 }
 
 /** What the feed / poll must say before the toast may appear: a version other than the one this
@@ -65,11 +65,14 @@ export default function SiteVersionWatcher({ slug, versionId, autoRefresh = fals
 
     /** One arrival, two behaviours — see the header. Idempotent: both transports may report the
      *  same change, and refreshing an already-refreshed frame is harmless. */
-    const announce = (info: { versionNumber?: number }) => {
-      if (stopped) return;
+    let lastAnnounced: unknown;
+    const announce = (info: { versionNumber?: number; versionId?: unknown }) => {
+      if (stopped || info.versionId === lastAnnounced) return;
+      lastAnnounced = info.versionId;
       if (autoRefresh) {
-        requestArtifactRefresh();
-        setFresh({ ...info, applied: true });
+        const applied = requestArtifactRefresh(typeof info.versionId === "string" ? info.versionId : undefined, true);
+        setFresh({ ...info, applied });
+        if (!applied) return;
         if (noteTimer) clearTimeout(noteTimer);
         noteTimer = setTimeout(() => { if (!stopped) setFresh(null); }, AUTO_NOTE_MS);
         return;
@@ -91,7 +94,7 @@ export default function SiteVersionWatcher({ slug, versionId, autoRefresh = fals
         void fetch(`/api/sites/${slug}/versions`, { cache: "no-store" })
           .then((r) => (r.ok ? r.json() : null))
           .then((body: { currentVersionId?: unknown } | null) => {
-            if (!stopped && body && isNewVersion(versionId, body.currentVersionId)) announce({});
+            if (!stopped && body && isNewVersion(versionId, body.currentVersionId)) announce({ versionId: body.currentVersionId });
           })
           .catch(() => {});
       }, POLL_INTERVAL_MS);
@@ -121,7 +124,7 @@ export default function SiteVersionWatcher({ slug, versionId, autoRefresh = fals
         bodyFlows();
         try {
           const data = JSON.parse((e as MessageEvent).data) as { versionId?: unknown; versionNumber?: number };
-          if (isNewVersion(versionId, data.versionId)) announce({ versionNumber: data.versionNumber });
+          if (isNewVersion(versionId, data.versionId)) announce({ versionNumber: data.versionNumber, versionId: data.versionId });
         } catch {
           // Malformed frame — the poll fallback still covers us.
         }
@@ -152,16 +155,19 @@ export default function SiteVersionWatcher({ slug, versionId, autoRefresh = fals
       void fetch(`/api/sites/${slug}/versions`, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
         .then((body: { currentVersionId?: unknown } | null) => {
-          if (!stopped && body && isNewVersion(versionId, body.currentVersionId)) announce({});
+          if (!stopped && body && isNewVersion(versionId, body.currentVersionId)) announce({ versionId: body.currentVersionId });
         })
         .catch(() => {});
     };
 
     if (!document.hidden) openStream();
+    const applied = () => setFresh(null);
+    window.addEventListener("artifact:refresh-applied", applied);
     document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       stopped = true;
+      window.removeEventListener("artifact:refresh-applied", applied);
       if (noteTimer) clearTimeout(noteTimer);
       document.removeEventListener("visibilitychange", onVisibility);
       closeStream(); // also stops polling
@@ -174,7 +180,7 @@ export default function SiteVersionWatcher({ slug, versionId, autoRefresh = fals
     <div className="version-toast" role="status">
       <span>{fresh.applied ? t("{label}, refreshed for you", { label }) : label}</span>
       {!fresh.applied && (
-        <button type="button" className="btn sm solid" onClick={() => { requestArtifactRefresh(); setFresh(null); }}>
+        <button type="button" className="btn sm solid" onClick={() => { if (requestArtifactRefresh()) setFresh(null); }}>
           {t("Refresh to view")}
         </button>
       )}

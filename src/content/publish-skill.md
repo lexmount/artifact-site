@@ -13,7 +13,46 @@ Hand a finished front-end artifact to the platform to host, and get back a `/s/<
 
 Skim the limits in section 3 before publishing — **most failures are the artifact itself violating a limit, not a wrong API call**.
 
-> **Shortcut**: if the `artifact-site` CLI is installed (`npm install -g @artifact-site/cli`), `artifact-site login --base $BASE` once and then `artifact-site publish <path>` / `artifact-site update <slug> <path> --expected-version <id>` do everything in sections 1–2 for you (mode selection, chunked upload, share link, optimistic locking). Agents with MCP support connect directly to `$BASE/mcp` over Streamable HTTP, without a CLI install: hosts that implement MCP authorization (ChatGPT, Claude) sign in through the server's OAuth consent page and need no token at all; others carry a personal or operator Bearer token. Use `artifact_site_find` to list your artifacts (no query) or search discoverable work (with query), and `artifact_site_read` to reuse earlier content. Use `artifact_site_publish` / `artifact_site_update` for inline content; for files above the MCP request limit, call `artifact_site_upload_start`, then sequential `artifact_site_upload_write` calls per relative path (zero-based index, base64, at most 256 KiB decoded, `final: true` on each file's last chunk). Finish by calling `artifact_site_publish` with `upload_id` and `share: false` if unshared, or `artifact_site_update` with `slug`, `upload_id` and `expected_version`. All paths are relative uploaded filenames, never paths on the server. `artifact_site_export` returns a manifest, or file bytes when given `path`, `version_id` and `offset`. `artifact_site_connection` reports identity and deployment limits. See `docs/MCP.md` in the repository for the 17-tool catalog and migration. The old local stdio command is removed. The rest of this document is the contract both of them implement.
+> **Shortcut**: if the `artifact-site` CLI is installed (`npm install -g @artifact-site/cli`), `artifact-site login --base $BASE` once and then `artifact-site publish <path>` / `artifact-site update <slug> <path> --expected-version <id>` do everything in sections 1–2 for you (mode selection, chunked upload, share link, optimistic locking). Agents with MCP support connect directly to `$BASE/mcp` over Streamable HTTP, without a CLI install: hosts that implement MCP authorization (ChatGPT, Claude) sign in through the server's OAuth consent page and need no token at all; others carry a personal or operator Bearer token. Use `artifact_site_find` to list your artifacts (no query) or search discoverable work (with query), and `artifact_site_read` to reuse earlier content. Use `artifact_site_publish` / `artifact_site_update` for inline content; for files above the MCP request limit, call `artifact_site_upload_start`, then sequential `artifact_site_upload_write` calls per relative path (zero-based index, base64, at most 256 KiB decoded, `final: true` on each file's last chunk). Finish by calling `artifact_site_publish` with `upload_id` and `share: false` if unshared, or `artifact_site_update` with `slug`, `upload_id` and `expected_version`. All paths are relative uploaded filenames, never paths on the server. `artifact_site_export` returns a manifest, or file bytes when given `path`, `version_id` and `offset`. `artifact_site_connection` reports identity and deployment limits. See `docs/MCP.md` in the repository for the tool catalog and migration. The old local stdio command is removed. The rest of this document is the contract both of them implement.
+
+### Recommended publishing and recovery
+
+For a local directory, HTML/PDF or ZIP, prefer `artifact-site publish ./report --share none`
+(or choose the requested share policy). Authenticated CLI publication chooses the transfer route,
+checks for an HTML entry before uploading a tree, extracts ZIPs safely, and records progress under
+`~/.config/artifact-site/uploads/`. Retry the same command with unchanged files to recover the same
+artifact. Use a different `--operation-key <key>` only when intentionally creating another copy.
+The journal contains operation IDs and content hashes, not authentication or management tokens.
+Anonymous uploads work, but automatic cross-process recovery requires an authenticated CLI identity.
+Image-only directories need an HTML entry; a single PDF is also supported. Office files still require
+inline conversion, or conversion to PDF before large uploads.
+
+Remote MCP cannot read your local disk: send a relative file tree or use `artifact_site_upload_start`
+and sequential `artifact_site_upload_write` chunks. Include a persisted `operation_key` on publish,
+content update, edit, and upload_start. Reuse exactly the same key and arguments after a lost response.
+Use `artifact_site_operation_status` with `key` to recover a committed result, and
+`artifact_site_upload_status` with `upload_id` to inspect unfinished files. A recovered publish result
+may contain only the artifact, not a share link: inspect sharing before explicitly creating a link.
+
+Direct HTTP is also supported:
+
+- Send `Idempotency-Key` (8–128 letters, digits, `.`, `_`, `:`, `-`) on `POST /api/sites`,
+  `/api/sites/<slug>/versions`, `/api/sites/<slug>/edit`, `/api/uploads`, and
+  `/api/uploads/<versionId>/commit`. Use a separate key for each operation, including start and commit.
+- Save the key **before** sending. Keys are scoped to the authenticated owner (or an established
+  anonymous cookie). The same key with changed parameters is a 409 `idempotency_conflict`.
+- `GET /api/operations/<key>` returns `running`, `retryable`, or `completed` with `result` and
+  `httpStatus`. Completed results are stored atomically with the business commit, retained for seven
+  days, and replayed without creating another artifact/version. Expired keys return 410; never use
+  an expired key to start over without first checking the previous outcome.
+- `GET /api/uploads/<versionId>` returns uploaded files (with SHA-256 receipts for completed transfers), partial MCP chunk progress, and `expiresAt`. Uncommitted bytes expire
+  after six hours. Check the **commit operation first** before replacing an expired/missing session.
+- A 409 `operation_in_progress` means wait and query/retry the same key. A worker interrupted before
+  committing can be reclaimed after its five-minute lease. Old workers are fenced at the database commit.
+- Only `413` with `code: "inline_upload_too_large"` and `effect: "none"` confirms an inline request
+  was rejected before publication and can switch to per-file uploads. A gateway page, timeout,
+  connection failure or 5xx does not establish the outcome. Query the operation instead of issuing a
+  new create. Legacy servers without operation queries need manual verification after uncertain failures.
 
 ## 1. Publishing
 
@@ -115,7 +154,7 @@ curl -sS -X POST "$BASE/api/uploads/$SID/commit" -H "authorization: Bearer $TOKE
 # → {"slug":"…","url":"/s/…","title":"…","kind":"folder","versionId":"…","editToken":"…"}
 ```
 
-- **This route does not accept zips**: the server does not unpack. Upload the extracted files one by one, relative paths with directories included. Entry detection is the same as for a whole-tree upload (root `index.html` → the only `.html` in the site → any `*/index.html`); if no entry is found at commit time it is a 400 and the uploaded bytes are reclaimed.
+- **This route does not accept zips**: the server does not unpack. Upload the extracted files one by one, relative paths with directories included. Entry detection is the same as for a whole-tree upload (root `index.html` → the only `.html` in the site → any `*/index.html`); if no entry is found at commit time it is a 400. Keyed requests keep staged bytes for inspection/recovery until expiry; legacy unkeyed requests reclaim them.
 - **A single large PDF also goes this way**: upload just that one `.pdf` in the session; on commit it is recognised as a document site (`kind:"document"`) automatically, the entry is a generated online reader page, visitors can page through and download the original — the PDF is never read into memory, so 250MB goes through. Chunked upload currently **accepts only PDF as a document**; Office (pptx/docx…) has to be converted to a layout in memory, so use one-shot `file` mode (within the per-request limit) or convert it to PDF first.
 - **Every PUT must use the same identity as the session was opened with**. `Bearer $TOKEN` satisfies that naturally; an anonymous publish must `-c jar -b jar` to keep the cookie handed out when the session was opened, otherwise the next request is a different person and gets a 404 "upload session not found".
 - A session is valid for 6 hours; when it expires it is reclaimed together with the uploaded bytes. Re-uploading the same file name overwrites; if one file fails, re-upload just that one and leave the others alone.
@@ -321,6 +360,8 @@ curl -sS -H "authorization: Bearer $TOKEN" \
 
 ## 3. Platform limits on artifacts
 
+`GET /api/auth/me` advertises `uploadLimits` (`maxBytes`, `maxFileBytes`, `maxFiles`) in bytes/count, including for anonymous callers. Read these deployment-specific values before preflight or local ZIP extraction; the defaults below can be raised by the operator.
+
 Artifacts are treated as untrusted content and run in a `sandbox`, an isolated environment **without `allow-same-origin`** (an opaque origin). Everything below is a tested conclusion.
 
 ### Must be excluded before packaging
@@ -351,6 +392,7 @@ PY
 ### Paths and references
 
 - **Absolute-path assets always 404** — `/assets/x.js` resolves to the platform root, which is the platform's own routing. **Vite defaults to `base:'/'` and CRA to absolute paths, so uploading `dist/` as is gives a blank page**. Vite needs `base:'./'`, CRA needs `"homepage":"."`, then rebuild before uploading.
+- Resource URLs may use ordinary query parameters such as `styles.css?v=hash`, `app.js?t=timestamp`, or `image.svg?share=value`; these do not select platform versions or credentials. The unkeyed preview entry URL still accepts platform `v`/`share` controls. Platform links to the entry or a specific file use reserved `__artifact_version`, `__artifact_share`, and `__artifact_image` parameters (version/share controls take precedence over their legacy entry equivalents); do not use the `__artifact_` namespace for artifact-owned parameters. A path-scoped preview credential always pins resources to its authorized version.
 - The `<base>` injected by the platform is always the **site root**, regardless of which level the page sits at. So in a multi-page site, `./sub.css` in `sub/page.html` requests `sub.css` in the root directory → 404. **Write every reference as a path relative to the site root**.
 - A `<base>` written by the artifact itself is ignored (the injected one comes first).
 - **Any path segment starting with a dot** (`.well-known/`, `.nojekyll`) returns 400 and can never be fetched.
@@ -399,7 +441,7 @@ The response body is JSON `{"error":"…"}`. **Read the message before deciding*
 | 400 | The most common, with many causes: wrong mode/fields, no entry HTML found, unsafe path (`node_modules`, `.git`, dot-leading segment), corrupt zip. **Limit violations can land here too** — the messages are `site too large` / `too many files` / `file too large`. Fix according to the message, do not retry. |
 | 401 | The cookie form without `Origin` (or a value differing from `$BASE`); add `-H "origin: $BASE"`. A 401 in the token form = the token was not recognised (check that `Bearer ahp_…` is complete) **or has been revoked** — follow the error message and walk the user through the device authorisation again; do not sneak past with an anonymous publish (the site would not belong to the user). |
 | 403 | No permission to change: wrong cookie, insufficient site role, or an `editToken` on an account-owned site. See section 2. |
-| 413 | **JSON body** = the app refused an inline request body exceeding `ARTIFACT_INLINE_UPLOAD_MAX_BYTES` (default 24 MiB), checked against both Content-Length and actual bytes read; **HTML error page** = the gateway refused it (the request never reached the app; the operator needs to raise the gateway's request body limit). |
+| 413 | **JSON body** = the app refused an inline request body exceeding `ARTIFACT_INLINE_UPLOAD_MAX_BYTES` (default 24 MiB), checked against both Content-Length and actual bytes read; **HTML error page** = likely an intermediary refusal; inspect gateway logs and operation status before assuming no effect. |
 | 429 | Rate limited. **There is no `Retry-After` in the response**; back off and retry on your own. |
 | 5xx | Retry once; on repeated failure give the user the status code and response body instead of retrying over and over. |
 
@@ -481,7 +523,7 @@ curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/api/sites/<slug>/text?file=src
 - To change what you found: `versionId` from the read is the baseline for `expected_version` in section 2, exactly like the export's.
 - With the CLI: `artifact-site find <words…>` and `artifact-site read <slug> [--file <relpath>] [--max-chars <n>]`; over MCP: `artifact_site_find` and `artifact_site_read`.
 
-Preview URLs reserve `?v=` for an authorized version ID; invalid or foreign IDs return 404. Use `?r=` for a cache-busting value. Historical editing uses the selected snapshot for both entry HTML and its resource tree; saving creates a new latest version.
+The unkeyed preview entry URL (`/api/preview/<slug>`) accepts legacy `?v=` for an authorized version ID; invalid or foreign IDs return 404. Use `?r=` to cache-bust that entry URL. Resource URLs may use `?v=` as their own cache tag; platform version selection on entry or file URLs uses `__artifact_version`. Historical editing uses the selected snapshot for both entry HTML and its resource tree; saving creates a new latest version.
 
 ## Official versions
 

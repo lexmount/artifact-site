@@ -1,4 +1,5 @@
 "use client";
+import { track, analyticsRequest } from "@/lib/analytics";
 
 // The product's front door: a large drag-and-drop zone that accepts a single .html, a whole
 // folder (drag or webkitdirectory pick), a .zip, or pasted HTML — then POSTs multipart to
@@ -114,22 +115,22 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
     setError(null);
     setProgress({ done: 0, total: files.reduce((sum, f) => sum + f.file.size, 0) });
     try {
-      const opened = await fetch("/api/uploads", {
+      const opened = await analyticsRequest("publish", () => fetch("/api/uploads", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: title || undefined, official }),
-      });
+      }));
       const session = await opened.json().catch(() => ({}));
       if (!opened.ok || !session.versionId) throw new Error(session?.error || t("Could not start the upload"));
 
       let done = 0;
       for (const picked of files) {
         const path = picked.path.split("/").map(encodeURIComponent).join("/");
-        const res = await fetch(`/api/uploads/${session.versionId}/files/${path}`, {
+        const res = await analyticsRequest("publish", () => fetch(`/api/uploads/${session.versionId}/files/${path}`, {
           method: "PUT",
           // Use the File directly as the request body: the browser streams it instead of assembling a full copy in memory first.
           body: picked.file,
           headers: { "content-length": String(picked.file.size) },
-        });
+        }));
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err?.error || t("{path} failed to upload", { path: picked.path }));
@@ -138,13 +139,14 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
         setProgress({ done, total: files.reduce((sum, f) => sum + f.file.size, 0) });
       }
 
-      const committed = await fetch(`/api/uploads/${session.versionId}/commit`, {
+      const committed = await analyticsRequest("publish", () => fetch(`/api/uploads/${session.versionId}/commit`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: title || undefined, official }),
-      });
+      }));
       const data = await committed.json().catch(() => ({}));
       if (!committed.ok || !data.slug) throw new Error(data?.error || t("Failed to commit the upload"));
       if (data.editToken) { try { localStorage.setItem(`sites:editToken:${data.slug}`, data.editToken); } catch { /* ignore */ } }
+      track("artifact_publish_success", { upload_method: "chunked" });
       router.push(`/s/${data.slug}?published=1`);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("Upload failed"));
@@ -160,13 +162,14 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/sites", { method: "POST", body });
+      const res = await analyticsRequest("publish", () => fetch("/api/sites", { method: "POST", body }));
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || t("Publish failed ({status})", { status: res.status }));
       const slug: string | undefined = data.slug ?? data?.site?.slug;
       if (!slug) throw new Error(t("Published, but no site identifier came back"));
       // Owner token: remember it so this browser can edit/delete/rename/rollback this site later.
       if (data.editToken) { try { localStorage.setItem(`sites:editToken:${slug}`, data.editToken); } catch { /* ignore */ } }
+      track("artifact_publish_success", { upload_method: "inline" });
       router.push(`/s/${slug}?published=1`);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("Publish failed"));
@@ -267,13 +270,13 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
             </div>
           </div>
           <span className="upload-split">
-            <button type="button" className="primary" onClick={() => fileInput.current?.click()} disabled={busy}>
+            <button data-analytics-button="upload" type="button" className="primary" onClick={() => fileInput.current?.click()} disabled={busy}>
               {busy ? <Loader2 size={16} className="spin" aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />} {busy ? t("Publishing…") : t("Upload")}
             </button>
             <MoreMenu label={t("More upload options")} iconOnly buttonClassName="primary upload-more" buttonContent={<ChevronDown size={14} aria-hidden="true" />} disabled={busy}>
-              <button type="button" role="menuitem" className="menu-item" onClick={() => fileInput.current?.click()}><FileCode2 size={14} /> {t("A file (HTML, PDF, Office, zip)")}</button>
-              <button type="button" role="menuitem" className="menu-item" onClick={() => folderInput.current?.click()}><FolderUp size={14} /> {t("A folder (a build's dist/)")}</button>
-              <button type="button" role="menuitem" className="menu-item" onClick={() => zipInput.current?.click()}><FileArchive size={14} /> {t("A .zip archive")}</button>
+              <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => fileInput.current?.click()}><FileCode2 size={14} /> {t("A file (HTML, PDF, Office, zip)")}</button>
+              <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => folderInput.current?.click()}><FolderUp size={14} /> {t("A folder (a build's dist/)")}</button>
+              <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => zipInput.current?.click()}><FileArchive size={14} /> {t("A .zip archive")}</button>
             </MoreMenu>
           </span>
         </div>
@@ -344,16 +347,16 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
             onKeyDown={(e) => e.stopPropagation()}
           />
           <div className="dropzone-actions">
-            <button type="button" className="btn" onClick={() => fileInput.current?.click()} disabled={busy}>
+            <button data-analytics-button="upload" type="button" className="btn" onClick={() => fileInput.current?.click()} disabled={busy}>
               <FileCode2 size={15} /> {t("Choose a file")}
             </button>
-            <button type="button" className="btn" onClick={() => folderInput.current?.click()} disabled={busy}>
+            <button data-analytics-button="upload" type="button" className="btn" onClick={() => folderInput.current?.click()} disabled={busy}>
               <FolderUp size={15} /> {t("Choose a folder")}
             </button>
-            <button type="button" className="btn" onClick={() => zipInput.current?.click()} disabled={busy}>
+            <button data-analytics-button="upload" type="button" className="btn" onClick={() => zipInput.current?.click()} disabled={busy}>
               <FileArchive size={15} /> {t("Choose a .zip")}
             </button>
-            <button type="button" className="btn ghost" onClick={() => { setPaste(true); setError(null); }} disabled={busy}>
+            <button data-analytics-button="upload" type="button" className="btn ghost" onClick={() => { setPaste(true); setError(null); }} disabled={busy}>
               <ClipboardPaste size={15} /> {t("Paste HTML")}
             </button>
           </div>
@@ -375,7 +378,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
           </div>
           <div className="row">
             <button type="button" className="btn ghost" onClick={() => { setPaste(false); setError(null); }} disabled={busy}>{t("Back to drop zone")}</button>
-            <button type="button" className="btn solid" onClick={submitPaste} disabled={busy}>
+            <button data-analytics-button="upload" type="button" className="btn solid" onClick={submitPaste} disabled={busy}>
               {busy ? <><Loader2 size={15} className="spin" /> {t("Publishing")}</> : t("Publish and get a link")}
             </button>
           </div>

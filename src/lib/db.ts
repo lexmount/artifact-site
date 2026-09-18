@@ -1,3 +1,4 @@
+import { listSharesQuery } from "@/lib/share-queries";
 // Metadata store facade. Two tables — sites + immutable versions — behind an async MetadataStore
 // interface so a node-local SQLite backend (default) and a Postgres backend (multi-replica) are
 // interchangeable. Callers keep importing these names from "@/lib/db"; each delegates to the
@@ -257,7 +258,7 @@ export function toAudit(row: Row): AuditEntry {
 export interface UploadSessionRow {
   tenantId?: string;
   versionId: string; siteId: string; targetSlug?: string | null; title?: string | null;
-  ownerKey: string; files: { relpath: string; bytes: number }[]; createdAt: number;
+  ownerKey: string; files: { relpath: string; bytes: number; sha256?: string }[]; createdAt: number;
 }
 export function toUploadSession(row: Row): UploadSessionRow {
   let files: UploadSessionRow["files"] = [];
@@ -411,7 +412,7 @@ export interface MetadataStore {
    * Omit `viewer` (or pass blanks) for the anonymous case: public rows only. Owner-scoped lists
    * (`listSitesByOwner` / `listSitesForCollaborator`) do NOT filter — see their doc comments.
    */
-  listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean }): Promise<SiteSummary[]>;
+  listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean; ownedOnly?: boolean; limit?: number }): Promise<SiteSummary[]>;
   countVersions(siteId: string): Promise<number>;
   insertVersion(input: InsertVersionInput): Promise<void>;
   getVersion(id: string): Promise<Version | null>;
@@ -419,7 +420,7 @@ export interface MetadataStore {
   backfillEditTokens(): Promise<number>;
   /** Create-or-refresh an account, keyed ONLY on (authProvider, providerSubject) — never email,
    *  which an attacker could pre-register to inherit someone else's grants. Returns the row. */
-  upsertUser(input: UpsertUserInput): Promise<User>;
+  upsertUser(input: UpsertUserInput): Promise<User & { created: boolean }>;
   getUser(id: string): Promise<User | null>;
   /** Look up by VERIFIED email only — an unverified address is attacker-controllable. */
   getUserByVerifiedEmail(email: string): Promise<User | null>;
@@ -465,10 +466,13 @@ export interface MetadataStore {
   /** Has this exact reader been recorded on this share since `since`? Collapses refreshes. */
   hasRecentShareView(shareId: string, userId: string | null, anonId: string | null, ip: string | null, since: number): Promise<boolean>;
   listShareViews(siteId: string, limit: number): Promise<ShareView[]>;
+  /** Delete at most 1,000 old details, atomically retaining their lifetime count. */
   pruneShareViews(before: number): Promise<number>;
 
   // --- direct openings of /s/<slug> (site_views) + read-side aggregates over BOTH view tables ---
   recordSiteView(view: SiteView): Promise<void>;
+  /** Atomically collapse a reader across direct and share entrances. */
+  recordSiteOpen(view: SiteOpen, collapseMs: number): Promise<void>;
   /** Same collapse contract as hasRecentShareView, keyed by site instead of share. */
   hasRecentSiteView(siteId: string, userId: string | null, anonId: string | null, ip: string | null, since: number): Promise<boolean>;
   /** share_views ∪ site_views, newest first — one list of "who opened this", whichever door. */
@@ -481,6 +485,7 @@ export interface MetadataStore {
    * and that promise must hold for both kinds of owner.
    */
   getSiteViewStats(siteId: string, since: number, exclude: { userIds: readonly string[]; anonIds: readonly string[] }): Promise<SiteViewStats>;
+  /** Delete at most 1,000 old details, atomically retaining their lifetime count. */
   pruneSiteViews(before: number): Promise<number>;
   /** Attribute the anonymous versions of a just-claimed site to its new owner. */
   attributeUnattributedVersions(siteId: string, userId: string): Promise<number>;
@@ -589,7 +594,6 @@ export interface MetadataStore {
   restoreDeletedSite(id: string): Promise<boolean>;
   /** Only while still deleted: a site restored between the file removal and this write stays live
    *  and unmarked (its files are gone — the unavoidable half of that race — but the row is honest). */
-  setSitePurged(id: string, at: number): Promise<void>;
   /** Soft-deleted at or before `before` and not yet purged — the purge worklist, oldest first. */
   listDeletedSitesBefore(before: number, limit: number): Promise<Site[]>;
   insertAdminLog(entry: AdminLogEntry): Promise<void>;
@@ -770,7 +774,7 @@ export async function setEditToken(id: string, token: string): Promise<void> {
 export async function softDeleteSite(id: string): Promise<void> {
   return (await getStore()).softDeleteSite(id);
 }
-export async function listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean }): Promise<SiteSummary[]> {
+export async function listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean; ownedOnly?: boolean; limit?: number }): Promise<SiteSummary[]> {
   return (await getStore()).listSiteSummaries(viewer, options);
 }
 export async function countVersions(siteId: string): Promise<number> {
@@ -789,7 +793,7 @@ export async function backfillEditTokens(): Promise<number> {
   return (await getStore()).backfillEditTokens();
 }
 
-export async function upsertUser(input: UpsertUserInput): Promise<User> {
+export async function upsertUser(input: UpsertUserInput): Promise<User & { created: boolean }> {
   return (await getStore()).upsertUser(input);
 }
 export async function getUser(id: string): Promise<User | null> {
@@ -869,6 +873,10 @@ export async function listShareViews(siteId: string, limit = 200): Promise<Share
 export async function pruneShareViews(before: number): Promise<number> {
   return (await getStore()).pruneShareViews(before);
 }
+export async function recordSiteOpen(view: SiteOpen, collapseMs: number): Promise<void> {
+  return (await getStore()).recordSiteOpen(view, collapseMs);
+}
+
 export async function recordSiteView(view: SiteView): Promise<void> {
   return (await getStore()).recordSiteView(view);
 }
@@ -892,16 +900,19 @@ export async function pruneSiteViews(before: number): Promise<number> {
 /** Row → Share, shared by both backends so the two cannot drift on shape. */
 export function toShareRow(row: Row): ShareRow {
   return {
+    revision: Number(row.revision ?? 0),
     mode: (row.mode ?? "view") as Share["mode"],
     versionId: (row.version_id as string | null) ?? null,
 
     id: row.id as string,
     siteId: row.site_id as string,
     tokenHash: row.token_hash as string,
+    token: (row.token as string | null) ?? null,
     policy: row.policy as SharePolicy,
     passcodeHash: (row.passcode_hash as string | null) ?? null,
     hasPasscode: Boolean(row.passcode_hash),
     allowAi: Boolean(row.allow_ai), // column arrived by migration; absent maps to false
+    source: row.source === "publish" || row.source === "manual" ? row.source : null,
     label: (row.label as string | null) ?? null,
     createdBy: (row.created_by as string | null) ?? null,
     createdAnonId: (row.created_anon as string | null) ?? null,
@@ -913,8 +924,8 @@ export function toShareRow(row: Row): ShareRow {
 
 /** The owner-facing projection: the two hashes never leave the storage layer. */
 export function toShare(row: Row): Share {
-  const { tokenHash: _t, passcodeHash: _p, ...rest } = toShareRow(row);
-  void _t; void _p;
+  const { tokenHash: _t, passcodeHash: _p, token: _secret, ...rest } = toShareRow(row);
+  void _t; void _p; void _secret;
   return rest;
 }
 
@@ -1172,7 +1183,21 @@ export async function restoreDeletedSite(id: string): Promise<boolean> {
   return (await getStore()).restoreDeletedSite(id);
 }
 export async function setSitePurged(id: string, at: number): Promise<void> {
-  return (await getStore()).setSitePurged(id, at);
+  return rbacTransaction(async q => {
+    // Purge retains the site tombstone but removes discussion content independently of audit TTL.
+    const [site] = await q("SELECT id FROM sites WHERE id=$1 AND deleted_at IS NOT NULL", [id]);
+    if (!site) return;
+    await q("DELETE FROM reactions WHERE site_id=$1", [id]);
+    await q("DELETE FROM comment_read_scopes WHERE site_id=$1", [id]);
+    await q("DELETE FROM comment_spaces WHERE site_id=$1", [id]);
+    await q("DELETE FROM site_comment_settings WHERE site_id=$1", [id]);
+    // Search text is content too. Keep both row and SQLite FTS cleanup in this transaction.
+    await q("DELETE FROM site_texts WHERE site_id=$1", [id]);
+    if (config.dbDriver === "sqlite") {
+      await q("DELETE FROM site_texts_fts WHERE site_id=$1", [id]);
+    }
+    await q("UPDATE sites SET purged_at=$1 WHERE id=$2 AND purged_at IS NULL AND deleted_at IS NOT NULL", [at,id]);
+  });
 }
 export async function listDeletedSitesBefore(before: number, limit = 100): Promise<Site[]> {
   return (await getStore()).listDeletedSitesBefore(before, limit);
@@ -1240,3 +1265,8 @@ export async function compareUploadSessionFiles(versionId: string, before: Uploa
 /** Internal, parameterized metadata access for the shared RBAC repository. */
 export async function rbacQuery(...args: Parameters<RbacQuery>): ReturnType<RbacQuery> { return (await getStore()).rbacQuery(...args); }
 export async function rbacTransaction<T>(work: (q: RbacQuery) => Promise<T>): Promise<T> { return (await getStore()).rbacTransaction(work); }
+
+/** Management-only projection. Callers must authorize and explicitly omit token/hash fields. */
+export async function listShareRows(siteId: string): Promise<ShareRow[]> {
+  return (await rbacQuery(listSharesQuery("$1"), [siteId])).map(toShareRow);
+}

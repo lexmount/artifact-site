@@ -1,3 +1,4 @@
+import { readerVersionAllowed } from "@/lib/version-access";
 import { managementReason } from "@/lib/management-reason";
 import "server-only";
 import { createHash } from "node:crypto";
@@ -55,6 +56,8 @@ export async function authorizePreview(
   if (key) {
     const grant = await readScopedPreviewKey(key, site);
     if (!grant) return null;
+    // The preview route strips artifact-owned queries from keyed requests before calling us.
+    // Retain this guard for direct callers: a platform version override cannot widen a grant.
     const override = new URL(request.url).searchParams.get("v");
     if (override && override !== grant.versionId) return null;
     const version = await getVersion(grant.versionId);
@@ -76,7 +79,7 @@ export async function authorizePreview(
         fingerprint(share) !== grant.fingerprint
       )
         return null;
-      if (share.versionId && share.versionId !== grant.versionId) return null;
+      if (!readerVersionAllowed(site, grant.versionId, share.versionId)) return null;
       if (share.policy === "login" && !grant.userId) return null;
       if (share.policy === "people") {
         const user = grant.userId ? await getUser(grant.userId) : null;
@@ -93,7 +96,7 @@ export async function authorizePreview(
     } else if (
       site.visibility === "private" ||
       site.takenDownAt ||
-      grant.versionId !== site.currentVersionId
+      !readerVersionAllowed(site, grant.versionId)
     ) {
       const member = grant.userId
         ? await accountSiteRole(site, { userId: grant.userId })

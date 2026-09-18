@@ -1,10 +1,12 @@
+import { config } from "@/lib/config";
+import { flushTextIndexForTests } from "@/lib/site-text";
 // The administration API: who gets in, what each act does to the rest of the system, and that
 // every act leaves a row behind. SQLite backend; https requests because __Host- cookies need it.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDbForTests, getSiteBySlug, insertPublishToken, listAdminLog, listSitesByOwner, updateSiteSharing, upsertUser } from "@/lib/db";
+import { rbacQuery, closeDbForTests, getSiteBySlug, insertPublishToken, listAdminLog, listSitesByOwner, updateSiteSharing, upsertUser } from "@/lib/db";
 import { readAccess } from "@/lib/share";
 import { flushAfterResponseForTests } from "@/lib/after-response";
 import SitePage from "@/app/s/[slug]/page";
@@ -299,6 +301,8 @@ describe("deleting and restoring", () => {
   it("a delete keeps the files; an administrator restores it within the window; after the purge it is gone for good", async () => {
     const member = await person("member@example.net");
     const { site, version } = await createSite({ mode: "paste", html: "<title>D</title><body>x</body>" }, { ownerId: member.user.id });
+    await flushTextIndexForTests();
+    expect(await rbacQuery("SELECT site_id FROM site_texts WHERE site_id=$1", [site.id])).toHaveLength(1);
     expect(await deleteSite(site.slug)).toBe(true);
     expect(await getSiteView(site.slug)).toBeNull();
     expect(await getStorage().stat(site.id, version.id, version.entry)).toBe("file");
@@ -318,6 +322,8 @@ describe("deleting and restoring", () => {
     expect(await purgeDeletedSites({ retentionMs: 0 })).toEqual({ purged: 1, errors: 0 });
     expect(await getStorage().stat(site.id, version.id, version.entry)).toBe("missing");
     expect((await getSiteBySlug(site.slug))?.purgedAt).toBeGreaterThan(0);
+    expect(await rbacQuery("SELECT site_id FROM site_texts WHERE site_id=$1", [site.id])).toHaveLength(0);
+    if (config.dbDriver === "sqlite") expect(await rbacQuery("SELECT site_id FROM site_texts_fts WHERE site_id=$1", [site.id])).toHaveLength(0);
     const again = await PATCH_SITE(req(`/api/admin/sites/${site.slug}`, { method: "PATCH", headers: asToken, body: { deleted: false } }), params({ slug: site.slug }));
     expect(again.status).toBe(400);
     // A second purge finds nothing.
