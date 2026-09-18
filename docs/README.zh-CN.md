@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/artifact-site-banner-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="assets/artifact-site-banner.png">
-    <img src="assets/artifact-site-banner.png" alt="artifact-site：给 AI 生成的网页和文档一个集中管理、分享和持续更新的地方，部署在你自己的服务器上。开源、自托管、适配 agent。" width="560">
+    <img src="assets/artifact-site-banner.png" alt="artifact-site：给 AI 生成的网页和文档一个集中管理、分享和持续更新的地方，部署在你自己的服务器上。开源、自托管、适配 agent。" width="1000">
   </picture>
 </p>
 

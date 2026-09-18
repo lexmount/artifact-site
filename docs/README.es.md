@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/artifact-site-banner-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="assets/artifact-site-banner.png">
-    <img src="assets/artifact-site-banner.png" alt="artifact-site — Un hogar compartido para páginas y documentos generados por IA, en tu propio servidor. Código abierto, autoalojado, listo para agentes." width="560">
+    <img src="assets/artifact-site-banner.png" alt="artifact-site — Un hogar compartido para páginas y documentos generados por IA, en tu propio servidor. Código abierto, autoalojado, listo para agentes." width="1000">
   </picture>
 </p>
 
