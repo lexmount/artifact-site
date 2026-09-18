@@ -1,4 +1,5 @@
 "use client";
+import { track, analyticsRequest } from "@/lib/analytics";
 
 // "Publish the page I am looking at" — the landing page for the bookmarklet.
 //
@@ -181,9 +182,10 @@ export default function PublishFromPage() {
       body.set("mode", "paste");
       body.set("html", page.html);
       if (title.trim()) body.set("title", title.trim());
-      const res = await fetch("/api/sites", { method: "POST", body });
+      const res = await analyticsRequest("publish", () => fetch("/api/sites", { method: "POST", body }));
       const data = (await res.json().catch(() => ({}))) as { slug?: string; error?: string };
       if (!res.ok || !data.slug) throw new Error(data.error || t("Publish failed"));
+      track("artifact_publish_success", { upload_method: "inline" });
       router.push(`/s/${data.slug}?published=1`);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("Publish failed"));
@@ -240,7 +242,7 @@ export default function PublishFromPage() {
       {error && <p className="pfp-error">{error}</p>}
 
       <div className="pfp-actions">
-        <button type="button" className="btn solid" onClick={() => void publish()} disabled={busy}>
+        <button data-analytics-button="upload" type="button" className="btn solid" onClick={() => void publish()} disabled={busy}>
           {busy ? <Loader2 size={14} className="spin" /> : <Link2 size={14} />} {t("Publish and get a link")}
         </button>
         <button type="button" className="btn ghost" onClick={() => window.close()} disabled={busy}>{t("Cancel")}</button>

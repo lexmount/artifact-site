@@ -11,7 +11,7 @@ import { assertMutationOrigin } from "@/lib/request-auth";
 // clients. Mirrors the edit route.
 import type { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireActor } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { getSiteView, rollbackTo, siteUrl } from "@/lib/sites";
 import { apiAuditContext } from "@/lib/audit";
@@ -29,7 +29,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site or version not found" }, 404);
-    const { actor } = await requireActor(request, view.site, "manage"); // rollback rewrites which version is served
+    const { actor } = await requirePermission(request, view.site, "site.version.rollback"); // rollback rewrites which version is served
     await assertMutationOrigin(request, view.site);
     const { versionId } = rollbackSchema.parse(await request.json());
     const result = await rollbackTo(slug, versionId, apiAuditContext(request, actor));

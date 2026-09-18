@@ -1,14 +1,11 @@
 // Shapes + input validation shared by the share-link admin routes. Not a `route.ts`, so Next never
 // treats it as an endpoint (same arrangement as app/api/_util.ts).
 //
-// The one rule the whole surface is built around: THE TOKEN IS NEVER READABLE AFTER CREATION. Only
-// its hash is stored, so `POST /shares` returning the plaintext once is the single moment it exists
-// outside the owner's clipboard. Nothing below may put it back into a listing — a link that can be
-// re-read at any time is a link that leaks with the account, and revocation stops meaning anything.
+// Recoverable URLs are added only by the authorized management listing.
 import type { NextResponse } from "next/server";
 import { getShare, getUser, listShareGrants } from "@/lib/db";
 import { isLive } from "@/lib/share";
-import { requireActor } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import { getSiteView } from "@/lib/sites";
 import { EXPIRY_DAYS, SHARE_POLICIES, type Actor, type Share, type SharePolicy, type ShareRow, type Site, type User } from "@/lib/types";
 import { json } from "../../../_util";
@@ -142,6 +139,8 @@ export async function loadGrants(shareId: string, cache?: Map<string, User | nul
 export type ShareStatus = "live" | "revoked" | "expired";
 
 export interface ShareSummary {
+  revision: number;
+  source?: "publish" | "manual" | null;
   mode: Share["mode"];
   versionId: string | null;
   id: string;
@@ -159,7 +158,7 @@ export interface ShareSummary {
 }
 
 /**
- * The owner-facing projection of a share. Contains no token and no passcode — see the file header.
+ * The owner-facing projection of a share. Contains no token and no passcode; URL recovery is explicit in the list route.
  *
  * `status` is three-valued where `live` is two, because the owner is the person who has to answer
  * "why can't I open this any more?". "I revoked it" and "it passed its expiry" have different answers and
@@ -169,11 +168,13 @@ export interface ShareSummary {
 export function summarize(share: Share, grants: GrantView[], now: number = Date.now()): ShareSummary {
   const live = isLive(share, now);
   return {
+    revision: share.revision ?? 0,
     mode: share.mode,
     versionId: share.versionId,
     id: share.id,
     policy: share.policy,
     label: share.label,
+    source: share.source ?? null,
     hasPasscode: share.hasPasscode,
     allowAi: share.allowAi,
     createdAt: share.createdAt,
@@ -210,7 +211,7 @@ export type OwnedShare =
 export async function resolveOwnedShare(request: Request, slug: string, shareId: string): Promise<OwnedShare> {
   const view = await getSiteView(slug);
   if (!view) return { ok: false, response: json({ error: "site not found" }, 404) };
-  const { actor } = await requireActor(request, view.site, "manage");
+  const { actor } = await requirePermission(request, view.site, "site.sharing.manage");
   const share = await getShare(shareId);
   if (!share || share.siteId !== view.site.id) return { ok: false, response: json({ error: "share not found" }, 404) };
   return { ok: true, site: view.site, share, actor };

@@ -138,17 +138,18 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
   });
 
   program.command("publish")
+    .option("--operation-key <key>", "publication identity; reuse to recover, change to publish another copy")
     .option("--official", "designate the uploaded version as the only official version")
     .description("Publish a file (.html / pdf / pptx / docx / .zip), a directory, or HTML from stdin (`-`) as a new site")
     .argument("<path>", "file, directory, or - for stdin")
     .option("-t, --title <title>", "site title")
     .option("-s, --share <policy>", "share link to create: public (default), login, email, passcode, or none", parsePolicy, "public")
-    .action(async (target: string, opts: { official?: boolean; title?: string; share: SharePolicy | false }) => {
+    .action(async (target: string, opts: { operationKey?: string; official?: boolean; title?: string; share: SharePolicy | false }) => {
       const c = client();
       const progress = json() ? undefined : (l: string) => io.err(l);
       const out = target === "-"
-        ? await publishHtml(c, await io.stdin(), { official: opts.official, title: opts.title, share: opts.share })
-        : await publishPath(c, target, { official: opts.official, title: opts.title, share: opts.share, onProgress: progress });
+        ? await publishHtml(c, await io.stdin(), { operationKey: opts.operationKey, official: opts.official, title: opts.title, share: opts.share })
+        : await publishPath(c, target, { operationKey: opts.operationKey, official: opts.official, title: opts.title, share: opts.share, onProgress: progress });
       emit({ officialVersionId: out.site.officialVersionId, officialRevision: out.site.officialRevision, slug: out.site.slug, kind: out.site.kind, title: out.site.title, siteUrl: out.siteUrl, readerUrl: out.readerUrl, share: out.share ?? null, shareError: out.shareError, route: out.route }, () => {
         io.out(`Published ${out.site.title} (${out.site.kind}, slug ${out.site.slug})`);
         io.out(`  site:  ${out.siteUrl}`);
@@ -159,12 +160,13 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
     });
 
   program.command("update")
+    .option("--operation-key <key>", "update identity; reuse to recover, change for a new operation")
     .option("--official", "designate the uploaded version as the only official version")
     .description("Replace a remote artifact's full contents, or rename it with --title and no path")
     .argument("<slug>", "remote artifact identifier").argument("[path]", "replacement local file or directory; omit for title-only changes")
     .option("-t, --title <title>", "rename only; cannot be combined with a path")
     .option("--expected-version <id>", "reject concurrent changes; get this ID from info or export")
-    .action(async (slug: string, target: string | undefined, opts: { official?: boolean; title?: string; expectedVersion?: string }) => {
+    .action(async (slug: string, target: string | undefined, opts: { operationKey?: string; official?: boolean; title?: string; expectedVersion?: string }) => {
       if (!target) {
         if (!opts.title?.trim() || opts.expectedVersion || opts.official) throw new CliError("Without a path, supply --title and omit --expected-version and --official", 2);
         const r = await client().rename(slug, opts.title);
@@ -172,7 +174,7 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
       }
       if (opts.title !== undefined) throw new CliError("Use update with either a path or --title, not both", 2);
       const c = client();
-      const r = await updateFromPath(c, slug, target, { official: opts.official, expectedVersion: opts.expectedVersion, onProgress: json() ? undefined : (l) => io.err(l) });
+      const r = await updateFromPath(c, slug, target, { operationKey: opts.operationKey, official: opts.official, expectedVersion: opts.expectedVersion, onProgress: json() ? undefined : (l) => io.err(l) });
       emit({ slug: r.slug, kind: r.kind, versionId: r.versionId, officialVersionId: r.officialVersionId, officialRevision: r.officialRevision, siteUrl: c.absolute(r.url) }, () => io.out(`Updated ${r.slug}: new version ${r.versionId}`));
     });
 

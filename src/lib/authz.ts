@@ -1,9 +1,10 @@
+import { SCOPE_WRITE } from "@/lib/oauth-shared";
 import { managementReason } from "@/lib/management-reason";
 // Resolve credentials into the shared role catalog; expose explicit action gates and UI permissions.
 // Capability ranks remain a compatibility projection for existing internal callers. See docs/RBAC.md.
 import { config } from "@/lib/config";
 import { policy } from "@/lib/settings";
-import { EditForbiddenError, editTokenFromRequest, isAdmin } from "@/lib/auth";
+import { EditForbiddenError, InsufficientScopeError, editTokenFromRequest, isAdmin } from "@/lib/auth";
 import { safeEqual } from "@/lib/crypto";
 import { rbacQuery } from "@/lib/db";
 import { accountSiteRole, managementRole, tenantActive, recordRbacAudit } from "@/lib/rbac-access";
@@ -151,21 +152,6 @@ function reasonFor(viewer: Viewer, site: Site, required: Capability): string {
 }
 
 /**
- * Gate a route. Returns the resolved capability so callers can branch further; the return value
- * being *used* is the point — an assertion that only threw on failure could be called without
- * `await` and would silently authorize everyone (the linter cannot see a floating void promise as
- * a bug, but it does flag an unused Promise<Capability>).
- */
-export async function requireCapability(
-  request: Request,
-  site: Site,
-  required: Capability,
-  session?: Session | null,
-): Promise<Capability> {
-  return (await requireActor(request, site, required, session)).capability;
-}
-
-/**
  * The most we can honestly say about who is acting, for the audit trail. Priority reflects how
  * strong the evidence is: an admin token or a real login names a principal; an anonymous id names a
  * browser; a bare edit token (legacy regime) names nobody in particular, since several people can
@@ -177,27 +163,6 @@ export function resolveActor(viewer: Viewer): Actor {
   if (viewer.session) return { kind: "user", userId: viewer.session.userId, anonId: viewer.anonId };
   if (viewer.anonId) return { kind: "anon", userId: null, anonId: viewer.anonId };
   return { kind: "legacy-token", userId: null, anonId: null };
-}
-
-/**
- * Authorize AND identify in one pass — every mutation needs both, and resolving the session twice
- * (once to authorize, once to attribute) would be wasteful and could disagree. `requireCapability`
- * is the thin wrapper for callers that only need the gate.
- */
-export async function requireActor(
-  request: Request,
-  site: Site,
-  required: Capability,
-  session?: Session | null,
-): Promise<{ capability: Capability; actor: Actor; viewer: Viewer }> {
-  const viewer = resolveViewer(request, session === undefined ? await resolveSession(request) : session);
-  const cap = await resolveCapability(viewer, site);
-  if (!atLeast(cap, required)) throw new EditForbiddenError(reasonFor(viewer, site, required));
-  if (site.takenDownAt && !viewer.isAdmin && !["GET", "HEAD", "OPTIONS"].includes(request.method)) throw new EditForbiddenError("This site has been taken down by an administrator");
-  if (await managementRole(request, site, viewer.session)) {
-    await recordRbacAudit(rbacQuery,site.tenantId,viewer.session?.userId ?? null,"site.management",site.id,(managementReason(request) ?? ""));
-  }
-  return { capability: cap, actor: resolveActor(viewer), viewer };
 }
 
 /**
@@ -233,7 +198,7 @@ export async function describePermissions(
 ): Promise<SitePermissions> {
   const viewer = resolveViewer(request, session === undefined ? await resolveSession(request) : session);
   const { role } = await resolveAuthority(viewer, site);
-  const writable = !site.takenDownAt || viewer.isAdmin;
+  const writable = (!site.takenDownAt || viewer.isAdmin) && (!viewer.session?.scopes || viewer.session.scopes.includes(SCOPE_WRITE));
   const allows = (permission: Permission) => roleAllows(role, permission);
   return {
     canEditContent: writable && allows("site.content.edit"),
@@ -256,12 +221,13 @@ export async function requirePermission(request: Request, site: Site, permission
   if (!PERMISSIONS.includes(permission)) throw new EditForbiddenError(`Unsupported permission gate: ${permission}`);
   const viewer = resolveViewer(request, session === undefined ? await resolveSession(request) : session);
   const authority = await resolveAuthority(viewer, permission === "site.audit.read" ? {...site,deletedAt:null} : site);
-  if (!roleAllows(authority.role, permission)) throw new EditForbiddenError(`Unsupported or denied permission: ${permission}`);
+  if (!roleAllows(authority.role, permission)) throw new EditForbiddenError(!viewer.session && !viewer.isAdmin ? "Please sign in first" : permission === "site.content.edit" ? "You do not have edit access to this site" : "You do not have permission to perform this action on this report");
   const read = ["site.read", "site.history.read", "site.source.export", "site.audit.read"].includes(permission);
-  if (!read && site.takenDownAt && !viewer.isAdmin) throw new EditForbiddenError("This site has been taken down by an administrator");
+  if (!read && !["GET", "HEAD", "OPTIONS"].includes(request.method) && viewer.session?.scopes && !viewer.session.scopes.includes(SCOPE_WRITE)) throw new InsufficientScopeError(SCOPE_WRITE);
+  if (!read && !["GET", "HEAD", "OPTIONS"].includes(request.method) && site.takenDownAt && !viewer.isAdmin) throw new EditForbiddenError("This site has been taken down by an administrator");
   if (audit && authority.source === "management") {
     await recordRbacAudit(rbacQuery, site.tenantId, viewer.session?.userId ?? null, "site.management", site.id, (managementReason(request) ?? ""));
   }
-  return { capability: await resolveCapability(viewer, site), actor: resolveActor(viewer), viewer, ...authority };
+  return { actor: resolveActor(viewer), viewer, ...authority };
 
 }

@@ -9,9 +9,13 @@
 // Any click on a menu item closes the menu. The menu is hidden, never unmounted: an item such as
 // VersionHistory owns the state of the drawer it opens, and unmounting it with the menu would
 // close the drawer in the same tick it was opened.
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { MoreHorizontal } from "lucide-react";
+
+const subscribeToHydration = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
 
 export default function MoreMenu({ label, iconOnly = false, buttonClassName, buttonContent, disabled, onOpenChange, children }: {
   label: string;
@@ -35,8 +39,13 @@ export default function MoreMenu({ label, iconOnly = false, buttonClassName, but
   const place = useCallback(() => {
     const r = button.current?.getBoundingClientRect();
     if (!r) return;
-    setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    const width = menu.current?.getBoundingClientRect().width ?? 0;
+    const right = Math.max(8, Math.min(window.innerWidth - r.right, window.innerWidth - width - 8));
+    setPos({ top: r.bottom + 6, right });
   }, []);
+
+  // Measure again once visible so menus near the left edge stay inside the viewport.
+  useLayoutEffect(() => { if (open) place(); }, [open, place]);
 
   const toggle = useCallback(() => {
     if (!open) place();
@@ -70,7 +79,10 @@ export default function MoreMenu({ label, iconOnly = false, buttonClassName, but
     };
   }, [open, place]);
 
-  const host = typeof document !== "undefined" ? document.body : null;
+  // The first hydrated tree must match SSR, where portals cannot be rendered. React switches
+  // this snapshot after hydration; the hidden menu then stays mounted for its child drawers.
+  const hydrated = useSyncExternalStore(subscribeToHydration, clientSnapshot, serverSnapshot);
+  const host = hydrated ? document.body : null;
 
   return (
     <>

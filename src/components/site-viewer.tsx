@@ -1,15 +1,17 @@
 "use client";
+import { track, analyticsRequest } from "@/lib/analytics";
 import { siteFetch as fetch } from "@/lib/share-context";
 import { useSitePermissions } from "@/lib/site-permissions";
 
 
-import SiteDownload from "@/components/site-download";
+import CommentWorkspace from "@/components/comments/anchored-workspace";
+
 
 // Viewer chrome for /s/[slug]: the site runs FULL-SCREEN in a sandboxed iframe, and the chrome
 // (inline-editable title · meta · copy-link · save-as-new-site · version history · sharing · edit · device toggle ·
 // open-in-new) floats over it, revealed on demand. The iframe never gets allow-same-origin — the
 // served HTML already carries its own sandbox CSP.
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import VisibilityChip from "@/components/visibility-chip";
@@ -17,7 +19,7 @@ import Link from "next/link";
 import type { Visibility } from "@/lib/types";
 import { Pencil, ExternalLink, ArrowLeft, Monitor, Tablet, Smartphone, Copy, FileUp, Loader2, Share2, ChevronDown, ChevronUp, Lock, MousePointer2, MousePointerClick } from "lucide-react";
 import { Dwell, hoverArmsReveal, leaveSchedulesHide, modeAutoHides, barModeStore } from "@/lib/bar-mode";
-import OfficialVersion from "@/components/official-version";
+import OfficialVersion, { OFFICIAL_CHANGED } from "@/components/official-version";
 import { useUploadConfirmation } from "@/components/upload-confirmation";
 import VersionHistory, { drawerHost } from "@/components/version-history";
 import AdminActivity from "@/components/admin-activity";
@@ -31,7 +33,13 @@ import { useStoredToken, rememberEditToken } from "@/lib/edit-token";
 import { ARTIFACT_REFRESH_EVENT } from "@/components/site-version-watcher";
 import { useLocale, useT } from "@/components/locale-provider";
 import { loginHref } from "@/lib/use-auth";
-import { countText, formatDate } from "@/lib/i18n";
+import { formatDate } from "@/lib/i18n";
+
+// The bridge owns navigation after mount. Parent chrome updates must not overwrite its file URL.
+function SnapshotFrame({ src, ...props }: ComponentProps<"iframe">) {
+  const [initialSrc] = useState(src);
+  return <iframe {...props} src={initialSrc} />;
+}
 
 type Device = "desktop" | "tablet" | "mobile";
 const DEVICES: { id: Device; label: string; icon: typeof Monitor }[] = [
@@ -82,10 +90,11 @@ export function drawerHoldEffect(before: number, after: number): "reveal" | "hid
 }
 
 export default function SiteViewer(props: {
+  siteId: string; versionId: string; filePath: string;
   viewedVersionId?: string; latestVersionId?: string; pinnedVersionId?: string; officialVersionId?: string | null;
   visibility: Visibility;
   permissions: SitePermissions;
-  slug: string; title: string; kind: "single" | "folder" | "document"; versionCount: number; published?: boolean;
+  slug: string; title: string; kind: "single" | "folder" | "document"; published?: boolean;
   /** Non-null when an administrator took the site down: this viewer can still see it (owner, collaborator, admin) and is told why. */
   takenDownReason?: string | null;
   /** For the anonymous creator: when this unclaimed site will be removed. Null when owned, or when expiry is off. */
@@ -100,34 +109,44 @@ export default function SiteViewer(props: {
   const [device, setDevice] = useState<Device>("desktop");
   const [title, setTitle] = useState(props.title);
   const [officialVersion, setOfficialVersion] = useState(props.officialVersionId ?? null);
-  const [viewedVersion, setViewedVersion] = useState(props.viewedVersionId);
+  const [previewVersion, setPreviewVersion] = useState<{ root: string; version: string | null }>({ root: props.versionId, version: null });
+  const commentVersion = previewVersion.root === props.versionId ? previewVersion.version : null;
+  const setCommentVersion = useCallback((version: string | null) => setPreviewVersion({ root: props.versionId, version }), [props.versionId]);
+  const viewedVersion = commentVersion || props.versionId;
   const [latestVersion, setLatestVersion] = useState(props.latestVersionId ?? props.viewedVersionId);
   const officialStatus = useCallback((official: string | null, latest: string | null) => { setOfficialVersion(official); if (latest) setLatestVersion(latest); }, []);
   const { confirmUpload, uploadConfirmation } = useUploadConfirmation();
-  const [versionCount, setVersionCount] = useState(props.versionCount);
   const [frameKey, setFrameKey] = useState(0); // bump to reload the preview after a rollback
 
   // Someone landed a new version while this page was open (see site-version-watcher): swap the
   // artifact frame in place. Deliberately NOT a page reload — the reader may be mid-conversation
   // with the assistant that produced this very change.
-  const refreshFrame = useCallback(async () => {
+  const refreshFrame = useCallback(async (reloadSnapshot = true) => {
     if (props.pinnedVersionId) return;
-    try {
-      const response = await fetch(`/api/sites/${slug}/versions`, { cache: "no-store" });
-      if (response.ok) {
-        const data = await response.json();
-        if (data.currentVersionId) { setViewedVersion(data.currentVersionId); setLatestVersion(data.currentVersionId); }
-      }
-    } catch {
-      // Keep the known snapshot if metadata is temporarily unavailable.
-    } finally {
-      setFrameKey(k => k + 1);
-    }
-  }, [slug, props.pinnedVersionId]);
+    // Remount the known immutable snapshot even if metadata refresh fails or returns the same
+    // version. Its comment scope stays fixed until the server supplies a new snapshot.
+    if (reloadSnapshot) setFrameKey(key => key + 1);
+    // Refresh the server-resolved version, file entry and comment scope together. Updating only
+    // the iframe version here would leave new comments bound to the previous file or snapshot.
+    router.refresh();
+  }, [router, props.pinnedVersionId]);
   useEffect(() => {
-    const onRefresh = () => { void refreshFrame().catch(() => {}); };
+    let pending = false;
+    let reloadSnapshot = true;
+    const onRefresh = (event: Event) => {
+      reloadSnapshot = !(event instanceof CustomEvent && event.detail?.versionId);
+      const automatic = event instanceof CustomEvent && event.detail?.automatic === true;
+      // Background notifications stay quiet while deferred; a deliberate click may ask again.
+      if ((pending && automatic) || !window.dispatchEvent(new CustomEvent("artifact:before-comment-scope-change", { cancelable: true, detail: { automatic } }))) {
+        pending = true; event.preventDefault(); return;
+      }
+      pending = false;
+      void refreshFrame(reloadSnapshot);
+    };
+    const draftCleared = () => { if (pending) { pending = false; void refreshFrame(reloadSnapshot); window.dispatchEvent(new Event("artifact:refresh-applied")); } };
+    window.addEventListener("artifact:comment-draft-cleared", draftCleared);
     window.addEventListener(ARTIFACT_REFRESH_EVENT, onRefresh);
-    return () => window.removeEventListener(ARTIFACT_REFRESH_EVENT, onRefresh);
+    return () => { window.removeEventListener(ARTIFACT_REFRESH_EVENT, onRefresh); window.removeEventListener("artifact:comment-draft-cleared", draftCleared); };
   }, [refreshFrame]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(props.title);
@@ -221,10 +240,10 @@ export default function SiteViewer(props: {
     if (effect === "reveal") revealBar();
     else if (effect === "hide" && modeAutoHides(barMode)) scheduleHide(); // manual mode: the bar stays after the drawer closes
   }, [revealBar, scheduleHide, barMode]);
-  const onDownloadOpen = useCallback((open: boolean) => setDrawerOpen("download", open), [setDrawerOpen]);
   const onHistoryOpen = useCallback((open: boolean) => setDrawerOpen("history", open), [setDrawerOpen]);
   const onSharingOpen = useCallback((open: boolean) => setDrawerOpen("sharing", open), [setDrawerOpen]);
   const onMenuOpen = useCallback((open: boolean) => setDrawerOpen("menu", open), [setDrawerOpen]);
+  const onVersionsOpen = useCallback((open: boolean) => setDrawerOpen("versions", open), [setDrawerOpen]);
   const onActivityOpen = useCallback((open: boolean) => setDrawerOpen("activity", open), [setDrawerOpen]);
 
   useEffect(() => { scheduleHide(INTRO_HOLD); return cancelHide; }, [scheduleHide, cancelHide]);
@@ -306,6 +325,7 @@ export default function SiteViewer(props: {
   async function replaceDocumentFile(file: File | null) {
     if (!file || replacing) return;
     if (docInput.current) docInput.current.value = "";
+    if (!window.dispatchEvent(new Event("artifact:before-comment-scope-change", { cancelable: true }))) return;
     const official = await confirmUpload(true, permissions.canManageSharing);
     if (official === null) return;
     setReplacing(true);
@@ -314,18 +334,20 @@ export default function SiteViewer(props: {
       fd.set("mode", "file");
       fd.set("official", String(official));
       fd.set("file", file, file.name);
-      const res = await fetch(`/api/sites/${slug}/versions${latestVersion ? `?expected_version=${encodeURIComponent(latestVersion)}` : ""}`, {
+      const res = await analyticsRequest("update", () => fetch(`/api/sites/${slug}/versions${latestVersion ? `?expected_version=${encodeURIComponent(latestVersion)}` : ""}`, {
         method: "POST",
         body: fd,
         headers: editToken ? { "x-edit-token": editToken } : {},
-      });
+      }));
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || t("Uploading the new version failed"));
       if (data.versionId) {
         setLatestVersion(data.versionId);
-        if (!props.pinnedVersionId) setViewedVersion(data.versionId);
+        if (!props.pinnedVersionId) router.refresh();
       }
-      setVersionCount((n) => n + 1);
+      window.dispatchEvent(new Event(OFFICIAL_CHANGED));
+
+      track("artifact_update_success", { method: "document" });
       setFrameKey((k) => k + 1); // reload the preview: the new version is current now
       flash(t("New version published · The share link is unchanged"));
     } catch (e) {
@@ -355,8 +377,8 @@ export default function SiteViewer(props: {
   }
 
   function onRolledBack() {
-    void refreshFrame(); // resolve and pin the newly restored snapshot
-    setVersionCount((n) => n + 1);
+    setFrameKey((k) => k + 1); // reload the iframe to show the new current version
+    window.dispatchEvent(new Event(OFFICIAL_CHANGED));
     flash(t("Rolled back · A new version was created"));
     router.refresh();
   }
@@ -382,17 +404,19 @@ export default function SiteViewer(props: {
           </div>
         )}
         <div className="fs-stage">
-          <iframe
-            key={frameKey}
+          <SnapshotFrame
+            key={`${props.versionId}:${frameKey}`}
             ref={frameRef}
             className="fs-frame"
-            src={`/api/preview/${slug}/?r=${frameKey}${viewedVersion ? `&v=${encodeURIComponent(viewedVersion)}` : ""}`}
+            src={`/api/preview/${slug}/?v=${encodeURIComponent(viewedVersion)}&r=${frameKey}`}
             title={title}
             sandbox="allow-forms allow-modals allow-scripts allow-popups allow-downloads"
             allow="fullscreen"
           />
         </div>
       </div>
+
+      <CommentWorkspace onPreviewVersionChange={setCommentVersion} previewGeneration={frameKey} frameRef={frameRef} key={`${props.versionId}:main`} slug={slug} scope={{ siteId: props.siteId, versionId: props.versionId, entry: { kind: "main" } }} filePath={props.filePath} canDownload={canDownload} editToken={editToken} />
 
       {/* Top floating layer: when collapsed, only a thin hotzone + a persistent handle remain; when expanded, it is the full action bar as before. */}
       <div
@@ -468,8 +492,8 @@ export default function SiteViewer(props: {
               <span className="kind-chip">{kind === "single" ? t("Single file") : kind === "document" ? t("Document") : t("Folder")}</span>
               <VisibilityChip visibility={props.visibility} />
               <span className="dot" aria-hidden="true" />
-              <span>{countText(t, versionCount, "{n} version", "{n} versions")}</span>
             </div>
+            <OfficialVersion slug={slug} versionId={viewedVersion} onStatus={officialStatus} onOpenChange={onVersionsOpen} />
           </div>
           <div className="controls">
             {/* A single sentence shown only on private sites, right where the share button is: when someone is
@@ -494,12 +518,12 @@ export default function SiteViewer(props: {
             </div>
             {/* The bar carries the two things an owner does most — edit and share — as the design draws them:
                 an outline button and a black one, then everything else behind "···". */}
-            {mayEdit && <Link className="btn" href={`/s/${slug}/edit${props.pinnedVersionId ? `?version=${encodeURIComponent(props.pinnedVersionId)}` : ""}`}><Pencil size={14} aria-hidden="true" /> {t(officialVersion === viewedVersion ? "Create a new version" : "Edit")}</Link>}
+            {mayEdit && <Link className="btn" href={`/s/${slug}/edit${(commentVersion || props.pinnedVersionId) ? `?version=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`}><Pencil size={14} aria-hidden="true" /> {t(officialVersion === viewedVersion ? "Create a new version" : "Edit")}</Link>}
             {!mayEdit && permissions.needsLogin && kind !== "document" && (
               <LockedAction label={t("Edit")} icon={<Pencil size={14} />} hint={t("Sign in required")} onOpen={() => openGate("edit")} />
             )}
             {kind === "document" && permissions.canEditContent && (
-              <button type="button" className="btn" onClick={() => docInput.current?.click()} disabled={replacing}
+              <button data-analytics-button="update" type="button" className="btn" onClick={() => docInput.current?.click()} disabled={replacing}
                 title={t("Re-upload the whole document: a new version is published at the same link, and earlier versions can be rolled back")}>
                 {replacing ? <Loader2 size={14} className="spin" /> : <FileUp size={14} aria-hidden="true" />} {t("Upload new version")}
               </button>
@@ -522,7 +546,7 @@ export default function SiteViewer(props: {
               <a
                 role="menuitem"
                 className="menu-item"
-                href={`/api/preview/${slug}/${props.pinnedVersionId ? `?v=${encodeURIComponent(props.pinnedVersionId)}` : ""}`}
+                href={`/api/preview/${slug}/${(commentVersion || props.pinnedVersionId) ? `?v=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`}
                 target="_blank"
                 rel="noreferrer"
                 title={props.visibility === "private"
@@ -532,10 +556,9 @@ export default function SiteViewer(props: {
                 <ExternalLink size={14} aria-hidden="true" /> {t("Open in new window")}
               </a>
               {/* Reading history needs no identity — the versions API is open, and only rollback is gated. */}
-              {canDownload && <SiteDownload slug={slug} editToken={editToken} onOpenChange={onDownloadOpen} />}
-              <VersionHistory variant="menu-item" canDownload={canDownload} slug={slug} editToken={editToken} onRolledBack={onRolledBack} onOpenChange={onHistoryOpen} />
+              <VersionHistory variant="menu-item" canDownload={canDownload} slug={slug} editToken={editToken} onBeforeRollback={() => window.dispatchEvent(new Event("artifact:before-comment-scope-change", { cancelable: true }))} onRolledBack={onRolledBack} onOpenChange={onHistoryOpen} />
               <button type="button" role="menuitem" className="menu-item" onClick={fork} disabled={forking || !permissions.canReadSource} title={t("Copy into a separate new site")}>
-                {forking ? <Loader2 size={14} className="spin" /> : <Copy size={14} aria-hidden="true" />} {t("Save as new site")}
+                {forking ? <Loader2 size={14} className="spin" /> : <Copy size={14} aria-hidden="true" />} {t(commentVersion && commentVersion !== latestVersion ? "Save latest version as new site" : "Save as new site")}
               </button>
               {/* The owner's view of the administration log: what staff did to this site, and when. */}
               {permissions.canManageSharing && <AdminActivity slug={slug} onOpenChange={onActivityOpen} />}
@@ -563,7 +586,6 @@ export default function SiteViewer(props: {
             <span className="controls-sep" aria-hidden="true" />
             <AuthButton variant="avatar" />
           </div>
-          <OfficialVersion slug={slug} versionId={viewedVersion} onStatus={officialStatus} />
         </header>
 
         {/* Persistent handle: touch screens have no hover, and keyboard/mouse users also need a visible "there is

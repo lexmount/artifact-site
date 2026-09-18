@@ -66,10 +66,11 @@ export const EXPIRY_DAYS: readonly number[] = [7, 30, 90];
  * carry several links with different audiences, lets a link be revoked without touching the site,
  * and lets a view be attributed to the link it came through rather than just to the site.
  *
- * `token` never appears here — only its hash is stored, so a read-only dump of the database cannot
- * reconstruct a working link. Same shape as sessions.
+ * Recoverable tokens stay on ShareRow and are exposed only by the management listing.
  */
 export interface Share {
+  revision?: number;
+  source?: "publish" | "manual" | null;
   mode: import("@/lib/rbac").ShareMode;
   /** null follows current; a value restricts the link to that snapshot. */
   versionId: string | null;
@@ -108,11 +109,15 @@ export interface ShareGrant {
 
 /** A share as the storage layer holds it: `Share` plus the two secrets, which never leave lib/. */
 export interface ShareRow extends Share {
+  /** Legacy shares have no recoverable token. Never include in public projections. */
+  token?: string | null;
   tokenHash: string;
   passcodeHash: string | null;
 }
 
 export interface InsertShareInput {
+  source?: "publish" | "manual" | null;
+  token?: string | null;
   mode?: import("@/lib/rbac").ShareMode;
   versionId?: string | null;
   id: string;

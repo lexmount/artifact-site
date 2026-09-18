@@ -1,3 +1,5 @@
+import { listSharesQuery } from "@/lib/share-queries";
+import { migrateNumbered } from "@/lib/migrations";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { searchTenantUsers, migrateRbac, initializeUserTenant, type RbacQuery } from "@/lib/rbac-store";
 import { isDeepStrictEqual } from "node:util";
@@ -361,7 +363,7 @@ export class SqliteStore implements MetadataStore {
       CREATE UNIQUE INDEX IF NOT EXISTS uq_site_invites_email ON site_invites(site_id, lower(email));
 
       -- Share links. Mirrors the Postgres side statement for statement; see the comments there for
-      -- why a share is an object rather than a column, and why only token_hash is stored.
+      -- why each link is a separate object with its own lookup hash.
       CREATE TABLE IF NOT EXISTS site_shares (
         id TEXT PRIMARY KEY,
         site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
@@ -413,6 +415,10 @@ export class SqliteStore implements MetadataStore {
       );
       CREATE INDEX IF NOT EXISTS idx_site_views_site ON site_views(site_id, viewed_at DESC);
       CREATE INDEX IF NOT EXISTS idx_site_views_prune ON site_views(viewed_at);
+      CREATE TABLE IF NOT EXISTS archived_view_counts (site_id TEXT PRIMARY KEY, opens BIGINT NOT NULL DEFAULT 0);
+      CREATE INDEX IF NOT EXISTS idx_site_views_reader ON site_views (site_id, (COALESCE('u:' || user_id, 'a:' || anon_id, 'i:' || ip)), viewed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_share_views_reader ON share_views (site_id, (COALESCE('u:' || user_id, 'a:' || anon_id, 'i:' || ip)), viewed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_share_views_link ON share_views (share_id, viewed_at DESC);
 
       -- Server-side build of dropped source projects. Mirrors the Postgres migration; see the
       -- comment there for why source lives under its own storage namespace instead of a version
@@ -499,7 +505,7 @@ export class SqliteStore implements MetadataStore {
     this.addColumnIfMissing("sites", "official_set_at", "BIGINT");
     this.addColumnIfMissing("sites", "official_set_by", "TEXT");
     this.addColumnIfMissing("sites", "official_revision", "BIGINT NOT NULL DEFAULT 0");
-    await this.rbacTransaction(migrateRbac);
+    await this.rbacTransaction(async q => { await migrateRbac(q); await migrateNumbered(q, "sqlite"); });
     await this.backfillEditTokens();
   }
 
@@ -662,7 +668,7 @@ export class SqliteStore implements MetadataStore {
     this.db.prepare("UPDATE sites SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL").run(now, now, id);
   }
 
-  async listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean }): Promise<SiteSummary[]> {
+  async listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean; ownedOnly?: boolean; limit?: number }): Promise<SiteSummary[]> {
     // Same predicate as the Postgres side, same reasons — see the comment there. Only the
     // placeholders differ, and node:sqlite binds a JS null as SQL NULL, so the no-viewer call
     // degrades to public-only exactly like $1/$2 do.
@@ -670,7 +676,7 @@ export class SqliteStore implements MetadataStore {
       SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
              (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.rowid <= (SELECT rowid FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
-             ${options?.withViews ? `CASE WHEN (s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (s.owner_id IS NULL AND s.anon_owner_id = ?) THEN (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) END AS total_views,` : ""}
+             ${options?.withViews ? `CASE WHEN (s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (s.owner_id IS NULL AND s.anon_owner_id = ?) THEN (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) + COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id), 0) END AS total_views,` : ""}
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
@@ -680,8 +686,10 @@ export class SqliteStore implements MetadataStore {
              OR (s.owner_id IS NULL AND s.anon_owner_id = ?)
              OR EXISTS (SELECT 1 FROM site_members c
                          WHERE c.site_id = s.id AND c.user_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
-      ORDER BY s.updated_at DESC
-    `).all(...(options?.withViews ? [viewer?.userId ?? null, viewer?.anonId ?? null] : []), viewer?.userId ?? null, viewer?.anonId ?? null, viewer?.userId ?? null) as Row[];
+      ${options?.ownedOnly ? `AND ((s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (? IS NULL AND s.owner_id IS NULL AND s.anon_owner_id = ?))` : ""}
+      ORDER BY s.updated_at DESC, s.slug ASC
+      ${options?.limit ? `LIMIT ${Math.max(1, Math.min(100, Math.trunc(options.limit)))}` : ""}
+    `).all(...(options?.withViews ? [viewer?.userId ?? null, viewer?.anonId ?? null] : []), viewer?.userId ?? null, viewer?.anonId ?? null, viewer?.userId ?? null, ...(options?.ownedOnly ? [viewer?.userId ?? null, viewer?.userId ?? null, viewer?.anonId ?? null] : [])) as Row[];
     return rows.map(toSummary);
   }
 
@@ -712,8 +720,13 @@ export class SqliteStore implements MetadataStore {
     return rows.length;
   }
 
-  async upsertUser(input: UpsertUserInput): Promise<User> {
+  async upsertUser(input: UpsertUserInput): Promise<User & { created: boolean }> {
     const now = Date.now();
+    // Keep the existing id on conflict: it is the stable account identity, referenced by
+    // sessions and memberships. Never assign id = EXCLUDED.id in the update clause.
+    // Only an insert keeps candidateId; the returned/read-back id makes `created` atomic,
+    // including simultaneous first sign-ins for the same provider subject.
+    const candidateId = createId("usr");
     this.db.prepare(
       `INSERT INTO users (id, auth_provider, provider_subject, email, email_verified, display_name, avatar_url, created_at, updated_at, last_login_at)
        VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -721,12 +734,12 @@ export class SqliteStore implements MetadataStore {
          email=excluded.email, email_verified=excluded.email_verified,
          display_name=excluded.display_name, avatar_url=excluded.avatar_url,
          updated_at=excluded.updated_at, last_login_at=excluded.last_login_at`,
-    ).run(createId("usr"), input.authProvider, input.providerSubject, input.email ?? null,
+    ).run(candidateId, input.authProvider, input.providerSubject, input.email ?? null,
           input.emailVerified ? 1 : 0, input.displayName ?? null, input.avatarUrl ?? null, now, now, now);
     const row = this.db.prepare("SELECT * FROM users WHERE auth_provider=? AND provider_subject=?")
       .get(input.authProvider, input.providerSubject) as Row;
     await this.rbacTransaction((q) => initializeUserTenant(q, row.id as string));
-    return (await this.getUser(row.id as string))!;
+    return { ...(await this.getUser(row.id as string))!, created: row.id === candidateId };
   }
 
   async getUser(id: string): Promise<User | null> {
@@ -764,10 +777,10 @@ export class SqliteStore implements MetadataStore {
   async createShare(input: InsertShareInput): Promise<Share> {
     const now = Date.now();
     this.db.prepare(
-      `INSERT INTO site_shares (id, site_id, token_hash, policy, passcode_hash, label, created_by, created_anon, created_at, expires_at, revoked_at, allow_ai, mode, version_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?,?)`,
+      `INSERT INTO site_shares (id, site_id, token_hash, policy, passcode_hash, label, created_by, created_anon, created_at, expires_at, revoked_at, allow_ai, mode, version_id, token, source)
+       VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)`,
     ).run(input.id, input.siteId, input.tokenHash, input.policy, input.passcodeHash ?? null, input.label ?? null,
-          input.createdBy ?? null, input.createdAnonId ?? null, now, input.expiresAt ?? null, input.allowAi ? 1 : 0, input.mode ?? "view", input.versionId ?? null);
+          input.createdBy ?? null, input.createdAnonId ?? null, now, input.expiresAt ?? null, input.allowAi ? 1 : 0, input.mode ?? "view", input.versionId ?? null, input.token ?? null, input.source ?? null);
     // Read back rather than reconstruct, so the returned object is the stored row (the Postgres side
     // gets this from RETURNING *). toShare, never toShareRow: the two hashes stay in the store.
     const row = this.db.prepare("SELECT * FROM site_shares WHERE id=?").get(input.id) as Row;
@@ -788,21 +801,21 @@ export class SqliteStore implements MetadataStore {
     // Unfiltered — the owner's management list, revoked and expired rows included. The gate's
     // filtered view is listLiveShares. `id DESC` breaks created_at ties; NOT rowid DESC, which would
     // be the natural SQLite choice but has no Postgres counterpart on this table.
-    return (this.db.prepare("SELECT * FROM site_shares WHERE site_id=? ORDER BY created_at DESC, id DESC")
+    return (this.db.prepare(listSharesQuery("?"))
       .all(siteId) as Row[]).map(toShare);
   }
 
   async revokeShare(id: string, at: number): Promise<void> {
-    this.db.prepare("UPDATE site_shares SET revoked_at=? WHERE id=? AND revoked_at IS NULL").run(at, id);
+    this.db.prepare("UPDATE site_shares SET revision=revision+1, revoked_at=? WHERE id=? AND revoked_at IS NULL").run(at, id);
   }
 
   async updateSharePolicy(id: string, policy: SharePolicy, passcodeHash: string | null, expiresAt: number | null): Promise<void> {
-    this.db.prepare("UPDATE site_shares SET policy=?, passcode_hash=?, expires_at=? WHERE id=?")
+    this.db.prepare("UPDATE site_shares SET revision=revision+1, policy=?, passcode_hash=?, expires_at=? WHERE id=?")
       .run(policy, passcodeHash, expiresAt, id);
   }
 
   async setShareAllowAi(id: string, allowAi: boolean): Promise<void> {
-    this.db.prepare("UPDATE site_shares SET allow_ai=? WHERE id=?").run(allowAi ? 1 : 0, id);
+    this.db.prepare("UPDATE site_shares SET revision=revision+1, allow_ai=? WHERE id=?").run(allowAi ? 1 : 0, id);
   }
 
   async listLiveShares(siteId: string, now: number): Promise<ShareRow[]> {
@@ -814,29 +827,45 @@ export class SqliteStore implements MetadataStore {
         ORDER BY created_at DESC, id DESC`).all(siteId, now) as Row[]).map(toShareRow);
   }
 
-  async addShareGrant(shareId: string, target: { userId?: string | null; email?: string | null }, grantedBy: string | null): Promise<void> {
-    const { userId, email } = shareGrantTarget(target);
-    const now = Date.now();
-    if (userId != null) {
-      // OR IGNORE is the SQLite half of the Postgres ON CONFLICT DO NOTHING: re-adding the same
-      // person is a no-op. Both partial unique indexes are honoured automatically here — SQLite
-      // picks whichever the row actually violates, so no arbiter has to be named.
-      this.db.prepare("INSERT OR IGNORE INTO share_grants (share_id, user_id, email, granted_by, granted_at) VALUES (?,?,NULL,?,?)")
-        .run(shareId, userId, grantedBy, now);
-      return;
+  // Synchronous savepoints are atomic both standalone and within an outer RBAC transaction.
+  private mutateShareGrant(shareId: string, work: () => number | bigint): void {
+    this.db.exec("SAVEPOINT share_grant_mutation");
+    try {
+      const changes = work();
+      if (Number(changes) > 0) this.db.prepare("UPDATE site_shares SET revision=revision+1 WHERE id=?").run(shareId);
+      this.db.exec("RELEASE share_grant_mutation");
+    } catch (error) {
+      this.db.exec("ROLLBACK TO share_grant_mutation");
+      this.db.exec("RELEASE share_grant_mutation");
+      throw error;
     }
-    // Stored as typed, deduplicated on lower(email) by uq_share_grants_email.
-    this.db.prepare("INSERT OR IGNORE INTO share_grants (share_id, user_id, email, granted_by, granted_at) VALUES (?,NULL,?,?,?)")
-      .run(shareId, email, grantedBy, now);
+  }
+
+  async addShareGrant(shareId: string, target: { userId?: string | null; email?: string | null }, grantedBy: string | null): Promise<void> {
+    return this.mutateShareGrant(shareId, () => {
+      const { userId, email } = shareGrantTarget(target);
+      const now = Date.now();
+      if (userId != null) {
+        // OR IGNORE is the SQLite half of the Postgres ON CONFLICT DO NOTHING: re-adding the same
+        // person is a no-op. Both partial unique indexes are honoured automatically here — SQLite
+        // picks whichever the row actually violates, so no arbiter has to be named.
+        return this.db.prepare("INSERT OR IGNORE INTO share_grants (share_id, user_id, email, granted_by, granted_at) VALUES (?,?,NULL,?,?)")
+          .run(shareId, userId, grantedBy, now).changes;
+      }
+      // Stored as typed, deduplicated on lower(email) by uq_share_grants_email.
+      return this.db.prepare("INSERT OR IGNORE INTO share_grants (share_id, user_id, email, granted_by, granted_at) VALUES (?,NULL,?,?,?)")
+        .run(shareId, email, grantedBy, now).changes;
+    });
   }
 
   async removeShareGrant(shareId: string, target: { userId?: string | null; email?: string | null }): Promise<void> {
-    const { userId, email } = shareGrantTarget(target);
-    if (userId != null) {
-      this.db.prepare("DELETE FROM share_grants WHERE share_id=? AND user_id=?").run(shareId, userId);
-      return;
-    }
-    this.db.prepare("DELETE FROM share_grants WHERE share_id=? AND lower(email)=lower(?)").run(shareId, email);
+    return this.mutateShareGrant(shareId, () => {
+      const { userId, email } = shareGrantTarget(target);
+      if (userId != null) {
+        return this.db.prepare("DELETE FROM share_grants WHERE share_id=? AND user_id=?").run(shareId, userId).changes;
+      }
+      return this.db.prepare("DELETE FROM share_grants WHERE share_id=? AND lower(email)=lower(?)").run(shareId, email).changes;
+    });
   }
 
   async listShareGrants(shareId: string): Promise<ShareGrant[]> {
@@ -892,9 +921,35 @@ export class SqliteStore implements MetadataStore {
   }
 
   async pruneShareViews(before: number): Promise<number> {
-    // Strictly `<`: a row landing exactly on the retention boundary is kept.
-    const r = this.db.prepare("DELETE FROM share_views WHERE viewed_at < ?").run(before);
-    return Number(r.changes ?? 0);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare(`INSERT INTO archived_view_counts (site_id, opens)
+        SELECT site_id, COUNT(*) FROM share_views WHERE rowid IN (SELECT rowid FROM share_views WHERE viewed_at < ? ORDER BY viewed_at, rowid LIMIT 1000) GROUP BY site_id
+        ON CONFLICT (site_id) DO UPDATE SET opens=archived_view_counts.opens + excluded.opens`).run(before);
+      const result = this.db.prepare("DELETE FROM share_views WHERE rowid IN (SELECT rowid FROM share_views WHERE viewed_at < ? ORDER BY viewed_at, rowid LIMIT 1000)").run(before);
+      this.db.exec("COMMIT");
+      return Number(result.changes);
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+
+  async recordSiteOpen(view: SiteOpen, collapseMs: number): Promise<void> {
+    const identity = view.userId ? `u:${view.userId}` : view.anonId ? `a:${view.anonId}` : view.ip ? `i:${view.ip}` : null;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const prior = identity && this.db.prepare(`SELECT 1 FROM (
+        SELECT site_id,user_id,anon_id,ip,viewed_at FROM site_views
+        UNION ALL SELECT site_id,user_id,anon_id,ip,viewed_at FROM share_views
+      ) opens WHERE site_id=? AND viewed_at >= ?
+        AND COALESCE('u:' || user_id, 'a:' || anon_id, 'i:' || ip)=? LIMIT 1`)
+        .get(view.siteId, view.viewedAt - collapseMs, identity);
+      if (!prior) {
+        if (view.shareId) this.db.prepare("INSERT INTO share_views (share_id,site_id,user_id,anon_id,ip,user_agent,viewed_at) VALUES (?,?,?,?,?,?,?)")
+          .run(view.shareId, view.siteId, view.userId, view.anonId, view.ip, view.userAgent, view.viewedAt);
+        else this.db.prepare("INSERT INTO site_views (site_id,user_id,anon_id,ip,user_agent,viewed_at) VALUES (?,?,?,?,?,?)")
+          .run(view.siteId, view.userId, view.anonId, view.ip, view.userAgent, view.viewedAt);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
   async recordSiteView(view: SiteView): Promise<void> {
@@ -946,7 +1001,7 @@ export class SqliteStore implements MetadataStore {
        )
        SELECT
          (SELECT COUNT(*) FROM opens WHERE viewed_at >= ?) AS opens,
-         (SELECT COUNT(DISTINCT COALESCE(user_id, anon_id, ip)) FROM opens WHERE viewed_at >= ?) AS uniq,
+         (SELECT COUNT(DISTINCT COALESCE('u:' || user_id, 'a:' || anon_id, 'i:' || ip)) FROM opens WHERE viewed_at >= ?) AS uniq,
          (SELECT MAX(viewed_at) FROM opens) AS last`)
       .get(...perTable, ...perTable, since, since) as Row;
     return {
@@ -957,9 +1012,15 @@ export class SqliteStore implements MetadataStore {
   }
 
   async pruneSiteViews(before: number): Promise<number> {
-    // Strictly `<`, mirroring pruneShareViews.
-    const r = this.db.prepare("DELETE FROM site_views WHERE viewed_at < ?").run(before);
-    return Number(r.changes ?? 0);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare(`INSERT INTO archived_view_counts (site_id, opens)
+        SELECT site_id, COUNT(*) FROM site_views WHERE rowid IN (SELECT rowid FROM site_views WHERE viewed_at < ? ORDER BY viewed_at, rowid LIMIT 1000) GROUP BY site_id
+        ON CONFLICT (site_id) DO UPDATE SET opens=archived_view_counts.opens + excluded.opens`).run(before);
+      const result = this.db.prepare("DELETE FROM site_views WHERE rowid IN (SELECT rowid FROM site_views WHERE viewed_at < ? ORDER BY viewed_at, rowid LIMIT 1000)").run(before);
+      this.db.exec("COMMIT");
+      return Number(result.changes);
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
   async claimSiteAudited(siteId: string, ownerId: string, audit: InsertAuditInput, adminLog?: AdminLogEntry): Promise<boolean> {
@@ -1002,7 +1063,7 @@ export class SqliteStore implements MetadataStore {
     return (this.db.prepare(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
              (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.rowid <= (SELECT rowid FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
-             (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) AS total_views,
+             (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) + COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id), 0) AS total_views,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members m WHERE m.tenant_id=s.tenant_id AND m.user_id=s.owner_id)
@@ -1366,12 +1427,6 @@ export class SqliteStore implements MetadataStore {
   async restoreDeletedSite(id: string): Promise<boolean> {
     const r = this.db.prepare("UPDATE sites SET deleted_at=NULL, updated_at=? WHERE id=? AND deleted_at IS NOT NULL AND purged_at IS NULL").run(Date.now(), id);
     return Number(r.changes ?? 0) > 0;
-  }
-
-  async setSitePurged(id: string, at: number): Promise<void> {
-    this.db.prepare("UPDATE sites SET purged_at=? WHERE id=? AND purged_at IS NULL AND deleted_at IS NOT NULL").run(at, id);
-    this.db.prepare("DELETE FROM site_texts WHERE site_id=?").run(id);
-    this.db.prepare("DELETE FROM site_texts_fts WHERE site_id=?").run(id);
   }
 
   async listDeletedSitesBefore(before: number, limit: number): Promise<Site[]> {

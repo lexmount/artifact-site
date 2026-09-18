@@ -371,6 +371,9 @@ const boot = async () => {
     if (!scale) return; // zero-width container; resize listener will call back
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const viewport = page.getViewport({ scale });
+    canvas.dataset.commentPage = canvas.dataset.page;
+    canvas.dataset.commentFile = decodeURIComponent(cfg.file);
+    canvas.dataset.commentRotation = String(viewport.rotation);
     const sig = canvas.dataset.page + "@" + Math.floor(viewport.width) + "@" + dpr;
     if (renderedSig.get(canvas) === sig) return;
     canvas.width = Math.floor(viewport.width * dpr);
@@ -469,6 +472,9 @@ const boot = async () => {
     const viewport = page.getViewport({ scale });
     const sig = slideNo + "@" + Math.floor(viewport.width) + "@" + dpr;
     if (sig === slideSig) return;
+    slideCanvas.dataset.commentPage = String(slideNo);
+    slideCanvas.dataset.commentFile = decodeURIComponent(cfg.file);
+    slideCanvas.dataset.commentRotation = String(viewport.rotation);
     slideCanvas.width = Math.floor(viewport.width * dpr);
     slideCanvas.height = Math.floor(viewport.height * dpr);
     slideCanvas.style.width = Math.floor(viewport.width) + "px";

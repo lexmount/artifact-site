@@ -51,7 +51,7 @@ jobs:
           ARTIFACT_DATABASE_URL: postgres://t:t@127.0.0.1:5432/t?sslmode=disable
       # The administration suite is SQL-heavy (aggregates, window functions, typed parameters):
       # run it against the real store as well, not only the SQLite test backend.
-      - run: npx vitest run test/admin.test.ts test/quota.test.ts test/settings.test.ts test/site-text.test.ts test/official-version.test.ts test/official-api.test.ts
+      - run: npx vitest run test/admin.test.ts test/quota.test.ts test/settings.test.ts test/site-text.test.ts test/rbac.test.ts test/rbac-convergence.test.ts test/permission-audit-regressions.test.ts test/comment-access.test.ts test/comments-service.test.ts test/official-version.test.ts test/official-api.test.ts test/comments-anchored.test.ts test/publish-recovery.test.ts test/publish-client-recovery.test.ts
         env:
           ARTIFACT_DB_DRIVER: postgres
           ARTIFACT_DATABASE_URL: postgres://t:t@127.0.0.1:5432/t?sslmode=disable

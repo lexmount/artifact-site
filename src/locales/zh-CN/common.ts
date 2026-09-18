@@ -10,7 +10,6 @@ export const common: Messages = {
   "{n} versions": "{n} 个版本",
   "{n} file": "{n} 个文件",
   "{n} files": "{n} 个文件",
-  "{n} site": "{n} 个站点",
   "{n} sites": "{n} 个站点",
   "{n} token": "{n} 个令牌",
   "{n} tokens": "{n} 个令牌",

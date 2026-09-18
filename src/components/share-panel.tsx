@@ -1,4 +1,5 @@
 "use client";
+import { track } from "@/lib/analytics";
 // Sharing settings — a right-side drawer, same shape as Version history. Owner-only, and it only renders at all
 // when the server said so: the client decides nothing about permissions here, it just reflects the
 // flags from describePermissions. A button the viewer cannot actually use is worse than no button.
@@ -14,11 +15,12 @@
 // The split is not a layout preference: the relationship between the two is exactly where things go
 // wrong — while the site is still public, no share link however strict stops anyone, because
 // /s/<slug> stands open right next to it. That warning is share-links' job to display.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Globe, Link2, Loader2, Lock, Pencil, Share2, Trash2, UserPlus, X } from "lucide-react";
+import { Globe, Maximize2, Minimize2, Link2, Loader2, Lock, Pencil, Share2, Trash2, UserPlus, X } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 import { drawerHost } from "@/components/version-history";
+import ShareSaveDialog from "@/components/share-save-dialog";
 import ShareLinks from "@/components/share-links";
 import { EDIT_POLICY_LABEL, EDIT_POLICY_LOCK_NOTICE, VISIBILITY_LABEL, reconcileSharing } from "@/components/share-model";
 import type { EditPolicy, Visibility } from "@/lib/types";
@@ -36,6 +38,20 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const dialogRef = useRef<HTMLElement>(null);
+  const [siteDraft, setSiteDraft] = useState<{visibility: Visibility; editPolicy: EditPolicy} | null>(null);
+  const siteDirtyRef = useRef(false);
+  const [confirmSite, setConfirmSite] = useState(false);
+  const [siteSaving, setSiteSaving] = useState(false);
+  const dirtyRef = useRef(false);
+  const onDirtyChange = useCallback((dirty: boolean) => { dirtyRef.current = dirty; }, []);
+  const canLeave = useCallback(() => {
+    if (dialogRef.current?.querySelector("dialog[open]")) return false;
+    if ((dirtyRef.current || siteDirtyRef.current) && !window.confirm(t("Discard unsaved sharing changes? Saved settings will stay unchanged."))) return false;
+    siteDirtyRef.current = false; setSiteDraft(null); return true;
+  }, [t]);
+  const close = useCallback(() => { if (canLeave()) setOpen(false); }, [canLeave]);
   // Two tabs, as the design draws them: share links first (the thing people come here to make),
   // then the people and the site's own door.
   const [tab, setTab] = useState<"links" | "site">("links");
@@ -50,10 +66,24 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
   const [memberRole, setMemberRole] = useState<"admin" | "editor">("editor");
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    if (open) window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, a[href], [tabindex="0"]',
+    ) ?? []).filter(el => el.getClientRects().length > 0);
+    focusable()[0]?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (dialogRef.current?.querySelector("dialog[open]")) return;
+      if (e.key === "Escape") close();
+      if (e.key !== "Tab") return;
+      const items = focusable();
+      const first = items[0], last = items.at(-1);
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("keydown", onKey); previous?.focus(); };
+  }, [open, close]);
 
   useEffect(() => {
     if (!open) return;
@@ -86,30 +116,35 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
     return () => onOpenChange?.(false);
   }, [open, onOpenChange]);
 
-  const save = useCallback(async (want: { visibility: Visibility; editPolicy: EditPolicy }) => {
-    setError(null);
-    // private × login is the "can change but cannot see" deadlock, and the server answers 400. Rather
-    // than let the user eat an error, pull the edit tier back to owner and explain — whoever picks
-    // private means "close the door", not "open up editing".
+  function stageSite(want: {visibility: Visibility; editPolicy: EditPolicy}) {
     const next = reconcileSharing(want);
+    const changed = next.visibility !== visibility || next.editPolicy !== editPolicy;
+    siteDirtyRef.current = changed;
+    setSiteDraft(changed ? {visibility: next.visibility, editPolicy: next.editPolicy} : null);
     setNotice(next.adjusted ? t(EDIT_POLICY_LOCK_NOTICE) : null);
-    const res = await fetch(`/api/sites/${slug}/sharing`, {
-      method: "PUT",
-      headers: writeHeaders(),
-      body: JSON.stringify({ visibility: next.visibility, editPolicy: next.editPolicy }),
-    });
-    if (!res.ok) {
-      setError((await res.json().catch(() => ({}))).error ?? t("Failed to save"));
-      return;
-    }
-    setVisibility(next.visibility);
-    setEditPolicy(next.editPolicy);
-  }, [slug, t]);
-
-  /** This is what runs when the lower half's "consider switching to private" suggestion is pressed. */
-  const goPrivate = useCallback(() => {
-    void save({ visibility: "private", editPolicy });
-  }, [save, editPolicy]);
+  }
+  async function saveSite() {
+    if (!siteDraft || siteSaving) return;
+    setError(null); setSiteSaving(true);
+    try {
+      const res = await fetch(`/api/sites/${slug}/sharing`, {method: "PUT", headers: writeHeaders(), body: JSON.stringify(siteDraft)});
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? t("Failed to save"));
+      setVisibility(siteDraft.visibility); setEditPolicy(siteDraft.editPolicy);
+      siteDirtyRef.current = false; setSiteDraft(null); setConfirmSite(false);
+      setNotice(t("Sharing settings saved"));
+    } catch (e) { setError(e instanceof Error ? e.message : t("Failed to save")); }
+    finally { setSiteSaving(false); }
+  }
+  function goPrivate() {
+    if (!canLeave()) return;
+    setTab("site"); stageSite({visibility: "private", editPolicy});
+  }
+  useEffect(() => {
+    if (!open || !siteDraft) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [open, siteDraft]);
 
   async function addPerson() {
     const value = email.trim();
@@ -143,8 +178,9 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
     const url = `${window.location.origin}/s/${slug}`;
     try {
       await navigator.clipboard.writeText(url);
+      track("share_link_copy", { share_type: "canonical" });
       setNotice(visibility === "private"
-        ? t("Link copied · but the site is private, so only you can open it — use a share link below to give it to others")
+        ? t("Site address copied. Access follows site membership and visibility; use Share links to share with another audience.")
         : t("Link copied · {scope}", { scope: t(VISIBILITY_LABEL[visibility]) }));
     } catch {
       setNotice(url);
@@ -156,24 +192,35 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
 
   return (
     <>
-      <button className="btn primary" onClick={() => setOpen(true)}><Share2 size={14} /> {t("Sharing")}</button>
+      <button className="btn primary" data-analytics-button="share" onClick={() => setOpen(true)}><Share2 size={14} /> {t("Sharing")}</button>
       {open && host && createPortal(
-        <div className="drawer-scrim" role="presentation" onClick={() => setOpen(false)}>
-          <aside className="drawer" role="dialog" aria-modal="true" aria-label={t("Sharing")} onClick={(e) => e.stopPropagation()}>
+        <div className="drawer-scrim" data-expanded={expanded} role="presentation" onClick={close}>
+          <aside ref={dialogRef} className="drawer share-drawer" role="dialog" aria-modal="true" aria-label={t("Sharing")} onClick={(e) => e.stopPropagation()}>
+            {confirmSite && siteDraft && <ShareSaveDialog label={t("The site itself")} changes={[
+              ...(siteDraft.visibility !== visibility ? [{label: t("Visibility"), before: t(VISIBILITY_LABEL[visibility]), after: t(VISIBILITY_LABEL[siteDraft.visibility])}] : []),
+              ...(siteDraft.editPolicy !== editPolicy ? [{label: t("Who can edit"), before: t(EDIT_POLICY_LABEL[editPolicy]), after: t(EDIT_POLICY_LABEL[siteDraft.editPolicy])}] : []),
+            ]} expiryChanged={false} busy={siteSaving} error={error}
+              note={t("This changes access through the site address for existing visitors. Separate share links keep their own access rules.")}
+              onConfirm={() => void saveSite()} onClose={() => setConfirmSite(false)} />}
             <header className="drawer-head">
               <b>{t("Sharing")}</b>
-              <button className="btn sm ghost" onClick={() => setOpen(false)} aria-label={t("Close")}><X size={14} /></button>
+              <div className="share-window-actions">
+                <button type="button" className="btn sm ghost" aria-label={t(expanded ? "Collapse window" : "Expand window")} title={t(expanded ? "Collapse window" : "Expand window")} aria-pressed={expanded} onClick={() => setExpanded(v => !v)}>
+                  {expanded ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
+                </button>
+                <button className="btn sm ghost" onClick={close} aria-label={t("Close")}><X size={14} /></button>
+              </div>
             </header>
             <div className="drawer-tabs" role="tablist" aria-label={t("Sharing")}>
-              <button type="button" role="tab" aria-selected={tab === "links"} onClick={() => setTab("links")}>{t("Share links")}</button>
-              <button type="button" role="tab" aria-selected={tab === "site"} onClick={() => setTab("site")}>{t("People and the site")}</button>
+              <button type="button" role="tab" aria-selected={tab === "links"} onClick={() => { if (tab !== "links" && canLeave()) {setTab("links"); setNotice(null); setError(null); } }}>{t("Share links")}</button>
+              <button type="button" role="tab" aria-selected={tab === "site"} onClick={() => { if (tab !== "site" && canLeave()) {setTab("site"); setNotice(null); setError(null); } }}>{t("People and the site")}</button>
             </div>
             <div className="drawer-body share-body">
               {loading && <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}
               {error && <p className="drawer-error" role="alert">{error}</p>}
               {notice && <p className="share-warn" role="status">{notice}</p>}
 
-              {tab === "links" && <ShareLinks slug={slug} visibility={visibility} onRequestPrivate={goPrivate} />}
+              {tab === "links" && <ShareLinks slug={slug} visibility={visibility} onRequestPrivate={goPrivate} onDirtyChange={onDirtyChange} />}
 
               {tab === "site" && (
                 <>
@@ -215,13 +262,13 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
                         <label htmlFor="share-visibility">{t("Who can open /s/{slug}", { slug })}</label>
                         <p>
                           {visibility === "private"
-                            ? t("The site address itself is closed; only the share links below get in.")
+                            ? t("The site address is private. Authorized members retain access; share links have separate access rules.")
                             : t("Anyone with this address can open it right now.")}
                         </p>
                       </div>
                       <select
-                        id="share-visibility" value={visibility}
-                        onChange={(e) => void save({ visibility: e.target.value as Visibility, editPolicy })}
+                        disabled={siteSaving || loading} id="share-visibility" value={siteDraft?.visibility ?? visibility}
+                        onChange={(e) => stageSite({ visibility: e.target.value as Visibility, editPolicy: siteDraft?.editPolicy ?? editPolicy })}
                       >
                         <option value="public">{t(VISIBILITY_LABEL.public)}</option>
                         <option value="unlisted">{t(VISIBILITY_LABEL.unlisted)}</option>
@@ -236,12 +283,19 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
                         <p>{t("Members and editable share links grant editing. Signing in alone does not.")}</p>
                       </div>
                       <select
-                        id="share-policy" value={editPolicy}
-                        onChange={(e) => void save({ visibility, editPolicy: e.target.value as EditPolicy })}
+                        disabled={siteSaving || loading} id="share-policy" value={siteDraft?.editPolicy ?? editPolicy}
+                        onChange={(e) => stageSite({ visibility: siteDraft?.visibility ?? visibility, editPolicy: e.target.value as EditPolicy })}
                       >
                         <option value="owner">{t(EDIT_POLICY_LABEL.owner)}</option>
 
                       </select>
+                    </div>
+                    <div className="share-settings-footer">
+                      <span className="share-hint">{t(siteDraft ? "Unsaved changes" : "Takes effect after saving.")}</span>
+                      <div className="share-link-actions">
+                        <button className="btn sm" disabled={!siteDraft || siteSaving} onClick={() => {setSiteDraft(null); siteDirtyRef.current = false;}}>{t("Discard changes")}</button>
+                        <button className="btn sm solid" disabled={!siteDraft || siteSaving} onClick={() => {setError(null); setConfirmSite(true);}}>{t("Save changes")}</button>
+                      </div>
                     </div>
                   </section>
                 </>
@@ -251,12 +305,12 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
             {/* Footer — the one and only copy control. It sits directly under the visibility scope, so
                 the scope is in view while copying; that is precisely why it was taken off the action
                 bar: copying there, you cannot see what you are sending out. */}
-            <footer className="share-foot">
+            {tab === "site" && <footer className="share-foot">
               <button className="btn" onClick={() => void copyCanonical()}>
-                <Link2 size={14} /> {t("Copy link")}
+                <Link2 size={14} /> {t("Copy site address")}
               </button>
               <span className="share-foot-scope">{t(VISIBILITY_LABEL[visibility])}</span>
-            </footer>
+            </footer>}
           </aside>
         </div>,
         host,

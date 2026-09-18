@@ -42,6 +42,8 @@ export const agentGuide: Messages = {
   "Operator tokens have broad privileges and cannot list personal sites. Verify an operator token by publishing a test file; whoami has no personal identity to display.": "管理员 Token 权限较大，无法列出个人作品。请通过发布测试文件验证；whoami 不会显示个人身份。",
   "Edit a file": "编辑文件",
   "Fork a site": "复制作品",
+  "Publication status": "发布状态",
+  "Upload progress": "上传进度",
   "Start an upload": "开始上传",
   "Cancel an upload": "取消上传",
 

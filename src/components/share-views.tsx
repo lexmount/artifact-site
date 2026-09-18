@@ -78,7 +78,7 @@ export default function ShareViews({ slug, shares, icon }: {
           {error && <p className="share-error" role="alert">{error}</p>}
           {summary != null && !loading && (
             <p className="share-views-summary">
-              {t("Last {days} days:", { days: Math.round(summary.windowMs / 86_400_000) })} <b>{summary.opens}</b> {t("opens")}
+              {t("External opens in the last {days} days:", { days: Math.round(summary.windowMs / 86_400_000) })} <b>{summary.opens}</b> {t("opens")}
               · <b>{summary.uniqueViewers}</b> {t("visitors")}
               {summary.lastViewedAt != null && <> · {t("last {when}", { when: relTime(summary.lastViewedAt, asOf, t, locale) })}</>}
               <span className="share-views-summary-note">{t("Not counting opens by you and your collaborators")}</span>
@@ -86,6 +86,8 @@ export default function ShareViews({ slug, shares, icon }: {
           )}
           {views != null && views.length === 0 && !loading && <p className="share-hint">{t("Nobody has opened it yet — via a share link or the site address.")}</p>}
           {views != null && views.length > 0 && (
+            <>
+            <p className="drawer-note">{t("History includes your own and collaborators’ opens. Latest 200 records.")}</p>
             <ul className="share-view-list">
               {views.map((v, i) => (
                 <li key={`${v.shareId ?? "direct"}:${v.viewedAt}:${i}`}>
@@ -95,6 +97,7 @@ export default function ShareViews({ slug, shares, icon }: {
                 </li>
               ))}
             </ul>
+            </>
           )}
         </div>
       )}

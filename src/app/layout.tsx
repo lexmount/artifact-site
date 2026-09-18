@@ -1,5 +1,10 @@
 // App shell. One light theme, on purpose: the product is black on near-white with a light green,
 // and the artifacts it hosts bring their own colours.
+import { previewLoadTrackerScript } from "@/lib/comments/preview-load";
+
+import { Suspense } from "react";
+import Analytics from "@/components/analytics";
+import { config } from "@/lib/config";
 import type { Metadata } from "next";
 import "./globals.css";
 import WelcomeBurst from "@/components/welcome-burst";
@@ -19,6 +24,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang={locale}>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: previewLoadTrackerScript }} />
         <meta name="theme-color" content="#fdfdfd" />
       </head>
       <body>
@@ -28,6 +34,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <WelcomeBurst />
           {/* Mounted app-wide: a signed-in browser hands its local folder shelf to the account on any page. */}
           <FolderSync />
+          {config.gaMeasurementId && <Suspense fallback={null}><Analytics measurementId={config.gaMeasurementId} hosts={config.gaHosts} /></Suspense>}
         </LocaleProvider>
       </body>
     </html>

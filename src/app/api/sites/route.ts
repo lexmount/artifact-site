@@ -1,3 +1,4 @@
+import { withPublishOperation } from "@/lib/publish-operation";
 import { assertMutationOrigin } from "@/lib/request-auth";
 // /api/sites — the collection endpoint.
 //   POST  drop → link. json or multipart (see _util for the wire format) → createSite.
@@ -16,6 +17,10 @@ import type { Actor } from "@/lib/types";
 import { errorResponse, json, parseUploadInput } from "../_util";
 
 export async function POST(request: Request): Promise<NextResponse> {
+  return withPublishOperation(request, r => executePost(r));
+}
+
+async function executePost(request: Request): Promise<NextResponse> {
   try {
     checkRateLimit(request);
     maintenanceTick(); // at most once an hour per process; runs in the background

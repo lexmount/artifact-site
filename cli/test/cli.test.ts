@@ -98,7 +98,7 @@ describe("artifact-site CLI", () => {
     expect(await cli("--json", "update", pub.slug, path.join(dir, "page.html"), "--expected-version", exported.versionId)).toBe(0);
     const updated = lastJson();
     expect(updated.versionId).not.toBe(exported.versionId);
-    expect(await cli("update", pub.slug, path.join(dir, "page.html"), "--expected-version", exported.versionId)).toBe(4);
+    expect(await cli("update", pub.slug, path.join(dir, "page.html"), "--expected-version", exported.versionId, "--operation-key", "new-conflicting-update")).toBe(4);
     expect(err.at(-1)).toMatch(/export again and retry/);
 
     expect(await cli("--json", "rollback", pub.slug, exported.versionId)).toBe(0);

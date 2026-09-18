@@ -12,15 +12,15 @@ export function kindLabel(kind: SiteSummary["kind"], t: (k: string) => string): 
   return kind === "single" ? t("Web page") : kind === "document" ? t("Document") : t("Site folder");
 }
 
-export default function ArtifactCard({ site, note, actions }: { site: SiteSummary; note?: string; actions?: ReactNode }) {
+export default function ArtifactCard({ site, note, actions, href, preview }: { site: SiteSummary; note?: string; actions?: ReactNode; href?: string; preview?: string }) {
   const t = useT();
   const locale = useLocale();
   return (
     <article className="artifact-card">
-      <SiteLink slug={site.slug} href={`/s/${site.slug}`} className="artifact-card-link" aria-label={t("Open {title}", { title: site.title })}>
+      <SiteLink slug={site.slug} href={href ?? `/s/${site.slug}`} className="artifact-card-link" aria-label={t("Open {title}", { title: site.title })}>
         <div className="preview">
           {/* Same posture as the home grid's thumbnails: no scripts, not focusable, display only. */}
-          <iframe src={`/api/preview/${site.slug}?thumb=1`} title={t("{title} preview", { title: site.title })} loading="lazy" tabIndex={-1} inert sandbox="" aria-hidden="true" />
+          <iframe src={preview ?? `/api/preview/${site.slug}?thumb=1`} title={t("{title} preview", { title: site.title })} loading="lazy" tabIndex={-1} inert sandbox="" aria-hidden="true" />
         </div>
         <p className="recent-title">{site.title}</p>
       </SiteLink>

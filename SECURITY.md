@@ -31,6 +31,11 @@ model is: an uploader is hostile; a viewer must not be harmed by opening a link.
   the admin token) are exempt because they are not ambient. Session cookies are `HttpOnly`,
   `SameSite=Lax`, and use the `__Host-` prefix over HTTPS. The database stores only SHA-256
   hashes of session, publish-token and OAuth token secrets.
+- **Recoverable share links are an explicit exception.** Share-link tokens are retained in plaintext so
+  authorized site managers can retrieve and copy existing URLs. Treat database backups as
+  credentials: they can contain working share links. Management URL responses are private and non-
+  cacheable; passcodes remain hash-only. Legacy hash-only links continue to work but cannot be
+  recovered. Revocation and expiry are checked on every access.
 - **The OAuth authorization server fetches exactly one kind of URL a stranger chose** — a
   client's metadata document — and only over https, from a public host that resolves to public
   addresses, without following redirects, within a short deadline and a small size. A client's

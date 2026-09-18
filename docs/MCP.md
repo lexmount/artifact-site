@@ -5,7 +5,7 @@ the CLI and never reads a path on the server's filesystem supplied by a caller.
 
 ## Connect
 
-Two ways in; both end at the same 17 tools with the account's own permissions.
+Two ways in; both end at the same 19 tools with the account's own permissions.
 
 ### Sign in from the client (OAuth)
 
@@ -127,7 +127,7 @@ cannot approve.
 
 ## Operations
 
-The server exposes **17 tools**. Descriptions state when to use each tool, its inputs and results,
+The server exposes **19 tools**. Descriptions state when to use each tool, its inputs and results,
 and permission or mutation boundaries. The connection also supplies server instructions for agents.
 
 | CLI | Remote tool |
@@ -143,6 +143,7 @@ and permission or mutation boundaries. The connection also supplies server instr
 | `share <slug>` | `artifact_site_share` |
 | `export <slug>` | `artifact_site_export` (manifest or file bytes) |
 | `rollback <slug> <version>` / `delete <slug>` | `artifact_site_rollback` / `artifact_site_delete` |
+| Publication recovery | `artifact_site_operation_status`, `artifact_site_upload_status` |
 | Automatic CLI upload handling | `artifact_site_upload_start`, `artifact_site_upload_write`, `artifact_site_upload_cancel` |
 | `skill` | `artifact-site://skill` resource (not an additional tool) |
 
@@ -199,7 +200,7 @@ and limits to `connection`, versions/shares to `get_site` includes, rename to ti
 and file download to `export`. Replace the old six-step upload protocol with the flow above.
 CLI `list`, `search` and `rename` remain callable compatibility commands, hidden from top-level help.
 
-Reload the client and confirm exactly 17 tools. In a new conversation, try these requests without
+Reload the client and confirm exactly 19 tools. In a new conversation, try these requests without
 mentioning MCP or a tool name: “What artifacts have I published?”, “Find last week's report”,
 “Read that report”, “Publish this page without sharing it”, and “Rename this artifact”.
 For Chinese hosts, also try “我有哪些作品”, “找一下之前的报告”, and “把这份报告发布成链接”.
@@ -270,3 +271,16 @@ The upload and designation commit together, including chunked uploads.
 Read `officialRevision` with `artifact_site_get_site` before a conditional change.
 Designation requires site management permission and never changes the latest version.
 See [Official versions](OFFICIAL-VERSIONS.md) for the HTTP and UI contract.
+
+### Durable publication recovery
+
+Pass a unique, persisted `operation_key` to publish, content update, edit or upload_start. Keep the
+same key and arguments when retrying; changed arguments conflict. Query `artifact_site_operation_status`
+with `key` after an uncertain result. A committed artifact/version is returned without re-creating it,
+including when its upload session was already cleaned up. Results remain recoverable for seven days.
+A recovered publish may omit the share result: inspect existing shares and explicitly create a link
+if needed, rather than re-publishing. Upload sessions still expire after six hours.
+
+`artifact_site_upload_status` takes `upload_id` and returns completed files and session expiry.
+For remote MCP, send file bytes via upload_write; it cannot open or unzip paths on your computer.
+For local ZIP/directory automation, the CLI performs extraction and transfer selection automatically.

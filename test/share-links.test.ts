@@ -1,13 +1,16 @@
+import * as database from "@/lib/db";
+import * as commits from "@/lib/authorized-commit";
+import { AuthError } from "@/lib/auth";
 // Share links — the owner's management API and the reader's gate, exercised end to end: every token
 // here was minted by POST /shares, and every admission decision comes back through resolveShareAccess
 // or the unlock route. Nothing hand-builds a share row, because the bugs worth catching live exactly
 // in the wiring between the two.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  closeDbForTests, getShare, listShareGrants, recordShareView, updateSharePolicy, updateSiteSharing, upsertUser,
+  closeDbForTests, createShare, getShare, listShareGrants, recordShareView, updateSharePolicy, updateSiteSharing, upsertUser,
 } from "@/lib/db";
 import { createSite, getSiteView } from "@/lib/sites";
 import { mintSession } from "@/lib/session";
@@ -41,6 +44,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await closeDbForTests();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   for (const key of [
@@ -128,7 +132,7 @@ function cookiePair(res: Response): string {
 // --- minting ------------------------------------------------------------------
 
 describe("POST /shares", () => {
-  it("returns the plaintext token ONCE, and never again", async () => {
+  it("keeps the same share URL available to managers after reload", async () => {
     const owner = await signIn("Owner");
     const site = await siteOwnedBy(owner);
     const share = await mint(site, owner, { label: "给客户的" });
@@ -136,11 +140,28 @@ describe("POST /shares", () => {
     expect(share.token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
     expect(share.url).toBe(`${ORIGIN}/v/${share.token}`);
 
-    // The listing is the only other read, and it must not be able to reconstruct the link — the
-    // store keeps a hash, so a leaked listing is not a leaked link.
+    // A fresh management request can copy the original address again.
     const listed = await (await sharesGET(read(`/api/sites/${site.slug}/shares`, owner.cookie), params({ slug: site.slug }))).json();
-    expect(JSON.stringify(listed)).not.toContain(share.token);
+    expect(listed.shares[0].url).toBe(share.url);
+    const stranger = await signIn("Stranger");
+    expect((await sharesGET(read(`/api/sites/${site.slug}/shares`, stranger.cookie), params({ slug: site.slug }))).status).toBe(403);
     expect(listed.shares[0]).toMatchObject({ id: share.id, label: "给客户的", status: "live", live: true });
+    await sharePATCH(write(`/api/sites/${site.slug}/shares/${share.id}`, owner.cookie, "PATCH", { policy: "public", expiresInDays: 7 }), params({ slug: site.slug, shareId: share.id }));
+    const refreshed = await sharesGET(read(`/api/sites/${site.slug}/shares`, owner.cookie), params({ slug: site.slug }));
+    expect(refreshed.headers.get("cache-control")).toBe("private, no-store");
+    expect((await refreshed.json()).shares[0].url).toBe(share.url);
+    expect((await resolveShareAccess(reader(), share.token)).ok).toBe(true);
+
+  });
+
+  it("keeps historical hash-only links valid without inventing a recoverable URL", async () => {
+    const owner = await signIn("LegacyOwner");
+    const site = await siteOwnedBy(owner);
+    await createShare({ id: "legacy-share", siteId: site.id, tokenHash: hashToken("legacy-token"),
+      policy: "public", passcodeHash: null, label: null, createdBy: owner.id, createdAnonId: null, expiresAt: null });
+    const listed = await (await sharesGET(read(`/api/sites/${site.slug}/shares`, owner.cookie), params({ slug: site.slug }))).json();
+    expect(listed.shares[0].url).toBeNull();
+    expect((await resolveShareAccess(reader(), "legacy-token")).ok).toBe(true);
   });
 
   it("defaults to the login policy rather than to the open behaviour it replaces", async () => {
@@ -629,4 +650,109 @@ describe("fork does not ride along on read permission", () => {
     const res = await forkPOST(write(`/api/sites/${site.slug}/fork`, stranger.cookie, "POST"), params({ slug: site.slug }));
     expect(res.status).toBe(404);
   });
+});
+
+
+describe("saving audience and people together", () => {
+  it("applies the new policy and guest list in one save", async () => {
+    const owner = await signIn("DraftOwner"), guest = await signIn("DraftGuest");
+    const site = await siteOwnedBy(owner);
+    const share = await mint(site, owner, { policy: "public" });
+    const res = await sharePATCH(write(`/api/sites/${site.slug}/shares/${share.id}`, owner.cookie, "PATCH", {
+      policy: "people", grants: [{ userId: guest.id }],
+    }), params({ slug: site.slug, shareId: share.id }));
+    expect(res.status).toBe(200);
+    expect((await resolveShareAccess(reader(guest.cookie), share.token)).ok).toBe(true);
+    expect((await listShareGrants(share.id)).map(g => g.userId)).toEqual([guest.id]);
+  });
+  it("removes guests explicitly and preserves unchanged grant timestamps", async () => {
+    const owner = await signIn("ListOwner"), guest = await signIn("ListGuest");
+    const site = await siteOwnedBy(owner);
+    const share = await mint(site, owner, { policy: "people" });
+    const save = (grants: unknown[]) => sharePATCH(write(`/api/sites/${site.slug}/shares/${share.id}`, owner.cookie, "PATCH", { grants }), params({ slug: site.slug, shareId: share.id }));
+    expect((await save([{ userId: guest.id }, { email: "pending@example.net" }])).status).toBe(200);
+    const grantedAt = (await listShareGrants(share.id)).find(g => g.userId === guest.id)!.grantedAt;
+    expect((await save([{ userId: guest.id }])).status).toBe(200);
+    expect(await listShareGrants(share.id)).toMatchObject([{ userId: guest.id, grantedAt }]);
+    expect((await save([])).status).toBe(200);
+    expect(await listShareGrants(share.id)).toEqual([]);
+    expect((await resolveShareAccess(reader(guest.cookie), share.token)).ok).toBe(false);
+  });
+
+  it("rejects an invalid list without changing the existing audience", async () => {
+    const owner = await signIn("InvalidDraftOwner");
+    const site = await siteOwnedBy(owner);
+    const share = await mint(site, owner, { policy: "public" });
+    const res = await sharePATCH(write(`/api/sites/${site.slug}/shares/${share.id}`, owner.cookie, "PATCH", {
+      policy: "people", grants: [{ email: "not-an-email" }],
+    }), params({ slug: site.slug, shareId: share.id }));
+    expect(res.status).toBe(400);
+    expect((await getShare(share.id))?.policy).toBe("public");
+  });
+});
+
+it("retains publication provenance and renames without changing the shared address or access", async () => {
+  const owner = await signIn("Publisher");
+  const site = await siteOwnedBy(owner);
+  const share = await mint(site, owner, { source: "publish", policy: "login" });
+  const before = await getShare(share.id);
+  const response = await sharePATCH(write(`/api/sites/${site.slug}/shares/${share.id}`, owner.cookie, "PATCH", { label: "Weekly review" }), params({slug: site.slug, shareId: share.id}));
+  expect(response.status).toBe(200);
+  expect((await response.json()).share).toMatchObject({label: "Weekly review", source: "publish"});
+  const after = await getShare(share.id);
+  expect(after).toMatchObject({token: before!.token, tokenHash: before!.tokenHash, policy: before!.policy, expiresAt: before!.expiresAt, source: "publish"});
+  const listed = await sharesGET(read(`/api/sites/${site.slug}/shares`, owner.cookie), params({slug: site.slug}));
+  expect((await listed.json()).shares[0]).toMatchObject({label: "Weekly review", source: "publish", url: share.url});
+  const outsider = await signIn("Outsider");
+  const denied = await sharePATCH(write(`/api/sites/${site.slug}/shares/${share.id}`, outsider.cookie, "PATCH", {label:"Unauthorized"}), params({slug:site.slug, shareId:share.id}));
+  expect(denied.status).toBeGreaterThanOrEqual(400);
+  expect((await getShare(share.id))!.label).toBe("Weekly review");
+});
+
+
+it("does not disclose guest existence when the transaction authorization recheck fails", async () => {
+  const owner = await signIn("RecheckOwner"), guest = await signIn("RecheckGuest");
+  const site = await siteOwnedBy(owner);
+  const share = await mint(site, owner, {policy: "people"});
+  vi.spyOn(commits, "withPermissionCommit").mockRejectedValue(new AuthError("Credential revoked"));
+  for (const userId of [guest.id, "nonexistent-user"]) {
+    const res = await sharePATCH(write(`/api/sites/${site.slug}/shares/${share.id}`, owner.cookie, "PATCH", {grants:[{userId}]}), params({slug:site.slug,shareId:share.id}));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({error: "Credential revoked"});
+  }
+});
+
+it("preserves pending-email grant audit metadata after the recipient signs in", async () => {
+  const owner = await signIn("PendingOwner");
+  const site = await siteOwnedBy(owner);
+  const share = await mint(site, owner, {policy:"people"});
+  const save = (grants: unknown[]) => sharePATCH(write(`/api/sites/${site.slug}/shares/${share.id}`,owner.cookie,"PATCH",{grants}),params({slug:site.slug,shareId:share.id}));
+  expect((await save([{email:"later@corp.example"}])).status).toBe(200);
+  const before = await listShareGrants(share.id);
+  const guest = await signIn("Later", "later@corp.example");
+  expect((await save([{userId:guest.id}])).status).toBe(200);
+  expect(await listShareGrants(share.id)).toEqual(before);
+  expect((await resolveShareAccess(reader(guest.cookie), share.token)).ok).toBe(true);
+  expect((await save([{email:"later@corp.example"}])).status).toBe(200);
+  expect(await listShareGrants(share.id)).toEqual(before);
+});
+
+
+it("lists recoverable addresses without loading each share again or leaking storage secrets", async () => {
+  const owner = await signIn("BulkOwner");
+  const site = await siteOwnedBy(owner);
+  await mint(site, owner);
+  await mint(site, owner);
+  const lookup = vi.spyOn(database, "getShare");
+  const res = await sharesGET(read(`/api/sites/${site.slug}/shares`, owner.cookie),params({slug:site.slug}));
+  expect(res.status).toBe(200);
+  expect(lookup).not.toHaveBeenCalled();
+  const {shares} = await res.json();
+  expect(shares).toHaveLength(2);
+  for (const share of shares) {
+    expect(share.url).toContain("/v/");
+    expect(share).not.toHaveProperty("token");
+    expect(share).not.toHaveProperty("tokenHash");
+    expect(share).not.toHaveProperty("passcodeHash");
+  }
 });

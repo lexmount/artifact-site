@@ -1,3 +1,5 @@
+import RecentUnavailable from "@/components/recent-unavailable";
+import RecentTracker from "@/components/recent-tracker";
 import { tenantActive } from "@/lib/rbac-access";
 // /v/<token> — the page a READER lands on. The address a share link points at, and the only surface
 // on this platform whose visitor may have no account, no anonymous cookie and no prior relationship
@@ -8,15 +10,15 @@ import { tenantActive } from "@/lib/rbac-access";
 // reader must not carry them, and hiding buttons the server would refuse anyway is not the point —
 // the point is that this page never offers what it cannot honour.
 //
-// It also renders with no client JavaScript. The passcode form is a plain <form> posting to
-// /api/shares/<token>/unlock, so the one interactive thing here works in a locked-down browser,
-// inside a chat client's in-app webview, and with scripts blocked.
+// The passcode form remains a server-rendered form. The optional comment workspace and
+// collapsible reader chrome run in the host, outside the untrusted preview iframe.
 import { cache } from "react";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { headers } from "next/headers";
 import Link from "next/link";
 import { config } from "@/lib/config";
+import SharedCommentShell from "@/components/comments/shared-comment-shell";
 import Assistant from "@/components/assistant";
 import { getShareByTokenHash, getSite, getVersion } from "@/lib/db";
 import { canReadVersion, canReadSite, hashToken, isLive, logShareView, resolveShareAccess, type ShareDenial } from "@/lib/share";
@@ -163,7 +165,12 @@ export default async function SharedViewPage({
 
   // Q&A mode: the assistant appears for THIS link's readers only when its owner switched it on —
   // and it carries no edit coordinates (see buildAssistantContext's null-site arm).
-  return reader(t, target.site, Boolean(config.assistantUrl && access.share.allowAi), token, requestedVersion ?? access.share.versionId, access.share.mode);
+  return <>
+    <RecentTracker slug={target.site.slug} title={target.site.title} kind={target.site.kind}
+      entry={target.version.entry} versionCount={1} createdAt={target.site.createdAt} updatedAt={target.site.updatedAt}
+      shareToken={token} versionId={requestedVersion ?? access.share.versionId ?? undefined} />
+    {reader(t, target.site, Boolean(config.assistantUrl && access.share.allowAi), token, target.version, access.share.mode, access.share.id)}
+  </>;
 }
 
 // --- surfaces -----------------------------------------------------------------
@@ -193,6 +200,7 @@ function removed(t: Translator) {
 function dead(t: Translator) {
   return notice(t("This link is no longer valid"), (
     <>
+      <RecentUnavailable />
       <p>{t("This share link does not exist, has been revoked, or has expired. Ask the person who shared it for a new link.")}</p>
       <Link className="btn" href="/">{t("Back to home")}</Link>
     </>
@@ -259,13 +267,34 @@ function passcodeForm(t: Translator, token: string, error?: string) {
 }
 
 /** The artifact itself, full-bleed under a bar that offers reading and nothing else. */
-function reader(t: Translator, site: Site, assistant = false, token = "", versionId: string | null = null, mode = "view") {
+function reader(t: Translator, site: Site, assistant = false, token = "", version: Version, mode = "view", shareId: string) {
+  const versionId = version.id;
   return (
-    // Same full-screen stage as /s/<slug>, minus every control. `data-bar="open"` is static here:
-    // the collapsing behaviour over there is driven by JavaScript, and this page has none — so the
-    // bar simply stays put and the artifact sits below it. (The one exception: an allow_ai share
-    // mounts the assistant in Q&A mode below, which brings its own script; the default page stays JS-free.)
-    <div className="fs-viewer" data-device="desktop" data-bar="open">
+    <SharedCommentShell comments={{ slug: site.slug, scope: { siteId: site.id, versionId, entry: { kind: "share", shareId } }, filePath: version.entry, shareToken: token }} header={
+        <header className="app-header fs-bar" aria-label={t("Shared output")}>
+          <div className="fs-bar-glass" aria-hidden="true" />
+          <Link className="brand" href="/" aria-label={t("artifact-site home")}>
+            <span aria-hidden="true">←</span>
+            <b>artifact-site</b>
+          </Link>
+          <div className="header-mid">
+            <span className="header-title" title={site.title}>{site.title}</span>
+            <div className="viewer-meta">
+              <span className="kind-chip">{site.kind === "single" ? t("Single file") : site.kind === "document" ? t("Document") : t("Folder")}</span>
+              <span className="dot" aria-hidden="true" />
+              <span>{t(mode === "edit" ? "Editable share" : mode === "comment" ? "Can comment" : "Read-only share")}</span>
+            </div>
+            <OfficialVersion slug={site.slug} versionId={version.id} share={token} />
+          </div>
+          <div className="controls">
+            {mode === "edit" && <Link className="btn" href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}`}>{t("Edit")}</Link>}
+            {/* Pin this rendered preview to the same immutable version as its discussion. A reload follows the link again. */}
+            <a className="btn sm ghost" href={`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`} target="_blank" rel="noreferrer">
+              {t("Open in a new tab")}
+            </a>
+          </div>
+        </header>
+    }>
       <div className="fs-stage-wrap">
         <div className="fs-stage">
           {/* Never allow-same-origin: the artifact is untrusted code, and the served HTML carries
@@ -281,34 +310,7 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
         </div>
       </div>
 
-      <div className="fs-chrome is-open">
-        <header className="app-header fs-bar" aria-label={t("Shared output")}>
-          <div className="fs-bar-glass" aria-hidden="true" />
-          <Link className="brand" href="/" aria-label={t("artifact-site home")}>
-            <span aria-hidden="true">←</span>
-            <b>artifact-site</b>
-          </Link>
-          <div className="header-mid">
-            <span className="header-title" title={site.title}>{site.title}</span>
-            <div className="viewer-meta">
-              <span className="kind-chip">{site.kind === "single" ? t("Single file") : site.kind === "document" ? t("Document") : t("Folder")}</span>
-              <span className="dot" aria-hidden="true" />
-              <span>{t(mode === "edit" ? "Editable share" : mode === "comment" ? "Comment access reserved" : "Read-only share")}</span>
-            </div>
-          </div>
-          <div className="controls">
-            {mode === "edit" && <Link className="btn" href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}${versionId ? `&version=${encodeURIComponent(versionId)}` : ""}`}>{t("Edit")}</Link>}
-            {/* Unpinned: a share is a window onto whatever is CURRENT. Naming a version here would
-                quietly freeze the link at the moment it was opened, and the reader has no history
-                to navigate back out of it — that is the owner's surface, not this one. */}
-            <a className="btn sm ghost" href={`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`} target="_blank" rel="noreferrer">
-              {t("Open in a new tab")}
-            </a>
-          </div>
-          <OfficialVersion slug={site.slug} versionId={versionId ?? site.currentVersionId} share={token} />
-        </header>
-      </div>
       {assistant && <Assistant sdkBase={config.assistantUrl} slug={site.slug} mode="qa" />}
-    </div>
+    </SharedCommentShell>
   );
 }

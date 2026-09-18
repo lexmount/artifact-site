@@ -39,7 +39,7 @@ export default async function Home() {
   const viewer = await listViewerFromRequest(
     new Request(`${proto}://x/`, { headers: { cookie: h.get("cookie") ?? "" } }),
   );
-  const sites = await listSites(viewer);
+  const [sites, ownedSites] = await Promise.all([listSites(viewer), listSites(viewer, { ownedOnly: true, limit: 6 })]);
   // The AI entry hands out THIS deployment's own address, same resolution as /for-agents(.md).
   const base = resolvePublicBase(h);
 
@@ -63,7 +63,7 @@ export default async function Home() {
         <BookmarkletLink />
       </section>
 
-      <HomeRecent allSites={sites} />
+      <HomeRecent allSites={sites} ownedSites={ownedSites} />
     </AppShell>
   );
 }

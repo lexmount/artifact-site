@@ -418,11 +418,11 @@ it("safely re-registers the same file if writing its assembled marker fails afte
   });
   try {
     expect((await call(c, "upload_write", args)).error).toBe(true);
-    expect((await db.getUploadSessionRow(upload_id))?.files).toEqual([{ relpath: "index.html", bytes: 6 }]);
+    expect((await db.getUploadSessionRow(upload_id))?.files).toEqual([{ relpath: "index.html", bytes: 6, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }]);
   } finally { marker.mockRestore(); }
   expect((await call(c, "upload_write", args)).error).toBe(false);
   // upload_file -> recordUploadedFile upserts by relative path; retry is not an append.
-  expect((await db.getUploadSessionRow(upload_id))?.files).toEqual([{ relpath: "index.html", bytes: 6 }]);
+  expect((await db.getUploadSessionRow(upload_id))?.files).toEqual([{ relpath: "index.html", bytes: 6, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }]);
   const site = await call(c, "publish", { upload_id, share: false });
   expect(site.error).toBe(false);
   const file = await call(c, "export", { slug: site.data.slug, path: "index.html", version_id: upload_id });
@@ -548,4 +548,74 @@ it("manages the unique official designation through publish, update, set and cle
   expect((await call(ca, "set_official", { slug, version_id: update.data.versionId, expected_revision: info.data.officialRevision })).error).toBe(true);
   expect((await call(ca, "clear_official", { slug })).error).toBe(false);
   expect((await call(ca, "get_site", { slug })).data.officialVersionId).toBeNull();
+});
+
+it("recovers keyed publication and a completed upload after cleanup", async () => {
+  const c = await connect((await identity("recovery-owner")).token);
+  const operation_key = "mcp-recovery-create";
+  const args = { html: "<h1>Recovery</h1>", share: false, operation_key };
+  const first = await call(c, "publish", args); expect(first.error).toBe(false);
+  expect((await call(c, "publish", args)).data).toEqual(first.data);
+  expect((await call(c, "publish", { ...args, html: "different" })).error).toBe(true);
+  expect((await call(c, "operation_status", { key: operation_key })).data.result).toEqual(first.data);
+  const start = await call(c, "upload_start", { operation_key: "mcp-recovery-start" }); expect(start.error).toBe(false);
+  const upload_id = start.data.versionId;
+  expect((await call(c, "upload_start", { operation_key: "mcp-recovery-start" })).data.versionId).toBe(upload_id);
+  await call(c, "upload_write", { upload_id, path: "index.html", index: 0, base64: Buffer.from("<h1>Uploaded recovery</h1>").toString("base64"), final: true });
+  expect((await call(c, "upload_status", { upload_id })).data.files).toHaveLength(1);
+  const commit = { upload_id, share: false, operation_key: "mcp-recovery-commit" };
+  const published = await call(c, "publish", commit); expect(published.error).toBe(false);
+  expect((await call(c, "publish", commit)).data).toEqual(published.data);
+});
+
+it("automatically moves an inline MCP tree to file uploads on a confirmed 413", async () => {
+  const c = await connect((await identity("fallback-owner")).token);
+  vi.stubEnv("ARTIFACT_INLINE_UPLOAD_MAX_BYTES", "500");
+  try {
+    const args = { html: `<h1>${"x".repeat(2000)}</h1>`, share: false, operation_key: "mcp-fallback-operation" };
+    const result = await call(c, "publish", args); expect(result.error).toBe(false);
+    expect(result.data.slug).toBeTruthy(); expect((await call(c, "publish", args)).data).toEqual(result.data);
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it("verifies the content hash before skipping a file during fallback recovery", async () => {
+  const identity_ = await identity("hash-owner"); const c = await connect(identity_.token);
+  const { getStorage } = await import("@/lib/storage");
+  const { rbacQuery } = await import("@/lib/db");
+  const { PUT } = await import("@/app/api/uploads/[versionId]/files/[...relpath]/route");
+  vi.stubEnv("ARTIFACT_INLINE_UPLOAD_MAX_BYTES", "500");
+  const measure = vi.spyOn(getStorage(), "measureVersion").mockRejectedValueOnce(new Error("temporary storage failure"));
+  try {
+    const args = { html: `<h1>${"x".repeat(2000)}</h1>`, share: false, operation_key: "mcp-hash-operation" };
+    expect((await call(c, "publish", args)).error).toBe(true); measure.mockRestore();
+    const [row] = await rbacQuery("SELECT version_id FROM upload_sessions ORDER BY created_at DESC LIMIT 1"); const versionId = String(row.version_id);
+    await PUT(new Request(`${origin}/api/uploads/${versionId}/files/index.html`, { method: "PUT", headers: { authorization: `Bearer ${identity_.token}`, origin }, body: args.html.replaceAll("x", "y") }), { params: Promise.resolve({ versionId, relpath: ["index.html"] }) });
+    const result = await call(c, "publish", args); expect(result.error).toBe(false);
+    const exported = await call(c, "export", { slug: result.data.slug, path: "index.html", version_id: result.data.versionId });
+    expect(Buffer.from(exported.data.base64, "base64").toString()).toBe(args.html);
+  } finally { measure.mockRestore(); vi.unstubAllEnvs(); }
+});
+
+it.each(["html", "multipart"])("recovers %s fallback publication and update through the original key", async format => {
+  const c = await connect((await identity(`fallback-${format}`)).token);
+  const { rbacQuery } = await import("@/lib/db");
+  const content = (text: string) => format === "html" ? { html: `<h1>${text.repeat(2000)}</h1>` } : { files: [
+    { path: "index.html", content: `<h1>${text.repeat(2000)}</h1>`, encoding: "utf8" },
+    { path: "asset.txt", content: text, encoding: "utf8" },
+  ] };
+  vi.stubEnv("ARTIFACT_INLINE_UPLOAD_MAX_BYTES", "500");
+  try {
+    const args = { ...content("a"), share: false, operation_key: `fallback-create-${format}` };
+    const created = await call(c, "publish", args); expect(created.error).toBe(false);
+    const { slug, versionId } = created.data;
+    expect((await call(c, "operation_status", { key: args.operation_key })).data.result).toEqual(created.data);
+    expect((await call(c, "publish", args)).data).toEqual(created.data);
+    const update = { slug, ...content("b"), expected_version: versionId, operation_key: `fallback-update-${format}` };
+    const updated = await call(c, "update", update); expect(updated.error).toBe(false);
+    expect(updated.data.slug).toBe(slug); expect(updated.data.versionId).not.toBe(versionId);
+    expect((await call(c, "operation_status", { key: update.operation_key })).data.result.versionId).toBe(updated.data.versionId);
+    expect((await call(c, "update", update)).data.versionId).toBe(updated.data.versionId);
+    expect(await rbacQuery("SELECT id FROM sites WHERE slug=$1", [slug])).toHaveLength(1);
+    expect(await rbacQuery("SELECT id FROM versions WHERE site_id=(SELECT id FROM sites WHERE slug=$1)", [slug])).toHaveLength(2);
+  } finally { vi.unstubAllEnvs(); }
 });

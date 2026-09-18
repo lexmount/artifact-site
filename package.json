@@ -1,6 +1,6 @@
 {
   "name": "artifact-site",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "engines": {
     "node": ">=24"
@@ -21,6 +21,8 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1127.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "emoji-picker-react": "^4.22.2",
+    "emoji-regex": "^11.0.0",
     "fflate": "^0.8.2",
     "jose": "^6.2.12",
     "lucide-react": "1.42.0",

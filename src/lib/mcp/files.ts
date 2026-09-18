@@ -166,7 +166,7 @@ export async function commitUpload(request: Request, versionId: string, title?: 
     await cleanup(); return result;
   } catch (error) {
     // Conflicts keep both the complete draft and its sealed parts for deliberate recovery.
-    if ((error as { statusCode?: number }).statusCode !== 409) {
+    if ((error as { statusCode?: number }).statusCode !== 409 && !request.headers.has("idempotency-key")) {
       await discardUploadSession(versionId).catch(cleanupError => console.error("[mcp] failed upload cleanup", cleanupError));
       await cleanup();
     }

@@ -1,3 +1,5 @@
+import { listSharesQuery } from "@/lib/share-queries";
+import { migrateNumbered } from "@/lib/migrations";
 import { AsyncLocalStorage } from "node:async_hooks";
 // Postgres metadata backend. Enables multiple app replicas (no node-local state) once files are
 // also on S3. Timestamps are BIGINT ms-epoch (same numbers as the SQLite backend); a BIGSERIAL
@@ -227,8 +229,7 @@ const MIGRATIONS: readonly string[] = [
   // attributed to the link it arrived through. Distinct from site_invites, which grants EDIT on a
   // whole site — this grants READ on one link, and the two lists differ per link.
   //
-  // Only token_hash is stored. The token itself lives in the URL the owner hands out, so a
-  // read-only dump of this table cannot reconstruct a working link (same shape as sessions).
+  // Tokens are retained for authorized management; hashes remain the reader lookup key.
   `CREATE TABLE IF NOT EXISTS site_shares (
      id            TEXT PRIMARY KEY,
      site_id       TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
@@ -291,6 +292,12 @@ const MIGRATIONS: readonly string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_site_views_site ON site_views (site_id, viewed_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_site_views_prune ON site_views (viewed_at)`,
+
+  // Keep lifetime counts when access-log details are pruned.
+  `CREATE TABLE IF NOT EXISTS archived_view_counts (site_id TEXT PRIMARY KEY, opens BIGINT NOT NULL DEFAULT 0)`,
+  `CREATE INDEX IF NOT EXISTS idx_site_views_reader ON site_views (site_id, (COALESCE('u:' || user_id, 'a:' || anon_id, 'i:' || ip)), viewed_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_share_views_reader ON share_views (site_id, (COALESCE('u:' || user_id, 'a:' || anon_id, 'i:' || ip)), viewed_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_share_views_link ON share_views (share_id, viewed_at DESC)`,
 
   // --- server-side build of dropped source projects ---------------------------
   // One row per build attempt. `source_key` names a tree under the build-source namespace in
@@ -589,6 +596,7 @@ export class PostgresStore implements MetadataStore {
       await client.query("ALTER TABLE sites ADD COLUMN IF NOT EXISTS official_set_by TEXT");
       await client.query("ALTER TABLE sites ADD COLUMN IF NOT EXISTS official_revision BIGINT NOT NULL DEFAULT 0");
       await migrateRbac(async (sql, params = []) => (await client.query(sql, [...params])).rows as Row[]);
+      await migrateNumbered(async (sql, params = []) => (await client.query(sql, [...params])).rows as Row[], "postgres");
       // Backfill edit tokens for any legacy rows (e.g. data imported from a SQLite dump). No-op on a
       // fresh DB. Done inside the lock so concurrent replicas can't double-mint.
       const legacy = await client.query("SELECT id FROM sites WHERE (edit_token IS NULL OR edit_token = '') AND owner_id IS NULL AND tenant_id='anonymous'");
@@ -784,23 +792,20 @@ export class PostgresStore implements MetadataStore {
     await this.pool.query("UPDATE sites SET deleted_at=$1, updated_at=$1 WHERE id=$2 AND deleted_at IS NULL", [now, id]);
   }
 
-  async listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean }): Promise<SiteSummary[]> {
+  async listSiteSummaries(viewer?: ListViewer, options?: { withViews?: boolean; ownedOnly?: boolean; limit?: number }): Promise<SiteSummary[]> {
     // COALESCE, not a bare `= 'public'`: the column arrived by migration and a restored dump that
     // predates it (or was taken while it was still nullable) would otherwise read as "not public"
     // and silently empty the directory. The default is spelled the same way in toSummary().
     // The OR arms are the "it's mine" escape hatch; `owner_id IS NULL` on the anon arm mirrors
     // resolveCapability — once an account claims a site, the creating browser is no longer it.
     //
-    // The collaborator arm is not cosmetic. This list is also what the home page treats as the set
-    // of sites that still EXIST (pruneRecent / pruneAssignments drop anything missing from it), so
-    // a collaborator who is excluded here silently loses their recent-shelf entry and folder
-    // assignment for a site they can still open and edit. Their "My sites" tab is unaffected — it
-    // comes from listSitesForCollaborator — which is exactly what makes the loss confusing.
+    // Keep collaborator sites available to directory/folder consumers. ownedOnly adds a
+    // stricter ownership predicate for the home shelf without widening visibility.
     const { rows } = await this.pool.query(`
       SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
              (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.seq <= (SELECT seq FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
-             ${options?.withViews ? `CASE WHEN (s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (s.owner_id IS NULL AND s.anon_owner_id = $2) THEN (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) END AS total_views,` : ""}
+             ${options?.withViews ? `CASE WHEN (s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (s.owner_id IS NULL AND s.anon_owner_id = $2) THEN (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) + COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id), 0) END AS total_views,` : ""}
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
@@ -810,7 +815,9 @@ export class PostgresStore implements MetadataStore {
              OR (s.owner_id IS NULL AND s.anon_owner_id = $2)
              OR EXISTS (SELECT 1 FROM site_members c
                          WHERE c.site_id = s.id AND c.user_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
-      ORDER BY s.updated_at DESC
+      ${options?.ownedOnly ? `AND ((s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR ($1::text IS NULL AND s.owner_id IS NULL AND s.anon_owner_id = $2))` : ""}
+      ORDER BY s.updated_at DESC, s.slug ASC
+      ${options?.limit ? `LIMIT ${Math.max(1, Math.min(100, Math.trunc(options.limit)))}` : ""}
     `, [viewer?.userId ?? null, viewer?.anonId ?? null]);
     return (rows as Row[]).map(toSummary);
   }
@@ -846,8 +853,13 @@ export class PostgresStore implements MetadataStore {
     return rows.length;
   }
 
-  async upsertUser(input: UpsertUserInput): Promise<User> {
+  async upsertUser(input: UpsertUserInput): Promise<User & { created: boolean }> {
     const now = Date.now();
+    // Keep the existing id on conflict: it is the stable account identity, referenced by
+    // sessions and memberships. Never assign id = EXCLUDED.id in the update clause.
+    // Only an insert keeps candidateId; the returned/read-back id makes `created` atomic,
+    // including simultaneous first sign-ins for the same provider subject.
+    const candidateId = createId("usr");
     const { rows } = await this.pool.query(
       `INSERT INTO users (id, auth_provider, provider_subject, email, email_verified, display_name, avatar_url, created_at, updated_at, last_login_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$8)
@@ -856,11 +868,11 @@ export class PostgresStore implements MetadataStore {
              display_name=EXCLUDED.display_name, avatar_url=EXCLUDED.avatar_url,
              updated_at=EXCLUDED.updated_at, last_login_at=EXCLUDED.last_login_at
        RETURNING *`,
-      [createId("usr"), input.authProvider, input.providerSubject, input.email ?? null,
+      [candidateId, input.authProvider, input.providerSubject, input.email ?? null,
        input.emailVerified ?? false, input.displayName ?? null, input.avatarUrl ?? null, now],
     );
     await this.rbacTransaction((q) => initializeUserTenant(q, rows[0].id as string));
-    return (await this.getUser(rows[0].id as string))!;
+    return { ...(await this.getUser(rows[0].id as string))!, created: rows[0].id === candidateId };
   }
 
   async getUser(id: string): Promise<User | null> {
@@ -899,10 +911,10 @@ export class PostgresStore implements MetadataStore {
 
   async createShare(input: InsertShareInput): Promise<Share> {
     const { rows } = await this.pool.query(
-      `INSERT INTO site_shares (id, site_id, token_hash, policy, passcode_hash, label, created_by, created_anon, created_at, expires_at, revoked_at, allow_ai, mode, version_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL,$11,$12,$13) RETURNING *`,
+      `INSERT INTO site_shares (id, site_id, token_hash, policy, passcode_hash, label, created_by, created_anon, created_at, expires_at, revoked_at, allow_ai, mode, version_id, token, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL,$11,$12,$13,$14,$15) RETURNING *`,
       [input.id, input.siteId, input.tokenHash, input.policy, input.passcodeHash ?? null, input.label ?? null,
-       input.createdBy ?? null, input.createdAnonId ?? null, Date.now(), input.expiresAt ?? null, input.allowAi ?? false, input.mode ?? "view", input.versionId ?? null],
+       input.createdBy ?? null, input.createdAnonId ?? null, Date.now(), input.expiresAt ?? null, input.allowAi ?? false, input.mode ?? "view", input.versionId ?? null, input.token ?? null, input.source ?? null],
     );
     // toShare, never toShareRow: the two hashes must not leave the storage layer.
     return toShare(rows[0] as Row);
@@ -929,25 +941,25 @@ export class PostgresStore implements MetadataStore {
     // no Postgres counterpart, so the id is the only key both sides can agree on: stable, and
     // arbitrary only among rows that were already tied.
     const { rows } = await this.pool.query(
-      "SELECT * FROM site_shares WHERE site_id=$1 ORDER BY created_at DESC, id DESC", [siteId]);
+      listSharesQuery("$1"), [siteId]);
     return (rows as Row[]).map(toShare);
   }
 
   async revokeShare(id: string, at: number): Promise<void> {
     // `AND revoked_at IS NULL` keeps the FIRST revocation's timestamp: revoking twice is a no-op,
     // not a rewrite of when the link actually died.
-    await this.pool.query("UPDATE site_shares SET revoked_at=$1 WHERE id=$2 AND revoked_at IS NULL", [at, id]);
+    await this.rbacQuery("UPDATE site_shares SET revision=revision+1, revoked_at=$1 WHERE id=$2 AND revoked_at IS NULL", [at, id]);
   }
 
   async updateSharePolicy(id: string, policy: SharePolicy, passcodeHash: string | null, expiresAt: number | null): Promise<void> {
     // A full assignment of all three columns: null CLEARS the passcode / the expiry, which is what
     // "switch this link back to Signed-in users, no expiry" has to mean.
-    await this.pool.query("UPDATE site_shares SET policy=$1, passcode_hash=$2, expires_at=$3 WHERE id=$4",
+    await this.rbacQuery("UPDATE site_shares SET revision=revision+1, policy=$1, passcode_hash=$2, expires_at=$3 WHERE id=$4",
       [policy, passcodeHash, expiresAt, id]);
   }
 
   async setShareAllowAi(id: string, allowAi: boolean): Promise<void> {
-    await this.pool.query("UPDATE site_shares SET allow_ai=$1 WHERE id=$2", [allowAi, id]);
+    await this.rbacQuery("UPDATE site_shares SET revision=revision+1, allow_ai=CASE WHEN $1=1 THEN true ELSE false END WHERE id=$2", [allowAi ? 1 : 0, id]);
   }
 
   async listLiveShares(siteId: string, now: number): Promise<ShareRow[]> {
@@ -961,6 +973,7 @@ export class PostgresStore implements MetadataStore {
     return (rows as Row[]).map(toShareRow);
   }
 
+  // Only an actual grant change advances revision; both writes are one atomic statement.
   async addShareGrant(shareId: string, target: { userId?: string | null; email?: string | null }, grantedBy: string | null): Promise<void> {
     const { userId, email } = shareGrantTarget(target);
     const now = Date.now();
@@ -969,29 +982,31 @@ export class PostgresStore implements MetadataStore {
       // without it Postgres cannot infer the index and raises "no unique or exclusion constraint
       // matching the ON CONFLICT specification". Same for the email index below, whose key is the
       // EXPRESSION lower(email).
-      await this.pool.query(
-        `INSERT INTO share_grants (share_id, user_id, email, granted_by, granted_at) VALUES ($1,$2,NULL,$3,$4)
-         ON CONFLICT (share_id, user_id) WHERE user_id IS NOT NULL DO NOTHING`,
+      await this.rbacQuery(
+        `WITH mutation AS (INSERT INTO share_grants (share_id, user_id, email, granted_by, granted_at) VALUES ($1,$2,NULL,$3,$4)
+         ON CONFLICT (share_id, user_id) WHERE user_id IS NOT NULL DO NOTHING RETURNING share_id)
+         UPDATE site_shares SET revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)`,
         [shareId, userId, grantedBy, now]);
       return;
     }
     // Stored as typed, matched case-insensitively: the display value is the owner's, the key is
     // lower(email).
-    await this.pool.query(
-      `INSERT INTO share_grants (share_id, user_id, email, granted_by, granted_at) VALUES ($1,NULL,$2,$3,$4)
-       ON CONFLICT (share_id, lower(email)) WHERE email IS NOT NULL DO NOTHING`,
+    await this.rbacQuery(
+      `WITH mutation AS (INSERT INTO share_grants (share_id, user_id, email, granted_by, granted_at) VALUES ($1,NULL,$2,$3,$4)
+       ON CONFLICT (share_id, lower(email)) WHERE email IS NOT NULL DO NOTHING RETURNING share_id)
+         UPDATE site_shares SET revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)`,
       [shareId, email, grantedBy, now]);
   }
 
   async removeShareGrant(shareId: string, target: { userId?: string | null; email?: string | null }): Promise<void> {
     const { userId, email } = shareGrantTarget(target);
     if (userId != null) {
-      await this.pool.query("DELETE FROM share_grants WHERE share_id=$1 AND user_id=$2", [shareId, userId]);
+      await this.rbacQuery("WITH mutation AS (DELETE FROM share_grants WHERE share_id=$1 AND user_id=$2 RETURNING share_id) UPDATE site_shares SET revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)", [shareId, userId]);
       return;
     }
     // lower() on both sides — the same key addShareGrant collapsed the row onto, so removing 'A@b.c'
     // removes the row stored as 'a@B.C'.
-    await this.pool.query("DELETE FROM share_grants WHERE share_id=$1 AND lower(email)=lower($2)", [shareId, email]);
+    await this.rbacQuery("WITH mutation AS (DELETE FROM share_grants WHERE share_id=$1 AND lower(email)=lower($2) RETURNING share_id) UPDATE site_shares SET revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)", [shareId, email]);
   }
 
   async listShareGrants(shareId: string): Promise<ShareGrant[]> {
@@ -1002,7 +1017,7 @@ export class PostgresStore implements MetadataStore {
     // COALESCE in the tiebreaker rather than a bare nullable column: Postgres sorts NULLs LAST by
     // default and SQLite sorts them FIRST, so ordering on user_id/email directly is precisely the
     // kind of drift this pair must not have. The CHECK constraint makes the COALESCE total.
-    const { rows } = await this.pool.query(
+    const rows = await this.rbacQuery(
       `SELECT g.share_id, g.user_id, g.email, g.granted_at, u.display_name
          FROM share_grants g LEFT JOIN users u ON u.id = g.user_id
         WHERE g.share_id=$1
@@ -1065,9 +1080,46 @@ export class PostgresStore implements MetadataStore {
   }
 
   async pruneShareViews(before: number): Promise<number> {
-    // Strictly `<`: a row landing exactly on the retention boundary is kept.
-    const res = await this.pool.query("DELETE FROM share_views WHERE viewed_at < $1", [before]);
-    return res.rowCount ?? 0;
+    // Archive and delete in one statement: readers see either live rows or their count.
+    const row = await this.one(`WITH removed AS (
+      DELETE FROM share_views WHERE ctid IN (SELECT ctid FROM share_views WHERE viewed_at < $1 ORDER BY viewed_at LIMIT 1000 FOR UPDATE SKIP LOCKED) RETURNING site_id
+    ), archived AS (
+      INSERT INTO archived_view_counts (site_id, opens)
+      SELECT site_id, COUNT(*) FROM removed GROUP BY site_id ORDER BY site_id
+      ON CONFLICT (site_id) DO UPDATE SET opens=archived_view_counts.opens + EXCLUDED.opens
+      RETURNING site_id
+    ) SELECT COUNT(*) AS n FROM removed`, [before]);
+    return Number(row?.n ?? 0);
+  }
+
+  async recordSiteOpen(view: SiteOpen, collapseMs: number): Promise<void> {
+    const identity = view.userId ? `u:${view.userId}` : view.anonId ? `a:${view.anonId}` : view.ip ? `i:${view.ip}` : null;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      if (identity) {
+        // Cross-replica serialization, followed by a fresh READ COMMITTED snapshot.
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [JSON.stringify(["site-open", view.siteId, identity])]);
+        const prior = await client.query(`SELECT 1 FROM (
+          SELECT site_id, user_id, anon_id, ip, viewed_at FROM site_views
+          UNION ALL SELECT site_id, user_id, anon_id, ip, viewed_at FROM share_views
+        ) opens WHERE site_id=$1 AND viewed_at >= $2
+          AND COALESCE('u:' || user_id, 'a:' || anon_id, 'i:' || ip)=$3 LIMIT 1`,
+          [view.siteId, view.viewedAt - collapseMs, identity]);
+        if (prior.rowCount) { await client.query("COMMIT"); return; }
+      }
+      if (view.shareId) {
+        await client.query("INSERT INTO share_views (share_id,site_id,user_id,anon_id,ip,user_agent,viewed_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+          [view.shareId, view.siteId, view.userId, view.anonId, view.ip, view.userAgent, view.viewedAt]);
+      } else {
+        await client.query("INSERT INTO site_views (site_id,user_id,anon_id,ip,user_agent,viewed_at) VALUES ($1,$2,$3,$4,$5,$6)",
+          [view.siteId, view.userId, view.anonId, view.ip, view.userAgent, view.viewedAt]);
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
   }
 
   async recordSiteView(view: SiteView): Promise<void> {
@@ -1119,7 +1171,7 @@ export class PostgresStore implements MetadataStore {
        )
        SELECT
          (SELECT COUNT(*) FROM opens WHERE viewed_at >= $4)                                     AS opens,
-         (SELECT COUNT(DISTINCT COALESCE(user_id, anon_id, ip)) FROM opens WHERE viewed_at >= $4) AS uniq,
+         (SELECT COUNT(DISTINCT COALESCE('u:' || user_id, 'a:' || anon_id, 'i:' || ip)) FROM opens WHERE viewed_at >= $4) AS uniq,
          (SELECT MAX(viewed_at) FROM opens)                                                     AS last`,
       [siteId, [...exclude.userIds], [...exclude.anonIds], since]);
     return {
@@ -1130,9 +1182,16 @@ export class PostgresStore implements MetadataStore {
   }
 
   async pruneSiteViews(before: number): Promise<number> {
-    // Strictly `<`, mirroring pruneShareViews.
-    const res = await this.pool.query("DELETE FROM site_views WHERE viewed_at < $1", [before]);
-    return res.rowCount ?? 0;
+    // Archive and delete in one statement: readers see either live rows or their count.
+    const row = await this.one(`WITH removed AS (
+      DELETE FROM site_views WHERE ctid IN (SELECT ctid FROM site_views WHERE viewed_at < $1 ORDER BY viewed_at LIMIT 1000 FOR UPDATE SKIP LOCKED) RETURNING site_id
+    ), archived AS (
+      INSERT INTO archived_view_counts (site_id, opens)
+      SELECT site_id, COUNT(*) FROM removed GROUP BY site_id ORDER BY site_id
+      ON CONFLICT (site_id) DO UPDATE SET opens=archived_view_counts.opens + EXCLUDED.opens
+      RETURNING site_id
+    ) SELECT COUNT(*) AS n FROM removed`, [before]);
+    return Number(row?.n ?? 0);
   }
 
   async claimSiteAudited(siteId: string, ownerId: string, audit: InsertAuditInput, adminLog?: AdminLogEntry): Promise<boolean> {
@@ -1182,7 +1241,7 @@ export class PostgresStore implements MetadataStore {
     const { rows } = await this.pool.query(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
              (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.seq <= (SELECT seq FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
-             (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) AS total_views,
+             (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) + COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id), 0) AS total_views,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members m WHERE m.tenant_id=s.tenant_id AND m.user_id=s.owner_id)
@@ -1583,11 +1642,6 @@ export class PostgresStore implements MetadataStore {
   async restoreDeletedSite(id: string): Promise<boolean> {
     const res = await this.pool.query("UPDATE sites SET deleted_at=NULL, updated_at=$1 WHERE id=$2 AND deleted_at IS NOT NULL AND purged_at IS NULL", [Date.now(), id]);
     return (res.rowCount ?? 0) > 0;
-  }
-
-  async setSitePurged(id: string, at: number): Promise<void> {
-    await this.pool.query("UPDATE sites SET purged_at=$1 WHERE id=$2 AND purged_at IS NULL AND deleted_at IS NOT NULL", [at, id]);
-    await this.pool.query("DELETE FROM site_texts WHERE site_id=$1", [id]);
   }
 
   async listDeletedSitesBefore(before: number, limit: number): Promise<Site[]> {

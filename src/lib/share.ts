@@ -1,3 +1,4 @@
+import { readerVersionAllowed } from "@/lib/version-access";
 import { managementReason } from "@/lib/management-reason";
 import { roleAllows } from "@/lib/rbac";
 import { tenantActive, accountSiteRole, managementRole, recordRbacAudit } from "@/lib/rbac-access";
@@ -15,10 +16,10 @@ import { rbacQuery, getSite, getVersion } from "@/lib/db";
 import { randomBytes } from "node:crypto";
 import { safeEqual, sha256hex } from "@/lib/crypto";
 import { isSecureRequest } from "@/lib/http";
-import { getShareByTokenHash, getUser, hasRecentShareView, hasRecentSiteView, recordShareView, recordSiteView, shareAdmits } from "@/lib/db";
+import { getShareByTokenHash, recordSiteOpen } from "@/lib/db";
 import { resolveSession } from "@/lib/session";
 import { recordAdminRead, resolveAdmin } from "@/lib/admin";
-import { resolveAuthority, resolveViewer, resolveCapability, isAnonymousCreator } from "@/lib/authz";
+import { resolveAuthority, resolveViewer, isAnonymousCreator } from "@/lib/authz";
 import type { Session, Share, ShareRow, Site } from "@/lib/types";
 
 /** Cookie carrying proof that a passcode was entered, scoped to one share. */
@@ -38,7 +39,7 @@ export function createPasscode(length = 6): string {
   return Array.from(bytes, (b) => PASSCODE_ALPHABET[b % PASSCODE_ALPHABET.length]).join("");
 }
 
-/** Tokens and passcodes are stored hashed: a read-only dump must not yield a working link. */
+/** Reader lookup uses token hashes; passcodes remain hash-only. */
 export function hashToken(token: string): string {
   return sha256hex(token);
 }
@@ -79,27 +80,43 @@ export async function resolveShareAccess(
   const site = await getSite(share.siteId);
   if (!site || site.deletedAt || site.takenDownAt || !(await tenantActive(site.tenantId))) return { ok: false, reason: "notFound" };
 
+  return sharePolicyAccess(request, share, opts);
+}
+
+/** Shared policy admission only; callers must separately verify token, resource and liveness.
+ * RBAC query reads participate in a caller's authorization transaction. Unknown policies deny. */
+export async function sharePolicyAccess(
+  request: Request,
+  share: ShareRow,
+  opts: { passcodeAttempt?: string | null; session?: Session | null } = {},
+): Promise<ShareAccess> {
   switch (share.policy) {
     case "public":
       return { ok: true, share };
 
     case "login":
     case "people": {
-      const session = opts.session === undefined ? await resolveSession(request) : opts.session;
+      const session =
+        opts.session === undefined
+          ? await resolveSession(request)
+          : opts.session;
       if (!session) return { ok: false, reason: "needsLogin", share };
       if (share.policy === "login") return { ok: true, share };
       // `people`: the account may be named directly, or by an e-mail address that had not signed in
       // when the owner added it. Only a VERIFIED address may satisfy the latter — an unverified one
       // is attacker-controllable, so someone could claim their way onto any list.
-      const user = await getUser(session.userId);
-      const verified = user?.emailVerified ? user.email : null;
-      return (await shareAdmits(share.id, session.userId, verified))
+      const grants = await rbacQuery(
+        "SELECT g.share_id FROM share_grants g JOIN users u ON u.id=$2 WHERE g.share_id=$1 AND (g.user_id=$2 OR (u.email_verified=TRUE AND u.email IS NOT NULL AND u.email<>'' AND g.email IS NOT NULL AND LOWER(g.email)=LOWER(u.email))) LIMIT 1",
+        [share.id, session.userId],
+      );
+      return grants.length
         ? { ok: true, share }
         : { ok: false, reason: "notInvited", share };
     }
 
     case "passcode": {
-      if (!share.passcodeHash) return { ok: false, reason: "needsPasscode", share };
+      if (!share.passcodeHash)
+        return { ok: false, reason: "needsPasscode", share };
       if (opts.passcodeAttempt) {
         return safeEqual(hashPasscode(opts.passcodeAttempt), share.passcodeHash)
           ? { ok: true, share }
@@ -109,6 +126,8 @@ export async function resolveShareAccess(
         ? { ok: true, share }
         : { ok: false, reason: "needsPasscode", share };
     }
+    default:
+      return { ok: false, reason: "notFound" };
   }
 }
 
@@ -218,11 +237,11 @@ export async function readableVersionFilter(request: Request, site: Site, sessio
   if (site.deletedAt || !(await tenantActive(site.tenantId))) return () => false;
   const resolved = session === undefined ? await resolveSession(request) : session;
   if (await accountSiteRole(site,resolved) || await managementRole(request,site,resolved) || isAnonymousCreator(resolveViewer(request,resolved),site)) return () => true;
-  if (!shareTokenFromRequest(request) && await resolveCapability(resolveViewer(request,resolved),site) === "owner") return () => true;
+  if (!shareTokenFromRequest(request) && roleAllows((await resolveAuthority(resolveViewer(request,resolved),site)).role, "site.history.read")) return () => true;
   const share = await requestShareAccess(request,site,resolved);
-  if (share) return (id) => share.versionId ? id === share.versionId : id === site.currentVersionId || id === site.officialVersionId;
+  if (share) return (id) => readerVersionAllowed(site, id, share.versionId);
   const readable = await canReadSite(request,site,resolved,false);
-  return (id) => readable && (id === site.currentVersionId || id === site.officialVersionId);
+  return (id) => readable && readerVersionAllowed(site, id);
 }
 
 // --- view log -----------------------------------------------------------------
@@ -238,8 +257,8 @@ export async function logShareView(request: Request, share: Share, session: Sess
   try {
     const ip = clientIp(request);
     const userId = session?.userId ?? null;
-    if (await hasRecentShareView(share.id, userId, anonId, ip, Date.now() - VIEW_COLLAPSE_MS)) return;
-    await recordShareView({
+    if (!isReaderOpen(request)) return;
+    await recordSiteOpen({
       shareId: share.id,
       siteId: share.siteId,
       userId,
@@ -247,8 +266,9 @@ export async function logShareView(request: Request, share: Share, session: Sess
       ip,
       userAgent: request.headers.get("user-agent")?.slice(0, 300) ?? null,
       viewedAt: Date.now(),
-    });
-  } catch {
+    }, VIEW_COLLAPSE_MS);
+  } catch (error) {
+    console.error("[views] Failed to record share opening", { siteId: share.siteId, ...viewErrorDiagnostic(error) });
     // Reading is the product; logging is bookkeeping. Never let the second break the first.
   }
 }
@@ -279,27 +299,31 @@ export const CRAWLER_UA_RE = /bot[/\-;) ]|\bbot\b|spider|crawler|facebookexterna
  */
 export async function logSiteOpen(request: Request, site: Site, session: Session | null, anonId: string | null): Promise<void> {
   try {
-    if (request.headers.get("next-router-prefetch") != null) return;
-    // Sec-Purpose / Purpose: browser-initiated speculative loads (prefetch/prerender).
-    const purpose = request.headers.get("sec-purpose") ?? request.headers.get("purpose") ?? "";
-    if (/prefetch|prerender|preview/i.test(purpose)) return;
+    if (!isReaderOpen(request)) return;
     const ua = request.headers.get("user-agent") ?? "";
-    if (CRAWLER_UA_RE.test(ua)) return;
 
     const ip = clientIp(request);
     const userId = session?.userId ?? null;
-    if (await hasRecentSiteView(site.id, userId, anonId, ip, Date.now() - VIEW_COLLAPSE_MS)) return;
-    await recordSiteView({
+    await recordSiteOpen({
+      shareId: null,
       siteId: site.id,
       userId,
       anonId: userId ? null : anonId,
       ip,
       userAgent: ua.slice(0, 300) || null,
       viewedAt: Date.now(),
-    });
-  } catch {
+    }, VIEW_COLLAPSE_MS);
+  } catch (error) {
+    console.error("[views] Failed to record direct opening", { siteId: site.id, ...viewErrorDiagnostic(error) });
     // Reading is the product; logging is bookkeeping. Never let the second break the first.
   }
+}
+
+/** Apply the same speculative-load and crawler policy to both entrances. */
+function isReaderOpen(request: Request): boolean {
+  if (request.headers.has("next-router-prefetch")) return false;
+  const purpose = `${request.headers.get("sec-purpose") ?? ""} ${request.headers.get("purpose") ?? ""}`;
+  return !/prefetch|prerender|preview/i.test(purpose) && !CRAWLER_UA_RE.test(request.headers.get("user-agent") ?? "");
 }
 
 /** Gateway-set headers only — the same precedence lib/ratelimit uses, for the same reason. */
@@ -310,4 +334,17 @@ function clientIp(request: Request): string | null {
   if (!xff) return null;
   const hops = xff.split(",").map((h) => h.trim()).filter(Boolean);
   return hops.length ? hops[hops.length - 1] : null;
+}
+
+/** SQLSTATE/driver codes diagnose schema, authentication and lock failures without logging
+ * SQL, parameters, detail or raw messages (which can contain reader identities/credentials).
+ * Pool timeouts have no code, so classify their known message without echoing it.
+ */
+function viewErrorDiagnostic(error: unknown) {
+  const value = error && typeof error === "object" ? error as { name?: unknown; code?: unknown; message?: unknown } : {};
+  const errorName = typeof value.name === "string" && /^(?:Error|TypeError|RangeError|AggregateError|DatabaseError)$/.test(value.name) ? value.name : "UnknownError";
+  const code = typeof value.code === "string" && /^(?:[0-9A-Z]{5}|E[A-Z_]{2,30}|SQLITE_[A-Z_]{1,30})$/.test(value.code) ? value.code : undefined;
+  const reason = typeof value.message === "string" && /timeout exceeded when trying to connect|connection timeout|timeout acquiring a client/i.test(value.message)
+    ? "connection_timeout" : undefined;
+  return { errorName, code, reason };
 }

@@ -38,17 +38,46 @@ async function serve(request: Request, context: { params: Promise<{ slug: string
   const { slug: segment, path } = await context.params;
   const { slug, key } = splitSlugKey(segment);
 
+  const url = new URL(request.url);
+  // Only the unkeyed entry URL accepts legacy platform controls. File queries belong to the
+  // artifact (v/cache hashes, share buttons, t/timestamps, etc.), not to authorization. Explicit
+  // platform links use a reserved namespace on both entry and file URLs; it takes precedence
+  // over legacy entry controls. Keyed requests always keep the grant's
+  // version; no query can override it. Leave the browser's URL and uploaded bytes untouched.
+  const entryRequest = !key && !path?.length;
+  const authUrl = new URL(request.url);
+  authUrl.search = "";
+  if (!key) {
+    if (entryRequest) authUrl.search = url.search;
+    for (const [source, target] of [["__artifact_version", "v"], ["__artifact_share", "share"]]) {
+      const value = url.searchParams.get(source);
+      if (value !== null) authUrl.searchParams.set(target, value);
+    }
+  }
+  const authRequest = new Request(authUrl, { headers: request.headers });
+  const imageViewer = url.searchParams.get("__artifact_image") === "1" ||
+    (entryRequest && url.searchParams.get("comment-image") === "1");
   const view = await getSiteView(slug);
-  const access = view ? await authorizePreview(request,view.site,key) : null;
+  const access = view ? await authorizePreview(authRequest,view.site,key) : null;
   if (!access) return new NextResponse("not found", {status:view?.site.takenDownAt ? 410 : 404});
   const baseHref=previewBaseHref(slug,access.key);
   // A hosted document can read its own location. Exchange the share credential for a
   // read-only resource key before serving any untrusted bytes.
-  if (!key && new URL(request.url).searchParams.has("share")) {
-    const location = baseHref + (path ?? []).map(encodeURIComponent).join("/");
+  if (!key && authUrl.searchParams.has("share")) {
+    const controls = new Set(["__artifact_version", "__artifact_share", "__artifact_image"]);
+    if (entryRequest) for (const name of ["v", "share", "t", "comment-image"]) controls.add(name);
+    // Decode only names for filtering (including encoded/duplicate credential names). Keep
+    // each remaining field verbatim: URLSearchParams.toString() changes flags and escapes.
+    const fields = url.search.slice(1).split("&").filter(field => {
+      const name = new URLSearchParams(`&${field}`).keys().next().value;
+      return name === undefined || !controls.has(name);
+    });
+    if (imageViewer) fields.push("__artifact_image=1");
+    const search = fields.join("&");
+    const location = baseHref + (path ?? []).map(encodeURIComponent).join("/") + (search ? `?${search}` : "");
     return new NextResponse(null, {status:307,headers:{location,"cache-control":"private, no-store"}});
   }
   const versionId=access.versionId;
-  const result = await servePreviewFile(slug, path, versionId, baseHref, request.headers.get("range"));
+  const result = await servePreviewFile(slug, path, versionId, baseHref, request.headers.get("range"), imageViewer);
   return new NextResponse(result.body as BodyInit, { status: result.status, headers: { ...result.headers, "cache-control": access.key ? "private, no-store" : result.headers["cache-control"] ?? "no-store" } });
 }

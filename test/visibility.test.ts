@@ -19,6 +19,9 @@ import { GET as itemGET } from "@/app/api/sites/[slug]/route";
 import { GET as previewGET } from "@/app/api/preview/[slug]/[[...path]]/route";
 import {
   closeDbForTests,
+  rbacQuery,
+  recordSiteView,
+  pruneSiteViews,
   listSitesByOwner,
   listSitesForCollaborator,
   updateSiteSharing,
@@ -200,4 +203,48 @@ describe("owner views stay unfiltered", () => {
     expect(await slugs({ userId: stranger.id })).not.toContain(shared.slug);
     expect(await slugs()).not.toContain(shared.slug);
   });
+});
+
+
+describe("home recently updated ownership", () => {
+  it("returns only owned sites, newest update first, excluding collaboration and browser ownership when signed in", async () => {
+    const owner = await upsertUser({ authProvider: "test", providerSubject: "home-owner" });
+    const other = await upsertUser({ authProvider: "test", providerSubject: "home-other" });
+    const a = await makeSite("Older", "private", { ownerId: owner.id });
+    const b = await makeSite("Newer", "unlisted", { ownerId: owner.id });
+    const collab = await makeSite("Collaborating", "private", { ownerId: other.id });
+    await addCollaborator(collab.id, owner.id);
+    const browser = await makeSite("Browser", "private", { anonOwnerId: "browser" });
+    await makeSite("Stranger public");
+    await rbacQuery("UPDATE sites SET updated_at=$1 WHERE id=$2", [100, a.id]);
+    await rbacQuery("UPDATE sites SET updated_at=$1 WHERE id=$2", [200, b.id]);
+    const owned = await listSites({ userId: owner.id, anonId: "browser" }, { ownedOnly: true });
+    expect(owned.map(s => s.slug)).toEqual([b.slug, a.slug]);
+    expect((await listSites({ userId: owner.id }, { ownedOnly: true, limit: 1 })).map(s => s.slug)).toEqual([b.slug]);
+    expect((await listSites({ anonId: "browser" }, { ownedOnly: true })).map(s => s.slug)).toEqual([browser.slug]);
+    expect(await listSites({}, { ownedOnly: true })).toEqual([]);
+  });
+  it("keeps cumulative opens after detail retention runs repeatedly", async () => {
+    const s = await makeSite("Retention", "private", { anonOwnerId: "author" });
+    for (const viewedAt of [10, 20, 30]) await recordSiteView({ siteId: s.id, userId: null, anonId: "reader", ip: null, userAgent: null, viewedAt });
+    const total = async () => (await listSites({ anonId: "author" }, { withViews: true, ownedOnly: true }))[0].totalViews;
+    expect(await total()).toBe(3);
+    expect(await pruneSiteViews(25)).toBe(2);
+    expect(await total()).toBe(3);
+    expect(await pruneSiteViews(25)).toBe(0);
+    expect(await total()).toBe(3);
+  });
+  it("keeps each site's total when equal timestamps straddle the cleanup batch boundary", async () => {
+    const a = await makeSite("Tied A", "private", { anonOwnerId: "author" });
+    const b = await makeSite("Tied B", "private", { anonOwnerId: "author" });
+    for (let i = 0; i < 1001; i++) await recordSiteView({ siteId: i % 2 ? b.id : a.id, userId: null, anonId: "reader", ip: null, userAgent: null, viewedAt: 1 });
+    const totals = async () => Object.fromEntries((await listSites({ anonId: "author" }, { withViews: true, ownedOnly: true })).map(s => [s.slug, s.totalViews]));
+    const expected = { [a.slug]: 501, [b.slug]: 500 };
+    expect(await totals()).toEqual(expected);
+    expect(await pruneSiteViews(2)).toBe(1000);
+    expect(await totals()).toEqual(expected);
+    expect(await pruneSiteViews(2)).toBe(1);
+    expect(await totals()).toEqual(expected);
+  });
+
 });

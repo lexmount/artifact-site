@@ -1,3 +1,4 @@
+import { recordPublishedVersion } from "@/lib/publish-operation";
 import "server-only";
 import { createId, rbacTransaction, toSite, type InsertSiteInput, type InsertAuditInput, type InsertVersionInput, type VersionCommit } from "@/lib/db";
 import { AuthError, EditForbiddenError, assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
@@ -20,7 +21,7 @@ export async function assertSessionCurrent(q: RbacQuery, session: Pick<Session, 
         throw new AuthError("The credential has expired or been revoked");
 }
 /** Only database work belongs in work; prepare request bodies and file bytes before calling. */
-export async function withPermissionCommit<T>(request: Request, siteId: string, permission: Permission, work: (q: RbacQuery, site: Site) => Promise<T>): Promise<T> {
+export async function withPermissionCommit<T>(request: Request, siteId: string, permission: Permission, work: (q: RbacQuery, site: Site, session: Session | null) => Promise<T>): Promise<T> {
     const session = await resolveSession(request);
     await assertPresentedBearerAlive(request, session);
     return rbacTransaction(async (q) => {
@@ -31,7 +32,7 @@ export async function withPermissionCommit<T>(request: Request, siteId: string, 
         const site = toSite(row);
         // The route already audited entry into management mode; this is a pure recheck.
         await requirePermission(request, site, permission, session, false);
-        return work(q, site);
+        return work(q, site, session);
     });
 }
 /** Version pointer, audit row and final permission check commit together after storage I/O. */
@@ -45,6 +46,7 @@ export async function commitAuthorizedVersion(siteId: string, version: InsertVer
         await q("UPDATE sites SET current_version_id=$1,updated_at=$2 WHERE id=$3", [version.id, now, siteId]);
         await writeCommitAudit(q, { ...audit, siteId, versionId: version.id }, now);
         if (version.official) await designateOfficial(q, siteId, version.id, audit, now);
+        await recordPublishedVersion(q, siteId, version.id);
         return "applied";
     });
 }
@@ -70,6 +72,7 @@ export async function commitAuthorizedCreation(site: InsertSiteInput, version: I
         await q("INSERT INTO versions(id,site_id,entry,file_count,byte_size,source,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [version.id, site.id, version.entry, version.fileCount, version.byteSize, version.source, now]);
         await writeCommitAudit(q, audit, now);
         if (version.official) await designateOfficial(q, site.id, version.id, audit, now);
+        await recordPublishedVersion(q, site.id, version.id, true);
     }).catch(async (error) => {
         if ((error as {
             code?: string;

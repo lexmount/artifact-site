@@ -3,7 +3,7 @@ import { canReadVersion } from "@/lib/share";
 // GET /api/sites/:slug/edit-frame — the site's page with the visual-editor script injected, for
 // the editor to fetch into a srcDoc iframe.
 //
-// The editor script is injected only here, and requireCapability("content") stands in front of it:
+// The editor script is injected only here, and requirePermission("site.content.edit") stands in front of it:
 // a visitor without edit access gets 403 and not one byte of script. It MUST be fetched (credentials
 // travel in headers) and never navigated to by an iframe `src` — an iframe navigation cannot set
 // request headers, so in legacy mode the only option would be to put the owner-equivalent edit
@@ -14,7 +14,7 @@ import { canReadVersion } from "@/lib/share";
 // lib/edit-frame. Authorization runs before ANY of that, so a visitor without edit access can
 // neither obtain the script nor use this endpoint to probe whether a version id exists.
 import { NextResponse } from "next/server";
-import { requireCapability } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import { buildEditFrame } from "@/lib/edit-frame";
 import { getSiteView } from "@/lib/sites";
 import { errorResponse, json } from "../../../_util";
@@ -25,7 +25,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
 
-    await requireCapability(request, view.site, "content");
+    await requirePermission(request, view.site, "site.content.edit");
     const requestedVersion = new URL(request.url).searchParams.get("version") || new URL(request.url).searchParams.get("v") || view.site.currentVersionId;
     if(!(await canReadVersion(request,view.site,requestedVersion))) return json({error:"version not accessible"},404); // no edit access → 403 (and no script)
 

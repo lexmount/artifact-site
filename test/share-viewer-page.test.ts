@@ -10,9 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDbForTests, createId, createShare, listShareViews, softDeleteSite, upsertUser } from "@/lib/db";
+import { closeDbForTests, createId, createShare, listShareViews, softDeleteSite, upsertUser, rbacQuery } from "@/lib/db";
 import { flushAfterResponseForTests } from "@/lib/after-response";
-import { createSite } from "@/lib/sites";
+import { testAudit } from "./helpers";
+import { createSite, editSite } from "@/lib/sites";
 import { mintSession } from "@/lib/session";
 import { buildPasscodeCookie, createPasscode, createShareToken, hashPasscode, hashToken } from "@/lib/share";
 import { platformCopy as rootMetadata } from "@/lib/platform-copy";
@@ -131,7 +132,7 @@ function textOf(node: Node): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(textOf).join(" ");
   const props = (node as { props?: Record<string, unknown> }).props;
-  return props ? textOf(props.children as Node) : "";
+  return props ? [textOf(props.children as Node), textOf(props.header as Node)].join(" ") : "";
 }
 
 /** Every element in the tree (including host elements such as <iframe> and <form>). */
@@ -143,7 +144,7 @@ function elements(node: Node, out: { type: unknown; props: Record<string, unknow
   }
   const el = node as { type?: unknown; props?: Record<string, unknown> };
   if (el.type !== undefined) out.push({ type: el.type, props: el.props ?? {} });
-  if (el.props) elements(el.props.children as Node, out);
+  if (el.props) { elements(el.props.children as Node, out); elements(el.props.header as Node, out); }
   return out;
 }
 
@@ -236,7 +237,7 @@ describe("/v/<token> rendering", () => {
 
     const frames = hostTags(tree, "iframe");
     expect(frames).toHaveLength(1);
-    expect(frames[0].src).toBe(`/api/preview/${site.slug}?share=${token}`);
+    expect(frames[0].src).toBe(`/api/preview/${site.slug}?share=${token}&v=${site.currentVersionId}`);
     // The sandbox is identical to the owner's page — in particular, no allow-same-origin.
     expect(frames[0].sandbox).toBe("allow-forms allow-modals allow-scripts allow-popups allow-downloads");
 
@@ -443,4 +444,20 @@ describe("QA tier — the assistant follows the share's flag, never the default"
     const tree = await render(token);
     expect(containsComponent(tree, AssistantComponent)).toBe(false);
   });
+});
+
+ it("binds a following share's official preview and comments to the same exact version", async () => {
+  const site = await publish();
+  const originalVersion = site.currentVersionId;
+  await editSite(site.slug, { content: "<h1>New working draft</h1>" }, testAudit());
+  await rbacQuery("UPDATE sites SET official_version_id=$1 WHERE id=$2", [originalVersion, site.id]);
+  const { token, share } = await shareOf(site, "public");
+  visit();
+  const tree = await SharedViewPage({ params: Promise.resolve({ token }), searchParams: Promise.resolve({ version: originalVersion }) });
+  await flushAfterResponseForTests();
+  expect(hostTags(tree, "iframe")[0].src).toBe(`/api/preview/${site.slug}?share=${token}&v=${originalVersion}`);
+  const workspace = elements(tree).find(element => element.props.comments)?.props.comments as { scope: { siteId: string; versionId: string; entry: { kind: string; shareId: string } }; filePath: string };
+  expect(workspace.scope).toEqual({ siteId: site.id, versionId: originalVersion, entry: { kind: "share", shareId: share.id } });
+  expect(workspace.filePath).toBe("index.html");
+  expect(elements(tree).some(element => element.props.versionId === originalVersion && element.props.share === token)).toBe(true);
 });

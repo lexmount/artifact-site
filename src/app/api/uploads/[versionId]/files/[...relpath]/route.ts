@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { requirePermission } from "@/lib/authz";
 import { getSiteView } from "@/lib/sites";
 import { assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
@@ -10,15 +11,15 @@ import { creationTenant } from "@/lib/rbac-access";
 // this route exists to avoid. One file per request also makes each request exactly as large as that
 // file, which naturally keeps it within the gateway's per-request limit.
 import type { NextResponse } from "next/server";
-import { checkRateLimit } from "@/lib/ratelimit";
-import { getStorage } from "@/lib/storage";
-import { assertSessionRoom, getUploadSession, ownerKeyFor, recordUploadedFile } from "@/lib/upload-session";
+import { checkUploadRateLimit } from "@/lib/ratelimit";
+import { getStorage, safeRelativePath } from "@/lib/storage";
+import { beginUploadedFile, assertSessionRoom, getUploadSession, ownerKeyFor, recordUploadedFile } from "@/lib/upload-session";
 import { CROSS_SITE_REJECTED, isCrossSiteForTarget } from "@/lib/upload-csrf";
 import { errorResponse, json } from "../../../../_util";
 
 export async function PUT(request: Request, context: { params: Promise<{ versionId: string; relpath: string[] }> }): Promise<NextResponse> {
   try {
-    checkRateLimit(request);
+    checkUploadRateLimit(request);
     const { versionId, relpath } = await context.params;
     // An identity mismatch is treated as "no such session" — do not reveal to an outsider holding the versionId that it exists.
     const session = await getUploadSession(versionId, await ownerKeyFor(request));
@@ -37,14 +38,18 @@ export async function PUT(request: Request, context: { params: Promise<{ version
 
     // Content-Length is only a pre-check, used to reject the obviously oversized before writing; the
     // real byte count is whatever actually streams through (clients can lie, or omit it entirely).
+    const target = safeRelativePath(relpath.join("/"));
+    const remaining = { ...session, files: session.files.filter(f => f.relpath !== target) };
     const declared = Number(request.headers.get("content-length") ?? "");
-    if (Number.isFinite(declared) && declared > 0) assertSessionRoom(session, declared);
+    if (Number.isFinite(declared) && declared > 0) assertSessionRoom(remaining, declared);
 
-    const target = relpath.join("/");
-    const written = await getStorage().writeStreamToVersion(session.siteId, session.versionId, target, request.body);
+    await beginUploadedFile(session, target);
+    const hash = createHash("sha256");
+    const counted = request.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ transform(bytes, controller) { hash.update(bytes); controller.enqueue(bytes); } }));
+    const written = await getStorage().writeStreamToVersion(session.siteId, session.versionId, target, counted);
     // After streaming, re-check the total against the real byte count (a lying Content-Length is caught here)
     assertSessionRoom({ ...session, files: session.files.filter((f) => f.relpath !== target) }, written);
-    await recordUploadedFile(session, target, written);
+    await recordUploadedFile(session, target, written, hash.digest("hex"));
     return json({ relpath: target, bytes: written });
   } catch (error) {
     return errorResponse(error);

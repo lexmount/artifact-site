@@ -1,3 +1,6 @@
+import { DEFAULT_UPLOAD_LIMITS, type UploadLimits } from "./archive.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 // Typed client for the artifact-site HTTP API. One method per endpoint, no CLI or MCP concerns.
 // The contract is the one documented for agents at /for-agents.md; response shapes are mirrored
 // here as interfaces so both front ends type-check against the same thing.
@@ -67,7 +70,7 @@ export type DevicePoll =
   | { status: "expired" }
   | { status: "approved"; token: string; user: { email?: string; id?: string } };
 
-export interface Me { user: { id: string; email?: string; displayName?: string } | null; oidcEnabled: boolean }
+export interface Me { uploadLimits?: UploadLimits; user: { id: string; email?: string; displayName?: string } | null; oidcEnabled: boolean }
 
 /** An HTTP-level failure. `status` is the code, `message` the server's `{error}` text when it sent one. */
 export class ApiError extends Error {
@@ -93,8 +96,8 @@ export interface ClientOptions {
   baseUrl: string;
   token?: string | null;
   fetch?: typeof fetch;
-  /** Retries after the first attempt on 429 / 5xx (so `retries: 3` = at most 4 requests). The server
-   *  sends no Retry-After; the backoff is ours. */
+  /** Retries after the first attempt: 429 for all methods, 5xx only for GET/PUT.
+   * Retry-After is honored with a bounded backoff; unsafe writes need outcome recovery. */
   retries?: number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -103,6 +106,17 @@ type Query = Record<string, string | undefined>;
 
 export class ArtifactSiteClient {
   readonly baseUrl: string;
+  private readonly operation = new AsyncLocalStorage<string>();
+  withOperation<T>(key: string, work: () => Promise<T>): Promise<T> { return this.operation.run(key, work); }
+  /** Stable local namespace; credentials themselves never enter recovery records. */
+  async recoveryIdentity(): Promise<string> {
+    const user = (await this.publicationMe()).user;
+    const principal = user?.id ?? `credential:${createHash("sha256").update(this.token ?? "").digest("hex")}`;
+    return createHash("sha256").update(JSON.stringify([this.baseUrl, principal, this.tenantId, this.shareToken])).digest("hex");
+  }
+  operationStatus(key: string): Promise<{ status: "completed" | "running" | "retryable"; result?: VersionResult; expiresAt: number }> { return this.json("GET", `/api/operations/${enc(key)}`); }
+  uploadStatus(versionId: string): Promise<{ files: { relpath: string; bytes: number; sha256?: string }[]; expiresAt: number }> { return this.json("GET", `/api/uploads/${enc(versionId)}`); }
+
   private readonly token: string | null;
   private tenantId?: string;
   private shareToken?: string;
@@ -121,7 +135,10 @@ export class ArtifactSiteClient {
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
-  setContext(context: {tenantId?:string;shareToken?:string}): this { this.tenantId=context.tenantId; this.shareToken=context.shareToken; return this; }
+  setContext(context: {tenantId?:string;shareToken?:string}): this {
+    if (this.tenantId !== context.tenantId || this.shareToken !== context.shareToken) this.meOnce = undefined;
+    this.tenantId = context.tenantId; this.shareToken = context.shareToken; return this;
+  }
 
   get authenticated(): boolean { return Boolean(this.token); }
 
@@ -134,6 +151,25 @@ export class ArtifactSiteClient {
 
   deviceStart(): Promise<DeviceStart> { return this.json("POST", "/api/device/start"); }
   devicePoll(deviceCode: string): Promise<DevicePoll> { return this.json("POST", "/api/device/poll", { body: { device_code: deviceCode } }); }
+  async uploadLimits(): Promise<UploadLimits> {
+    const limits = (await this.publicationMe()).uploadLimits;
+    if (!limits) return DEFAULT_UPLOAD_LIMITS; // Older servers do not advertise limits.
+    if (![limits.maxBytes, limits.maxFileBytes, limits.maxFiles].every(n => Number.isSafeInteger(n) && n > 0)) throw new Error("Server returned invalid upload limits");
+    return limits;
+  }
+  // A CLI client shares one snapshot across publication preflights, including concurrent calls.
+  // Keep explicit me() checks live, and never retain a failed lookup.
+  private meOnce?: Promise<Me>;
+  private publicationMe(): Promise<Me> {
+    if (!this.meOnce) {
+      const pending = this.me().catch(error => {
+        if (this.meOnce === pending) this.meOnce = undefined;
+        throw error;
+      });
+      this.meOnce = pending;
+    }
+    return this.meOnce;
+  }
   me(): Promise<Me> { return this.json("GET", "/api/auth/me"); }
 
   // ---- sites ---------------------------------------------------------------------------------
@@ -191,14 +227,13 @@ export class ArtifactSiteClient {
   /** Streams one file from disk; nothing is buffered on either side. */
   async uploadFile(versionId: string, relpath: string, filePath: string): Promise<{ relpath: string; bytes: number }> {
     const size = (await stat(filePath)).size;
-    const body = Readable.toWeb(createReadStream(filePath)) as unknown as ReadableStream;
-    const init: RequestInit & { duplex: "half" } = {
-      method: "PUT",
-      headers: { ...this.authHeaders(), "content-type": "application/octet-stream", "content-length": String(size) },
-      body,
-      duplex: "half",
-    };
-    const res = await this.withRetry(() => this.fetchImpl(this.url(`/api/uploads/${enc(versionId)}/files/${relpath.split("/").map(encodeURIComponent).join("/")}`), init));
+    const res = await this.withRetry(() => {
+      const body = Readable.toWeb(createReadStream(filePath)) as unknown as ReadableStream;
+      return this.fetchImpl(this.url(`/api/uploads/${enc(versionId)}/files/${relpath.split("/").map(encodeURIComponent).join("/")}`), {
+        method: "PUT", headers: { ...this.authHeaders(), "content-type": "application/octet-stream", "content-length": String(size) },
+        body, duplex: "half",
+      } as RequestInit & { duplex: "half" });
+    }, true);
     return this.parse(res);
   }
   uploadBytes(versionId: string, relpath: string, bytes: Uint8Array): Promise<{ relpath: string; bytes: number }> {
@@ -210,7 +245,7 @@ export class ArtifactSiteClient {
 
   // ---- sharing -------------------------------------------------------------------------------
 
-  createShare(slug: string, opts: { mode?: "view" | "comment" | "edit"; versionId?: string; policy: SharePolicy; label?: string; expiresInDays?: number; passcode?: string; allowAi?: boolean }): Promise<ShareResult> {
+  createShare(slug: string, opts: { source?: "publish" | "manual"; mode?: "view" | "comment" | "edit"; versionId?: string; policy: SharePolicy; label?: string; expiresInDays?: number; passcode?: string; allowAi?: boolean }): Promise<ShareResult> {
     return this.json("POST", `/api/sites/${enc(slug)}/shares`, { body: opts });
   }
   listShares(slug: string): Promise<{ shares: ShareResult["share"][] }> { return this.json("GET", `/api/sites/${enc(slug)}/shares`); }
@@ -249,11 +284,13 @@ export class ArtifactSiteClient {
 
   private async request(method: string, path: string, opts: { body?: unknown; form?: FormData; raw?: Uint8Array; query?: Query } = {}): Promise<Response> {
     const headers: Record<string, string> = { ...this.authHeaders() };
+    const key = this.operation.getStore();
+    if (key && method === "POST") headers["idempotency-key"] = key;
     let body: BodyInit | undefined;
     if (opts.form) body = opts.form;
     else if (opts.raw) { headers["content-type"] = "application/octet-stream"; body = new Blob([opts.raw as BlobPart]); }
     else if (opts.body !== undefined) { headers["content-type"] = "application/json"; body = JSON.stringify(opts.body); }
-    const res = await this.withRetry(() => this.fetchImpl(this.url(path, opts.query), { method, headers, body }));
+    const res = await this.withRetry(() => this.fetchImpl(this.url(path, opts.query), { method, headers, body }), method === "GET" || method === "PUT");
     if (!res.ok) throw await this.toError(res);
     return res;
   }
@@ -274,12 +311,12 @@ export class ArtifactSiteClient {
     try { body = text ? JSON.parse(text) : null; } catch { body = null; }
     const message = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string"
       ? (body as { error: string }).error
-      : res.status === 413 && !body ? "The gateway refused the request body (413); raise its body-size limit" : `HTTP ${res.status}`;
+      : res.status === 413 && !body ? "The request body was refused (413); check the gateway limit or use file uploads. The response did not confirm whether the application ran" : `HTTP ${res.status}`;
     return new ApiError(res.status, message, body);
   }
 
-  /** 429 and 5xx are retried with backoff; anything else is returned as is. */
-  private async withRetry(run: () => Promise<Response>): Promise<Response> {
+  /** Only replay safe methods on 5xx; rebuilding a stream is the caller's responsibility. */
+  private async withRetry(run: () => Promise<Response>, safe = false): Promise<Response> {
     let attempt = 0;
     for (;;) {
       const res = await run();
@@ -289,11 +326,13 @@ export class ArtifactSiteClient {
         const pair = cookie.split(";", 1)[0];
         if (/^(?:__Host-)?ah_anon=/.test(pair)) this.anonCookie = pair;
       }
-      const retryable = res.status === 429 || res.status >= 500;
+      const retryable = res.status === 429 || (safe && res.status >= 500);
       if (!retryable || attempt >= this.retries) return res;
       await res.body?.cancel().catch(() => {});
       attempt += 1;
-      await this.sleep(Math.min(8000, 500 * 2 ** attempt));
+      const retryAfter = res.headers.get("retry-after");
+      const delay = retryAfter ? Number(retryAfter) * 1000 || Date.parse(retryAfter) - Date.now() : 0;
+      await this.sleep(Math.min(60_000, Math.max(delay || 0, Math.min(8000, 500 * 2 ** attempt))));
     }
   }
 }

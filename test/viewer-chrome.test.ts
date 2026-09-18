@@ -259,7 +259,7 @@ describe("C5 the More menu folds the secondary actions", () => {
     // The owner's window into the administration log sits in the menu too, owner-only.
     expect(menuBlock).toContain('{permissions.canManageSharing && <AdminActivity slug={slug} onOpenChange={onActivityOpen} />}');
     const before = controls.slice(0, controls.indexOf("<MoreMenu"));
-    expect(before).toContain('href={`/s/${slug}/edit${props.pinnedVersionId ? `?version=${encodeURIComponent(props.pinnedVersionId)}` : ""}`}'); // edit is a first-class button on the bar
+    expect(before).toContain('href={`/s/${slug}/edit${(commentVersion || props.pinnedVersionId) ? `?version=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`}'); // edit is a first-class button on the bar
     expect(before).toContain('className="segmented device-switch"'); // and so is the device preview
     expect(before).toContain('<SharePanel');
   });
@@ -345,7 +345,7 @@ describe("C5 no action on the bar may go missing", () => {
       ["版本历史", "<VersionHistory"],
       ["分享设置", "<SharePanel"],
       ["登录/登出", "<AuthButton"],
-      ["编辑", 'href={`/s/${slug}/edit${props.pinnedVersionId'],
+      ["编辑", 'href={`/s/${slug}/edit${(commentVersion || props.pinnedVersionId)'],
       // Switched from aria-label to visible text: it used to be the only unnamed button on the bar, a
       // bare external-link arrow, and elsewhere that arrow reads as "share" — inviting exactly "copy
       // this address and send it", but it is the artifact's own address, and on a private site the
@@ -371,7 +371,7 @@ describe("C5 no action on the bar may go missing", () => {
     expect(controls).not.toContain("copyLink");
     expect(controls).not.toContain('t("Copy link")');
     expect(share).toContain("share-foot");
-    expect(share).toContain("Copy link");
+    expect(share).toContain("Copy site address");
   });
 
   it("the panel copies the read-only link and must never include the edit token", () => {

@@ -19,6 +19,7 @@ beforeAll(async () => {
   server = await startFakeServer();
   client = new ArtifactSiteClient({ baseUrl: server.url, token: server.token(), sleep: async () => {} });
   dir = await mkdtemp(path.join(tmpdir(), "ah-publish-"));
+  process.env.ARTIFACT_SITE_CONFIG_DIR = path.join(dir, "config");
   await mkdir(path.join(dir, "site/assets"), { recursive: true });
   await mkdir(path.join(dir, "site/node_modules/x"), { recursive: true });
   await mkdir(path.join(dir, "site/.git"), { recursive: true });
@@ -120,7 +121,8 @@ describe("updateFromPath", () => {
     expect(r.kind).toBe("single");
     expect(r.versionId).not.toBe(v1);
     await expect(updateFromPath(client, created.site.slug, path.join(dir, "site"))).rejects.toThrow(/single-page site/);
-    await expect(updateFromPath(client, created.site.slug, path.join(dir, "page.html"), { expectedVersion: v1 })).rejects.toMatchObject({ status: 409 });
+    expect((await updateFromPath(client, created.site.slug, path.join(dir, "page.html"), { expectedVersion: v1 })).versionId).toBe(r.versionId);
+    await expect(updateFromPath(client, created.site.slug, path.join(dir, "page.html"), { expectedVersion: v1, operationKey: "different-update" })).rejects.toMatchObject({ status: 409 });
   });
 
   it("folder site: a directory is zipped to /versions; a large one is chunked under the same slug", async () => {
@@ -139,4 +141,18 @@ describe("updateFromPath", () => {
     expect(r.kind).toBe("document");
     await expect(updateFromPath(client, created.site.slug, path.join(dir, "site"))).rejects.toThrow(/document site/);
   });
+});
+
+it("skips and reports hidden ZIP entries on both inline and chunked routes", async () => {
+  const zip = path.join(dir, "hidden.zip");
+  await writeFile(zip, zipSync({ "index.html": Buffer.from(html("hidden ZIP")), ".nojekyll": Buffer.from(""), ".env": Buffer.from("SECRET"), ".well-known/data": Buffer.from("hidden") }));
+  for (const limit of [100000, 1]) {
+    process.env.ARTIFACT_SITE_ONE_SHOT_LIMIT = String(limit);
+    const lines: string[] = [];
+    try {
+      const result = await publishPath(client, zip, { share: false, operationKey: `hidden-${limit}`, onProgress: line => lines.push(line) });
+      expect(Object.keys(server.state.sites.get(result.site.slug)!.versions[0].files)).toEqual(["index.html"]);
+      expect(lines.some(line => /skipped 3/.test(line))).toBe(true);
+    } finally { process.env.ARTIFACT_SITE_ONE_SHOT_LIMIT = String(64 * 1024); }
+  }
 });

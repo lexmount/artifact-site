@@ -131,7 +131,7 @@ fi
 for k in ARTIFACT_MAX_BYTES ARTIFACT_MAX_FILES ARTIFACT_MAX_FILE_BYTES ARTIFACT_INLINE_UPLOAD_MAX_BYTES \
          ARTIFACT_RATE_LIMIT_BURST ARTIFACT_RATE_LIMIT_PER_MIN ARTIFACT_RATE_LIMIT_MAX_KEYS \
          ARTIFACT_S3_CACHE_BYTES ARTIFACT_CONVERT_TIMEOUT_MS ARTIFACT_CONVERT_CONCURRENCY ARTIFACT_DELETED_RETENTION_DAYS ARTIFACT_QUOTA_SITES_PER_USER ARTIFACT_QUOTA_BYTES_PER_USER \
-         ARTIFACT_QUOTA_SITES_PER_ANON ARTIFACT_QUOTA_BYTES_PER_ANON ARTIFACT_ANON_SITE_TTL_DAYS ARTIFACT_AUDIT_RETENTION_DAYS ARTIFACT_PORT POSTGRES_PORT; do
+         ARTIFACT_QUOTA_SITES_PER_ANON ARTIFACT_QUOTA_BYTES_PER_ANON ARTIFACT_ANON_SITE_TTL_DAYS ARTIFACT_AUDIT_RETENTION_DAYS ARTIFACT_VIEW_RETENTION_DAYS ARTIFACT_PORT POSTGRES_PORT; do
   v="${!k:-}"
   if [ -n "$v" ] && ! [[ "$v" =~ ^[0-9]+$ ]]; then err "$k=$v is not a plain number. Numeric variables accept only byte counts / integers; a value like 50MB is silently ignored."; fi
 done
@@ -165,6 +165,13 @@ case "${ARTIFACT_DEFAULT_VISIBILITY:-}" in
   *) err "ARTIFACT_DEFAULT_VISIBILITY=${ARTIFACT_DEFAULT_VISIBILITY} is not recognised; valid values are public / unlisted / private." ;;
 esac
 
+# Analytics defaults to the existing public URL; an explicit list supports domain aliases.
+if [ -n "${ARTIFACT_GA_MEASUREMENT_ID:-}" ]; then
+  [[ "$ARTIFACT_GA_MEASUREMENT_ID" =~ ^G-[A-Z0-9]+$ ]] || err "ARTIFACT_GA_MEASUREMENT_ID must be a G- measurement ID."
+  if [ -z "${ARTIFACT_GA_HOSTS:-}" ] && [ -z "$url" ]; then err "GA4 needs ARTIFACT_PUBLIC_URL or ARTIFACT_GA_HOSTS to identify the allowed hostname(s)."; fi
+  if [[ "${ARTIFACT_GA_HOSTS:-}" == *://* || "${ARTIFACT_GA_HOSTS:-}" == */* ]]; then err "ARTIFACT_GA_HOSTS accepts hostnames, not URLs or paths."; fi
+fi
+
 # ---- optional services ---------------------------------------------------------------------
 if bundled_gotenberg; then ok "document conversion: bundled Gotenberg (${GOTENBERG_IMAGE:-gotenberg/gotenberg:8})";
 elif [ -n "${GOTENBERG_URL:-}" ]; then ok "document conversion: external ${GOTENBERG_URL}";
@@ -189,6 +196,13 @@ ours_port() { docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E '
 for p in "${ARTIFACT_PORT:-4300}" $(bundled_postgres && echo "${POSTGRES_PORT:-55432}") $(bundled_caddy && echo "80 443"); do
   if port_busy "$p" && ! ours_port "$p"; then wrn "Port $p is already in use by another process."; fi
 done
+
+if [[ "${ARTIFACT_VIEW_RETENTION_DAYS:-0}" =~ ^[0-9]+$ ]]; then
+  view_retention_days="${ARTIFACT_VIEW_RETENTION_DAYS:-0}"
+  if [ "$view_retention_days" -ne 0 ] && { [ "$view_retention_days" -lt 7 ] || [ "$view_retention_days" -gt 3650 ]; }; then
+    err "ARTIFACT_VIEW_RETENTION_DAYS must be 0 or between 7 and 3650; invalid values disable cleanup"
+  fi
+fi
 
 # ---- plan ----------------------------------------------------------------------------------
 echo

@@ -3,6 +3,7 @@
 // block, symlink lstat reject, realpath containment. HTML gets <base> + a storage shim + the
 // sandbox CSP; assets get the bare sandbox CSP. Serves the site's CURRENT version dir.
 import path from "node:path";
+import { commentPreviewBootstrap } from "@/lib/comments/preview-bootstrap";
 import { config } from "@/lib/config";
 import { refreshDocumentWrapper } from "@/lib/document-site";
 import { getCurrentVersion, getSiteBySlug, getVersion } from "@/lib/db";
@@ -100,9 +101,9 @@ function injectAfterHead(html: string, fragment: string): string {
   return `${fragment}${html}`;
 }
 
-export function injectPreviewBootstrap(html: string, baseHref: string): string {
+export function injectPreviewBootstrap(html: string, baseHref: string, filePath = "index.html", documentMode = false): string {
   const base = `<base href="${escapeAttribute(baseHref)}">`;
-  return injectAfterHead(html, `${base}${storageShim}${selectionBootstrap()}`);
+  return injectAfterHead(html, `${base}${storageShim}${selectionBootstrap()}${commentPreviewBootstrap(filePath, config.publicUrl || "*", documentMode)}`);
 }
 
 /**
@@ -249,7 +250,8 @@ function jsonResponse(status: number, payload: Record<string, unknown>): Preview
  *
  * `versionId` optionally pins the read to an earlier version of THIS site (read-only history preview).
  * Missing selects the current version. Unknown, foreign, or unauthorized ids return 404.
- * `v` is reserved for version ids; use `r` for cache busting. All path guards + CSP stay identical.
+ * Version selection is resolved by the route, separately from artifact resource queries.
+ * All path guards and CSP stay identical.
  */
 /** Audio/video: honour Range, and **the first request without a Range also gets only a slice** -- browser media stacks handle a 206 first chunk well. */
 const MEDIA_TYPES = new Set([".mp4", ".webm", ".mp3", ".wav", ".ogg", ".mov", ".m4a"]);
@@ -303,6 +305,7 @@ export async function servePreviewFile(
   baseHref: string = `/api/preview/${encodeURIComponent(slug)}/`,
   /** The browser's raw `Range` request header. Only media types take the range path; see below. */
   rangeHeader?: string | null,
+  imageViewer = false,
 ): Promise<PreviewResponse> {
   const site = await getSiteBySlug(slug);
   if (!site || site.deletedAt) return jsonResponse(404, { error: "site not found" });
@@ -328,6 +331,15 @@ export async function servePreviewFile(
     }
     if (kind !== "file") return jsonResponse(404, { error: "file not found" });
     const extension = path.extname(target).toLowerCase();
+    if (imageViewer && /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(extension)) {
+      const imagePath = target.split("/").map(encodeURIComponent).join("/");
+      const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f5f1}img{max-width:100%;max-height:100vh;object-fit:contain}</style></head><body><img src="${escapeAttribute(imagePath)}" alt=""></body></html>`;
+      return { status: 200, body: injectPreviewBootstrap(html, baseHref, target), headers: {
+        "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store",
+        "content-security-policy": composePreviewCsp(config.cspConnectSrc), "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...PREVIEW_CORS_HEADER,
+      } };
+    }
+
 
     /**
      * Range requests for media -- whether video works at all hinges on this block.
@@ -391,7 +403,7 @@ export async function servePreviewFile(
     if (isHtml && site.kind === "document" && target === version.entry) {
       html = refreshDocumentWrapper(html) ?? html;
     }
-    const body = isHtml ? injectPreviewBootstrap(html, baseHref) : raw;
+    const body = isHtml ? injectPreviewBootstrap(html, baseHref, target, site.kind === "document" && target === version.entry) : raw;
     const headers: Record<string, string> = {
       "content-type": contentTypes[extension] || "application/octet-stream",
       "cache-control": isHtml ? "no-store" : "public, max-age=60",

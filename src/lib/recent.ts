@@ -29,6 +29,8 @@ export interface RecentEntry {
   updatedAt: number;
   /** Last time this browser opened it. The list is ordered by this, newest first. */
   visitedAt: number;
+  shareToken?: string;
+  versionId?: string;
 }
 
 function num(value: unknown, fallback: number): number {
@@ -50,7 +52,9 @@ function normalizeEntry(raw: unknown): RecentEntry | null {
   return {
     slug,
     title,
-    kind: r.kind === "folder" ? "folder" : "single",
+    kind: r.kind === "document" ? "document" : r.kind === "folder" ? "folder" : "single",
+    ...(typeof r.shareToken === "string" && r.shareToken ? { shareToken: r.shareToken } : {}),
+    ...(typeof r.versionId === "string" && r.versionId ? { versionId: r.versionId } : {}),
     entry: typeof r.entry === "string" && r.entry ? r.entry : "index.html",
     versionCount: Math.max(0, Math.trunc(num(r.versionCount, 1))),
     createdAt: num(r.createdAt, visitedAt),
@@ -112,25 +116,47 @@ export function removeRecent(items: readonly RecentEntry[], slug: string): Recen
   return items.filter((i) => i.slug !== slug);
 }
 
-/**
- * Drop entries for sites that no longer exist. `liveSlugs` is the server's list; an EMPTY set is
- * treated as "we don't know" and prunes nothing, so a momentarily empty list can never wipe a
- * user's history.
- *
- * That list is no longer the whole universe: it hides Unlisted sites that are not the viewer's.
- * Yours survive — the home page asks for the list as YOU, so your own unlisted sites are in it —
- * but a stranger's unlisted site you opened from a link will be pruned from this shelf, since from
- * here it is indistinguishable from a deleted one. Telling those two apart needs a per-slug
- * "does this still exist" check the client does not have; until it does, this is the trade, and it
- * costs a history entry rather than showing dead cards. Do NOT widen the list to fix it.
- */
-export function pruneRecent(items: readonly RecentEntry[], liveSlugs: ReadonlySet<string>): RecentEntry[] {
-  if (liveSlugs.size === 0) return [...items];
-  return items.filter((i) => liveSlugs.has(i.slug));
+/** Directory absence is not deletion. Refresh only unpinned, direct-link snapshots. */
+export function recentShelfItems(entries: readonly RecentEntry[], allSites: readonly SiteSummary[]) {
+  const live = new Map(allSites.map(s => [s.slug, s]));
+  return entries.map(e => ({
+    summary: e.versionId || e.shareToken ? toSummary(e) : live.get(e.slug) ?? toSummary(e),
+    visitedAt: e.visitedAt, href: recentHref(e), preview: recentPreview(e),
+  }));
+}
+
+/** Metadata changes are not visits; never move a row or replace its access context. */
+export function refreshRecent(items: readonly RecentEntry[], entry: RecentEntry): RecentEntry[] {
+  return items.map(old => old.slug === entry.slug && recentHref(old) === recentHref(entry)
+    ? { ...entry, visitedAt: old.visitedAt, shareToken: old.shareToken, versionId: old.versionId }
+    : old);
+}
+
+export function recentHref(entry: Pick<RecentEntry, "slug" | "shareToken" | "versionId">): string {
+  const path = entry.shareToken ? `/v/${encodeURIComponent(entry.shareToken)}` : `/s/${encodeURIComponent(entry.slug)}`;
+  return path + (entry.versionId ? `?version=${encodeURIComponent(entry.versionId)}` : "");
+}
+
+export function recentPreview(entry: Pick<RecentEntry, "slug" | "shareToken" | "versionId">): string {
+  const query = new URLSearchParams({ thumb: "1" });
+  if (entry.shareToken) query.set("share", entry.shareToken);
+  if (entry.versionId) query.set("v", entry.versionId);
+  return `/api/preview/${encodeURIComponent(entry.slug)}?${query}`;
 }
 
 /** The card shape, for entries whose site we could not refresh from the server. */
 export function toSummary(entry: RecentEntry): SiteSummary {
   const { slug, title, kind, entry: file, versionCount, createdAt, updatedAt } = entry;
   return { slug, title, kind, entry: file, versionCount, createdAt, updatedAt };
+}
+
+/** Forget only the entrance that actually failed, never a newer alternate share or version.
+ * A share's pinned version can be implicit in its token, so a query-less dead link matches it too.
+ */
+export function forgetRecentEntrance(items: readonly RecentEntry[], pathname: string, search: string): RecentEntry[] {
+  const version = new URLSearchParams(search).get("version") || undefined;
+  return items.filter(item => {
+    const path = recentHref({ ...item, versionId: undefined });
+    return path !== pathname || (item.shareToken && !version ? false : item.versionId !== version);
+  });
 }

@@ -60,7 +60,7 @@ export default async function EditorPage({ params, searchParams }: {
   if (view.site.kind === "document") redirect(`/s/${slug}`);
 
   // The capability is computed on the server through the same resolveCapability the write routes
-  // use (requireCapability(…, "content")), so this UI gate can never be wider than the server's.
+  // use (requirePermission(…, "site.content.edit")), so this UI gate can never be wider than the server's.
   // `?t=` is handed to it as well, so a visitor arriving via an editable link gets an unlocked first
   // paint without waiting for hydration to fish the token out of the URL.
   const request = requestFromHeaders(await headers(), `/s/${slug}/edit`, firstParam(sp?.t));

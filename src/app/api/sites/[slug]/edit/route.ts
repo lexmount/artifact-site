@@ -1,3 +1,4 @@
+import { withPublishOperation } from "@/lib/publish-operation";
 import { assertMutationOrigin } from "@/lib/request-auth";
 // /api/sites/:slug/edit — POST an in-browser save → a new immutable version becomes current.
 //   single site: { content }            replaces the whole entry document
@@ -9,7 +10,7 @@ import { assertMutationOrigin } from "@/lib/request-auth";
 // from the session/token, never trusted from the body; `method` is descriptive metadata only.
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireActor } from "@/lib/authz";
+import { requirePermission } from "@/lib/authz";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { canReadVersion } from "@/lib/share";
 import { editSite, getSiteView, siteUrl } from "@/lib/sites";
@@ -28,6 +29,10 @@ const editSchema = z.object({
 });
 
 export async function POST(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
+  return withPublishOperation(request, r => executePost(r, context));
+}
+
+async function executePost(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
   try {
     checkRateLimit(request);
     const { slug } = await context.params;
@@ -37,7 +42,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     // Give an anonymous editor (e.g. a shared-link holder with no cookie yet) a persistent handle,
     // so the trail can name the same browser across edits and a later claim can join it to a user.
     const { anonId, cookie } = ensureAnonId(request);
-    const { actor } = await requireActor(request, view.site, "content"); // content edits only
+    const { actor } = await requirePermission(request, view.site, "site.content.edit"); // content edits only
 
     // CSRF applies only to AMBIENT credentials — a cookie the browser attaches cross-site on its
     // own. When the edit is authorized by a per-site token or the admin Bearer, the caller had to

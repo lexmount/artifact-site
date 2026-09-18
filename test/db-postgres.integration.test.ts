@@ -31,6 +31,13 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
     await store.close();
   });
 
+  it("reports exactly one account creation under concurrent upserts", async () => {
+    const subject = `analytics-${Date.now()}`;
+    const users = await Promise.all(Array.from({ length: 3 }, () => store.upsertUser({ authProvider: "test", providerSubject: subject })));
+    expect(new Set(users.map((user) => user.id)).size).toBe(1);
+    expect(users.filter((user) => user.created)).toHaveLength(1);
+  });
+
   it("keeps a pool connection available while RBAC callers wait for the advisory lock", async () => {
     const pool = Reflect.get(store, "pool") as pg.Pool;
     const timeout = pool.options.connectionTimeoutMillis;
@@ -45,6 +52,41 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
       await expect(store.rbacTransaction(async () => { throw new Error("rollback queue test"); })).rejects.toThrow("rollback queue test");
       expect(await store.rbacTransaction(q => q("SELECT 1 AS ready"))).toEqual([{ready:1}]);
     } finally { pool.options.connectionTimeoutMillis = timeout; }
+  });
+
+  it("atomically deduplicates all entrances and retains lifetime totals after pruning", async () => {
+    const id = "site_atomic_views";
+    await store.insertSiteWithVersion(
+      { id, slug: "atomic-views", title: "Atomic", kind: "single", editToken: "t", anonOwnerId: "atomic-author", visibility: "private" },
+      { id: "v_atomic_views", siteId: id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" });
+    const share = await store.createShare({ id: "shr_atomic_views", siteId: id, tokenHash: "th-atomic-views", policy: "public", passcodeHash: null, label: null, createdBy: null, createdAnonId: null, expiresAt: null });
+    const second = new PostgresStore();
+    await second.init();
+    const view = { siteId: id, userId: null, anonId: "reader", ip: null, userAgent: null, viewedAt: 1_700_000_000_000 };
+    try {
+      await Promise.all(Array.from({ length: 24 }, (_, i) => (i % 2 ? second : store).recordSiteOpen({ ...view, shareId: i % 3 ? share.id : null }, 1_800_000)));
+      expect(await store.listSiteOpens(id, 100)).toHaveLength(1);
+      await store.recordSiteOpen({ ...view, shareId: share.id, viewedAt: view.viewedAt + 1_800_001 }, 1_800_000);
+      expect(await store.listSiteOpens(id, 100)).toHaveLength(2);
+      const total = async () => (await store.listSiteSummaries({ anonId: "atomic-author" }, { ownedOnly: true, withViews: true }))[0].totalViews;
+      expect(await total()).toBe(2);
+      await Promise.all([store.pruneSiteViews(view.viewedAt + 2_000_000), second.pruneShareViews(view.viewedAt + 2_000_000)]);
+      expect(await store.listSiteOpens(id, 100)).toHaveLength(0);
+      expect(await total()).toBe(2);
+      await store.pruneShareViews(view.viewedAt + 2_000_000);
+      expect(await total()).toBe(2);
+      expect(await store.listSiteSummaries({}, { ownedOnly: true })).toEqual([]);
+      await store.rbacQuery("INSERT INTO site_views (site_id, anon_id, viewed_at) SELECT $1, 'batch', $2 FROM generate_series(1,1001)", [id, view.viewedAt]);
+      expect(await store.pruneSiteViews(view.viewedAt + 1)).toBe(1000);
+      expect(await total()).toBe(1003);
+      expect(await store.pruneSiteViews(view.viewedAt + 1)).toBe(1);
+      expect(await total()).toBe(1003);
+      const user = await store.upsertUser({ authProvider: "t", providerSubject: "home-owned-pg" });
+      await store.rbacQuery("UPDATE sites SET owner_id=$1, tenant_id='init' WHERE id=$2", [user.id, id]);
+      expect((await store.listSiteSummaries({ userId: user.id }, { ownedOnly: true, limit: 1 })).map(s => s.slug)).toEqual(["atomic-views"]);
+      expect(await store.listSiteSummaries({ anonId: "atomic-author" }, { ownedOnly: true })).toEqual([]);
+
+    } finally { await second.close(); }
   });
 
   it("adds the official foreign key to an existing pointer column idempotently", async () => {
@@ -240,14 +282,16 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
 
       // createShare → Share, with BIGINT columns already Numbers and neither hash in the projection.
       const passcoded = await store.createShare({
-        id: "shr_pgit_1", siteId: SS, tokenHash: "pgit-token-1", policy: "passcode",
-        passcodeHash: "pgit-pass-1", label: "给客户的", createdBy: owner.id, createdAnonId: null, expiresAt: T,
+        id: "shr_pgit_1", siteId: SS, token: "recoverable-pgit-token", tokenHash: "pgit-token-1", policy: "passcode",
+        source: "publish", passcodeHash: "pgit-pass-1", label: "给客户的", createdBy: owner.id, createdAnonId: null, expiresAt: T,
       });
       expect(passcoded).toMatchObject({
         id: "shr_pgit_1", siteId: SS, policy: "passcode", hasPasscode: true,
-        label: "给客户的", createdBy: owner.id, expiresAt: T, revokedAt: null,
+        source: "publish", label: "给客户的", createdBy: owner.id, expiresAt: T, revokedAt: null,
       });
       expect(Object.keys(passcoded)).not.toContain("tokenHash");
+      expect(Object.keys(passcoded)).not.toContain("token");
+      expect((await store.getShare("shr_pgit_1"))?.token).toBe("recoverable-pgit-token");
       expect(Object.keys(passcoded)).not.toContain("passcodeHash");
       expect(typeof passcoded.createdAt).toBe("number");
       expect((await store.getShareByTokenHash("pgit-token-1"))?.passcodeHash).toBe("pgit-pass-1");

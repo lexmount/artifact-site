@@ -7,7 +7,7 @@ import {
   RECENT_LIMIT,
   addRecent,
   parseRecent,
-  pruneRecent,
+  recentShelfItems, recentHref, recentPreview, refreshRecent,
   removeRecent,
   serializeRecent,
   toSummary,
@@ -158,15 +158,15 @@ describe("Recently viewed — tolerant parsing", () => {
 });
 
 describe("Recently viewed — pruning deleted sites", () => {
-  it("drops entries whose site is gone", () => {
+  it("keeps unlisted history missing from the public directory", () => {
     const list = [entry("a", 3), entry("b", 2), entry("c", 1)];
-    expect(pruneRecent(list, new Set(["a", "c"])).map((i) => i.slug)).toEqual(["a", "c"]);
+    expect(recentShelfItems(list, [toSummary(entry("a", 3)), toSummary(entry("c", 1))]).map((i) => i.summary.slug)).toEqual(["a", "b", "c"]);
   });
 
   it("an empty live set means 'unknown' and prunes nothing", () => {
     // Guards against wiping a user's whole history the one time the site list comes back empty.
     const list = [entry("a", 1)];
-    expect(pruneRecent(list, new Set()).map((i) => i.slug)).toEqual(["a"]);
+    expect(recentShelfItems(list, []).map((i) => i.summary.slug)).toEqual(["a"]);
   });
 });
 
@@ -181,5 +181,43 @@ describe("Recently viewed — card projection", () => {
       createdAt: 7,
       updatedAt: 7,
     });
+  });
+});
+
+
+describe("recent navigation and metadata", () => {
+  it("retains document kind, share credentials and pinned versions through storage", () => {
+    const value = { ...entry("doc", 123), kind: "document" as const, shareToken: "share_abc", versionId: "v_old" };
+    const parsed = parseRecent(serializeRecent([value]))[0];
+    expect(parsed).toMatchObject(value);
+    expect(recentHref(parsed)).toBe("/v/share_abc?version=v_old");
+    expect(recentPreview(parsed)).toBe("/api/preview/doc?thumb=1&share=share_abc&v=v_old");
+  });
+  it("refreshes metadata without moving a visit or changing its time", () => {
+    const items = [entry("a", 20), entry("b", 10)];
+    const refreshed = refreshRecent(items, { ...entry("b", 99), title: "Renamed" });
+    expect(refreshed.map(i => i.slug)).toEqual(["a", "b"]);
+    expect(refreshed[1]).toMatchObject({ title: "Renamed", visitedAt: 10 });
+  });
+  it("encodes stored navigation fields instead of allowing arbitrary URLs", () => {
+    expect(recentHref({ ...entry("a", 1), shareToken: "//evil.test/#" })).toBe("/v/%2F%2Fevil.test%2F%23");
+  });
+});
+
+describe("failed entrances", () => {
+  it("removes only the failed direct version, preserving another entrance", async () => {
+    const { forgetRecentEntrance } = await import("@/lib/recent");
+    const direct = entry("a", 1, { versionId: "old" });
+    const shared = entry("b", 2, { shareToken: "live" });
+    expect(forgetRecentEntrance([direct, shared], "/s/a", "?version=old")).toEqual([shared]);
+    expect(forgetRecentEntrance([direct, shared], "/s/a", "?version=other")).toEqual([direct, shared]);
+    expect(forgetRecentEntrance([shared], "/s/b", "")).toEqual([shared]);
+  });
+  it("drops a dead pinned share even when its original URL had no version query", async () => {
+    const { forgetRecentEntrance } = await import("@/lib/recent");
+    const shared = entry("a", 1, { shareToken: "dead", versionId: "pinned" });
+    expect(forgetRecentEntrance([shared], "/v/dead", "")).toEqual([]);
+    expect(forgetRecentEntrance([shared], "/v/another", "")).toEqual([shared]);
+    expect(forgetRecentEntrance([shared], "/v/dead", "?version=other")).toEqual([shared]);
   });
 });

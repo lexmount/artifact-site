@@ -2,11 +2,19 @@
 // are filled by name, and locale resolution prefers an explicit choice over Accept-Language.
 import { afterEach, describe, expect, it } from "vitest";
 import { __resetMessagesForTests, interpolate, registerMessages, resolveLocale, translate, translatorFor } from "@/lib/i18n";
+import { zhCN } from "@/locales/zh-CN";
 import { relTime } from "@/lib/rel-time";
 
 afterEach(() => __resetMessagesForTests());
 
 describe("translate", () => {
+  it("keeps the edited comment badge distinct from the edit action", () => {
+    expect(zhCN["Edited"]).toBe("已编辑");
+    expect(zhCN["Edit"]).toBe("编辑");
+    expect(zhCN["In progress"]).toBe("讨论中");
+    expect(zhCN["End discussion"]).toBe("结束讨论");
+    expect(zhCN["Open"]).toBe("打开");
+  });
   it("returns the key itself for English and for any untranslated string", () => {
     registerMessages("zh-CN", { Upload: "上传" });
     expect(translate("en", "Upload")).toBe("Upload");

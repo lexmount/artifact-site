@@ -108,6 +108,7 @@ describe("createShare / getShare*", () => {
       id: "shr_one",
       siteId: SITE,
       tokenHash: "token-hash-one",
+      token: "recoverable-token",
       policy: "passcode",
       passcodeHash: "passcode-hash-one",
       label: "给客户的",
@@ -138,6 +139,8 @@ describe("createShare / getShare*", () => {
     // …but the storage-layer read does carry them, because the gate has to compare them.
     const row = await getShareByTokenHash("token-hash-one");
     expect(row?.id).toBe("shr_one");
+    expect(row?.token).toBe("recoverable-token");
+    expect(share).not.toHaveProperty("token");
     expect(row?.tokenHash).toBe("token-hash-one");
     expect(row?.passcodeHash).toBe("passcode-hash-one");
     expect(row?.createdAt).toBe(share.createdAt);

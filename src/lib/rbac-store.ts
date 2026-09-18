@@ -9,6 +9,19 @@ export type RbacTransaction = <T>(
 ) => Promise<T>;
 // Called after the existing tables/columns exist, under the driver's migration transaction.
 export async function migrateRbac(q: RbacQuery): Promise<void> {
+  await q(`CREATE TABLE IF NOT EXISTS publish_operations (
+    id TEXT PRIMARY KEY,
+    owner_key TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    state TEXT NOT NULL,
+    lease TEXT NOT NULL,
+    lease_until BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    result TEXT,
+    http_status INTEGER,
+    client_fingerprint TEXT
+  )`);
+  await q("CREATE INDEX IF NOT EXISTS idx_publish_operations_expiry ON publish_operations(expires_at)");
   await q(`CREATE TABLE IF NOT EXISTS preview_secret (
     id TEXT PRIMARY KEY CHECK (id='active'),
     secret TEXT NOT NULL,

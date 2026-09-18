@@ -8,8 +8,7 @@ import { resolveSession } from "@/lib/session";
 import { errorResponse, json } from "../../../../../_util";
 import { loadGrants, parseEmail, resolveOwnedShare, ShareInputError } from "../../_shared";
 
-// Grant store calls use autocommit under the RBAC lock; the audit is best-effort afterwards.
-// The lock serializes the permission recheck with the grant write, not their rollback.
+// Grant writes and revision changes use the RBAC transaction; audit is best-effort afterwards.
 /**
  * Add someone. `{ userId }` names an account outright; `{ email }` is looked up first and stored as
  * an account when it resolves.
@@ -104,9 +103,12 @@ export async function DELETE(
 
     // Same canonicalisation as on the way in, so an address added as "A@B.com" can be removed by
     // typing it back in any case.
-    await withPermissionCommit(request,site.id,"site.sharing.manage", async () => removeShareGrant(share.id, userId ? { userId } : { email: parseEmail(rawEmail) }));
+    const grants = await withPermissionCommit(request,site.id,"site.sharing.manage", async () => {
+      await removeShareGrant(share.id, userId ? { userId } : { email: parseEmail(rawEmail) });
+      return loadGrants(share.id);
+    });
     await recordSiteAudit(site.id, "share", apiAuditContext(request, actor));
-    return json({ ok: true, grants: await loadGrants(share.id) }, 200);
+    return json({ ok: true, grants }, 200);
   } catch (error) {
     return errorResponse(error);
   }

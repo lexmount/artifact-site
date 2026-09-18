@@ -35,9 +35,9 @@ export function drawerHost(doc?: { body?: HTMLElement | null } | null): HTMLElem
   return doc?.body ?? null;
 }
 
-export default function VersionHistory({ slug, editToken, onRolledBack, onOpenChange, canDownload = false, variant = "button" }: {
+export default function VersionHistory({ slug, editToken, onBeforeRollback, onRolledBack, onOpenChange, canDownload = false, variant = "button" }: {
   canDownload?: boolean;
-  slug: string; editToken?: string | null; onRolledBack?: () => void;
+  slug: string; editToken?: string | null; onRolledBack?: () => void; onBeforeRollback?: () => boolean;
   /** "menu-item" renders the trigger as a row of the viewer's More menu instead of a bar button. */
   variant?: "button" | "menu-item";
   /** While the drawer is open the parent must stop auto-collapsing the action bar, or closing the drawer reveals the bar is already gone. */
@@ -107,6 +107,7 @@ export default function VersionHistory({ slug, editToken, onRolledBack, onOpenCh
   async function rollback(version: VersionInfo) {
     if (!permissions?.canRollback || version.current || rolling) return;
     if (!window.confirm(t("Roll back to this version? A new version is added at the top of the history; neither the history nor the current content is lost."))) return;
+    if (onBeforeRollback && !onBeforeRollback()) return;
     setRolling(version.id);
     setError(null);
     try {
