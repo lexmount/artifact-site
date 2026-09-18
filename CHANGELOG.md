@@ -5,7 +5,7 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
-Nothing yet.
+- Restore the original README banner display width across all six languages.
 
 ## 0.2.0 — 2026-09-17
 

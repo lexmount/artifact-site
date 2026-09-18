@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/artifact-site-banner-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="assets/artifact-site-banner.png">
-    <img src="assets/artifact-site-banner.png" alt="artifact-site — Ein gemeinsamer Ort für KI-generierte Seiten und Dokumente, auf Ihrem eigenen Server. Open Source, selbst gehostet, bereit für Agenten." width="560">
+    <img src="assets/artifact-site-banner.png" alt="artifact-site — Ein gemeinsamer Ort für KI-generierte Seiten und Dokumente, auf Ihrem eigenen Server. Open Source, selbst gehostet, bereit für Agenten." width="1000">
   </picture>
 </p>
 
