@@ -1,6 +1,6 @@
 {
   "name": "@artifact-site/cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "mcpName": "io.github.lexmount/artifact-site",
   "description": "Command-line client for artifact-site: publish, update, search, share and export sites.",
   "license": "(Apache-2.0 OR MIT)",

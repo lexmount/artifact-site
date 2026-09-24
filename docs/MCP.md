@@ -246,7 +246,7 @@ An inaccessible snapshot returns 404; do not silently substitute the latest vers
 
 ## Migration and verification
 
-A stdio configuration (`command: artifact-site`, `args: [mcp]`) works again from the CLI release after 0.3.0:
+A stdio configuration (`command: artifact-site`, `args: [mcp]`) works again from CLI 0.4.0:
 `artifact-site mcp` is now a relay to the remote `/mcp` (see [Local MCP](#local-mcp-stdio)), so it
 needs a token — `ARTIFACT_SITE_TOKEN` or a saved `artifact-site login` — besides the address.
 Local saved CLI tokens are not read by a remote (URL) client: supply a personal token explicitly.
