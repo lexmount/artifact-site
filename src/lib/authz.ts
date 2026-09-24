@@ -1,29 +1,22 @@
+import { databaseRoleAllows, everyoneRole, rolePermissions } from "@/lib/role-bindings";
 import { SCOPE_WRITE } from "@/lib/oauth-shared";
 import { managementReason } from "@/lib/management-reason";
 // Resolve credentials into the shared role catalog; expose explicit action gates and UI permissions.
-// Capability ranks remain a compatibility projection for existing internal callers. See docs/RBAC.md.
 import { config } from "@/lib/config";
 import { policy } from "@/lib/settings";
 import { EditForbiddenError, InsufficientScopeError, editTokenFromRequest, isAdmin } from "@/lib/auth";
 import { safeEqual } from "@/lib/crypto";
 import { rbacQuery } from "@/lib/db";
 import { accountSiteRole, managementRole, tenantActive, recordRbacAudit } from "@/lib/rbac-access";
-import { PERMISSIONS, roleAllows, type ResourceRole, type Permission } from "@/lib/rbac";
+import { PERMISSIONS, type ResourceRole, type Permission } from "@/lib/rbac";
 import { forwardedProto } from "@/lib/http";
 import { resolveSession } from "@/lib/session";
 import { anonIdFromRequest } from "@/lib/anon";
-import type { Actor, Capability, Session, Site } from "@/lib/types";
-
-const RANK: Record<Capability, number> = { none: 0, content: 1, manage: 2, owner: 3 };
+import type { Actor, Session, Site } from "@/lib/types";
 
 /** The browser that created this still-unclaimed site, by the cookie it was given at creation. */
 export function isAnonymousCreator(viewer: Pick<Viewer, "anonId">, site: Pick<Site, "ownerId" | "anonOwnerId" | "tenantId">): boolean {
   return site.tenantId === "anonymous" && site.ownerId == null && Boolean(site.anonOwnerId) && Boolean(viewer.anonId) && safeEqual(viewer.anonId!, site.anonOwnerId!);
-}
-
-/** Capabilities are totally ordered — `owner` implies everything below it. */
-export function atLeast(actual: Capability, required: Capability): boolean {
-  return RANK[actual] >= RANK[required];
 }
 
 /** The three independent credentials a request may carry. All are optional and non-exclusive. */
@@ -100,7 +93,7 @@ export function viewerRequestFromHeaders(bag: HeaderBag, path: string): Request 
   return new Request(base.url, { headers: merged });
 }
 
-export type CredentialSource = "account" | "operator" | "management" | "anonymous-cookie" | "anonymous-token" | "share" | "none";
+export type CredentialSource = "account" | "operator" | "management" | "anonymous-cookie" | "anonymous-token" | "share" | "everyone" | "none";
 export interface Authority { role: ResourceRole | null; source: CredentialSource }
 
 /** Every credential enters the same role catalog. Presence alone never grants authority. */
@@ -109,10 +102,11 @@ export async function resolveAuthority(viewer: Viewer, site: Site): Promise<Auth
   if (site.deletedAt || !(await tenantActive(site.tenantId))) return denied;
   if (viewer.isAdmin) return { role: "platform-admin", source: "operator" };
   const role = await accountSiteRole(site, viewer.session);
-  if (role) return { role, source: "account" };
+  let account: Authority = role ? { role, source: "account" } : denied;
   if (viewer.request) {
     const manager = await managementRole(viewer.request, site, viewer.session);
-    if (manager) return { role: manager, source: "management" };
+    // Owners already act with their own full authority; a reason does not turn ownership into an administrative override.
+    if (manager && role !== "owner") return { role: manager, source: "management" };
   }
   // Anonymous management is never ownership evidence and never applies to account-tenant orphans.
   const anonymous = !site.ownerId && site.tenantId === "anonymous";
@@ -122,32 +116,26 @@ export async function resolveAuthority(viewer: Viewer, site: Site): Promise<Auth
   if (anonymous && isAnonymousCreator(viewer, site)) {
     return { role: policy.anonymousSites === "read-only" ? "viewer" : "owner", source: "anonymous-cookie" };
   }
+  if (!viewer.session && await everyoneRole(site.id)) account = {role:"viewer",source:"everyone"};
   if (viewer.request) {
     const { requestShareAccess } = await import("@/lib/share");
     const share = await requestShareAccess(viewer.request, site, viewer.session);
-    if (share) return { role: share.mode === "edit" && !share.versionId && viewer.session ? "editor" : share.mode === "comment" ? "commenter" : "viewer", source: "share" };
+    if (share) {
+      const sharedRole = share.mode === "edit" && !share.versionId && viewer.session ? "editor" : share.mode === "comment" ? "commenter" : "viewer";
+      const rank = ["viewer","commenter","editor","site-admin","owner","tenant-admin","platform-admin"];
+      if (!account.role || rank.indexOf(sharedRole) > rank.indexOf(account.role)) return {role: sharedRole, source:"share"};
+    }
   }
-  return denied;
-}
-
-/** Compatibility projection for internal callers; the role catalog remains authoritative. */
-export async function resolveCapability(viewer: Viewer, site: Site): Promise<Capability> {
-  const { role } = await resolveAuthority(viewer, site);
-  if (roleAllows(role, "site.delete")) return "owner";
-  if (roleAllows(role, "site.rename")) return "manage";
-  if (roleAllows(role, "site.content.edit")) return "content";
-  return "none";
+  return account;
 }
 
 /** Human-readable 403 reason, so the UI can tell "sign in" apart from "you lack access". */
-function reasonFor(viewer: Viewer, site: Site, required: Capability): string {
+function reasonFor(viewer: Viewer, site: Site): string {
   if (!viewer.session) {
     if (isAnonymousCreator(viewer, site)) return "Sign in and explicitly claim this site in Workspaces";
     return "Please sign in first";
   }
   if (!site.ownerId) return "This site has no account owner; use the creating browser or ask an administrator to assign ownership";
-  if (required === "owner") return "Only the site owner can do this";
-  if (required === "manage") return "Only the owner or a site administrator can do this";
   return "You do not have edit access to this site";
 }
 
@@ -175,7 +163,7 @@ export interface SitePermissions {
   canRename: boolean;
   canRollback: boolean;
   canManageSharing: boolean;
-  canManageCollaborators: boolean;
+  canManageGrants: boolean;
   canDelete: boolean;
   canManageAdmins?: boolean;
   canReadSource?: boolean;
@@ -185,10 +173,6 @@ export interface SitePermissions {
   /** True when signing in is what would actually unlock this — lets the UI offer a login button
    *  instead of hiding the control, without the client having to infer it from `reason`. */
   needsLogin: boolean;
-  /** @deprecated Always false; anonymous credentials never imply a claim. */
-  legacyGrandfathered: boolean;
-  /** @deprecated Always true; RBAC has no rollout switch. */
-  enforced: boolean;
 }
 
 export async function describePermissions(
@@ -198,21 +182,24 @@ export async function describePermissions(
 ): Promise<SitePermissions> {
   const viewer = resolveViewer(request, session === undefined ? await resolveSession(request) : session);
   const { role } = await resolveAuthority(viewer, site);
+  return permissionsForRole(viewer, site, await rolePermissions(role));
+}
+
+/** Project a resolved role once; mutation endpoints still resolve fresh authority. */
+export function permissionsForRole(viewer: Viewer, site: Site, permissions: Permission[]): SitePermissions {
   const writable = (!site.takenDownAt || viewer.isAdmin) && (!viewer.session?.scopes || viewer.session.scopes.includes(SCOPE_WRITE));
-  const allows = (permission: Permission) => roleAllows(role, permission);
+  const allows = (permission: Permission) => permissions.includes(permission);
   return {
     canEditContent: writable && allows("site.content.edit"),
     canRename: writable && allows("site.rename"),
     canRollback: writable && allows("site.version.rollback"),
     canManageSharing: writable && allows("site.sharing.manage"),
-    canManageCollaborators: writable && allows("site.members.manage"),
+    canManageGrants: writable && allows("site.members.manage"),
     canManageAdmins: writable && allows("site.admins.manage"),
     canReadSource: allows("site.source.export"),
     canDelete: writable && allows("site.delete"),
-    reason: site.takenDownAt && !viewer.isAdmin ? "This site has been taken down by an administrator" : allows("site.content.edit") ? null : reasonFor(viewer, site, "content"),
+    reason: site.takenDownAt && !viewer.isAdmin ? "This site has been taken down by an administrator" : allows("site.content.edit") ? null : reasonFor(viewer, site),
     needsLogin: config.oidcEnabled && !viewer.session && !allows("site.content.edit"),
-    enforced: true,
-    legacyGrandfathered: false,
   };
 }
 
@@ -221,7 +208,7 @@ export async function requirePermission(request: Request, site: Site, permission
   if (!PERMISSIONS.includes(permission)) throw new EditForbiddenError(`Unsupported permission gate: ${permission}`);
   const viewer = resolveViewer(request, session === undefined ? await resolveSession(request) : session);
   const authority = await resolveAuthority(viewer, permission === "site.audit.read" ? {...site,deletedAt:null} : site);
-  if (!roleAllows(authority.role, permission)) throw new EditForbiddenError(!viewer.session && !viewer.isAdmin ? "Please sign in first" : permission === "site.content.edit" ? "You do not have edit access to this site" : "You do not have permission to perform this action on this report");
+  if (!await databaseRoleAllows(authority.role, permission)) throw new EditForbiddenError(!viewer.session && !viewer.isAdmin ? "Please sign in first" : permission === "site.content.edit" ? "You do not have edit access to this site" : "You do not have permission to perform this action on this report");
   const read = ["site.read", "site.history.read", "site.source.export", "site.audit.read"].includes(permission);
   if (!read && !["GET", "HEAD", "OPTIONS"].includes(request.method) && viewer.session?.scopes && !viewer.session.scopes.includes(SCOPE_WRITE)) throw new InsufficientScopeError(SCOPE_WRITE);
   if (!read && !["GET", "HEAD", "OPTIONS"].includes(request.method) && site.takenDownAt && !viewer.isAdmin) throw new EditForbiddenError("This site has been taken down by an administrator");

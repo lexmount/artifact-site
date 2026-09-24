@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearSessionCookie, endSession, isSameOrigin, mintSession, resolveSession } from "@/lib/session";
+import { SESSION_COOKIE_NAMES } from "@/lib/session-cookie";
 import { closeDbForTests, getSession, revokeUserSessions, upsertUser } from "@/lib/db";
 
 const dirs: string[] = [];
@@ -36,6 +37,16 @@ async function user() {
 }
 
 describe("session round-trip", () => {
+  it("uses the shared cookie names for minting and clearing on both protocols", async () => {
+    const u = await user();
+    for (const [protocol, name] of [["https", SESSION_COOKIE_NAMES.secure], ["http", SESSION_COOKIE_NAMES.development]]) {
+      const request = new Request(`${protocol}://hub.example/api/x`);
+      const { cookie } = await mintSession(request, u.id);
+      expect(cookie.startsWith(`${name}=`)).toBe(true);
+      expect(clearSessionCookie(request).startsWith(`${name}=`)).toBe(true);
+      expect((await resolveSession(new Request(request.url, { headers: { cookie: cookieValue(cookie) } })))?.userId).toBe(u.id);
+    }
+  });
   it("mints a cookie that resolves back to the same session", async () => {
     const u = await user();
     const { cookie, session } = await mintSession(req(), u.id);

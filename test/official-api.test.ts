@@ -1,3 +1,4 @@
+import { putUserSiteRole } from "@/lib/role-bindings";
 import { describe, expect, it, vi } from "vitest";
 import { __resetRateLimitForTests } from "@/lib/ratelimit";
 import { createId, getSite, rbacQuery, upsertUser, createShare, listAudit } from "@/lib/db";
@@ -60,7 +61,7 @@ describe("official API authorization and publication", () => {
     const a = await setup(), next = await identity();
     const ctx = apiAuditContext(req(a.cookie, "PUT"), { kind: "user", userId: a.user.id, anonId: null });
     await rbacQuery("UPDATE sites SET owner_id=$1 WHERE id=$2", [next.user.id, a.site.id]);
-    await rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'editor',1)", [a.site.id, a.user.id]);
+    await putUserSiteRole(rbacQuery, a.site.id, a.user.id, 'editor', null);
     await expect(setOfficialVersion(a.site.id, a.version.id, ctx)).rejects.toThrow();
     const id = createId("ver");
     await expect(commitAuthorizedVersion(a.site.id, { id, siteId: a.site.id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload", official: true }, auditRow(ctx, a.site.id, id, "edit"))).rejects.toThrow();
@@ -78,7 +79,7 @@ describe("official API authorization and publication", () => {
   });
   it("requires management, rejects cross-site writes and does not disclose setter credentials", async () => {
     const a = await setup(), editor = await identity();
-    await rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'editor',$3)", [a.site.id, editor.user.id, Date.now()]);
+    await putUserSiteRole(rbacQuery, a.site.id, editor.user.id, 'editor', null);
     expect((await PUT(req(editor.cookie, "PUT", { versionId: a.version.id }), params(a.site.slug))).status).toBe(403);
     expect((await PUT(req(a.cookie, "PUT", { versionId: a.version.id }, "", { origin: "https://attacker.example" }), params(a.site.slug))).status).toBe(401);
     expect((await PUT(req(a.cookie, "PUT", { versionId: a.version.id }, "", { origin: "https://attacker.example", "x-edit-token": "unverified-token" }), params(a.site.slug))).status).toBe(401);
@@ -100,7 +101,7 @@ describe("official API authorization and publication", () => {
   });
   it("allows a site administrator to designate and clear", async () => {
     const a = await setup(), admin = await identity();
-    await rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'admin',$3)", [a.site.id, admin.user.id, Date.now()]);
+    await putUserSiteRole(rbacQuery, a.site.id, admin.user.id, 'admin', null);
     expect((await PUT(req(admin.cookie, "PUT", { versionId: a.version.id }), params(a.site.slug))).status).toBe(200);
     expect((await DELETE(req(admin.cookie, "DELETE", {}), params(a.site.slug))).status).toBe(200);
   });
@@ -113,7 +114,7 @@ describe("official API authorization and publication", () => {
   });
   it("designates an uploaded replacement atomically and rejects editors or stale writes", async () => {
     const a = await setup(), editor = await identity();
-    await rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'editor',$3)", [a.site.id, editor.user.id, Date.now()]);
+    await putUserSiteRole(rbacQuery, a.site.id, editor.user.id, 'editor', null);
     const body = { mode: "paste", html: "<h1>Second</h1>", official: true };
     expect((await replace(req(editor.cookie, "POST", body), params(a.site.slug))).status).toBe(403);
     const response = await replace(req(a.cookie, "POST", body, `?expected_version=${a.version.id}`), params(a.site.slug));

@@ -76,7 +76,7 @@ export function describeRuntime(): RuntimeReport {
   if (!publicUrl) warnings.push("ARTIFACT_PUBLIC_URL is not set: behind a reverse proxy, the OIDC callback, CSRF checks and the addresses in /for-agents.md are all derived from the request Host.");
 
   const policy = effective.createPolicy;
-  lines.push(`create policy: ${policy}; anonymous creators: ${effective.anonymousSites}; default visibility: ${effective.defaultVisibility}; ownership enforced: ${config.enforceOwnership ? "yes" : "no"} (policy values may be overridden from the console; see /admin/settings)`);
+  lines.push(`create policy: ${policy}; anonymous creators: ${effective.anonymousSites}; default visibility: ${effective.defaultVisibility}; ownership enforced: yes (policy values may be overridden from the console; see /admin/settings)`);
   if (policy === "open" && publicUrl) {
     warnings.push("The create policy is open: anyone who can reach the service can upload. Fine for internal use; for public deployments set ARTIFACT_CREATE_POLICY=login or token.");
   }

@@ -51,7 +51,6 @@ describe("migrations", () => {
     // assigned manually, which is the intended migration path.
     expect(site!.ownerId).toBeNull();
     expect(site!.visibility).toBe("public");
-    expect(site!.editPolicy).toBe("owner");
     await store.close();
   });
 });

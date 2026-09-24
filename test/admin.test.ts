@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rbacQuery, closeDbForTests, getSiteBySlug, insertPublishToken, listAdminLog, listSitesByOwner, updateSiteSharing, upsertUser } from "@/lib/db";
+import { rbacQuery, closeDbForTests, getSiteBySlug, insertPublishToken, listAdminLog, listSitesByOwner, updateSiteVisibility, upsertUser } from "@/lib/db";
 import { readAccess } from "@/lib/share";
 import { flushAfterResponseForTests } from "@/lib/after-response";
 import SitePage from "@/app/s/[slug]/page";
@@ -216,7 +216,7 @@ describe("an administrator may read any site — on the record", () => {
     const member = await person("member@example.net");
     const owner = await person("owner@example.net");
     const { site } = await createSite({ mode: "paste", html: "<title>P</title><body>secret</body>" }, { ownerId: owner.user.id });
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     expect((await SITE_GET(req(`/api/sites/${site.slug}`, { headers: { cookie: member.cookie } }), params({ slug: site.slug }))).status).toBe(404);
     expect((await SITE_GET(req(`/api/sites/${site.slug}`, { headers: { cookie: admin.cookie } }), params({ slug: site.slug }))).status).toBe(403);
     expect((await PREVIEW(req(`/api/preview/${site.slug}`, { headers: { cookie: admin.cookie } }), params({ slug: site.slug }))).status).toBe(200);
@@ -232,7 +232,7 @@ describe("an administrator may read any site — on the record", () => {
     const admin = await person("admin@example.net");
     const owner = await person("owner@example.net");
     const { site } = await createSite({ mode: "paste", html: "<title>P</title><body>secret</body>" }, { ownerId: owner.user.id });
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const open = async (cookie: string) => {
       headerCookie = cookie;
       await SitePage({ params: Promise.resolve({ slug: site.slug }), searchParams: Promise.resolve({}) });
@@ -256,7 +256,7 @@ describe("an administrator may read any site — on the record", () => {
     const admin = await person("admin@example.net");
     const owner = await person("owner@example.net");
     const { site } = await createSite({ mode: "paste", html: "<title>P</title><body>secret</body>" }, { ownerId: owner.user.id });
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     expect((await PREVIEW(req(`/api/preview/${site.slug}`, { headers: { cookie: admin.cookie } }), params({ slug: site.slug }))).status).toBe(200);
     expect((await listAdminLog({ targetId: site.id })).map((e) => e.action)).toEqual(["site.view"]);
   });
@@ -268,7 +268,7 @@ describe("the owner's view of the administration log", () => {
     const owner = await person("owner@example.net");
     const stranger = await person("stranger@example.net");
     const { site } = await createSite({ mode: "paste", html: "<title>P</title><body>x</body>" }, { ownerId: owner.user.id });
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const activity = (cookie: string) => ACTIVITY(req(`/api/sites/${site.slug}/admin-activity`, { headers: { cookie } }), params({ slug: site.slug }));
     expect(((await (await activity(owner.cookie)).json()) as { entries: unknown[] }).entries).toEqual([]);
 
@@ -420,7 +420,7 @@ describe("assigning unowned sites", () => {
     delete process.env.PUBLISH_API_TOKEN;
     const admin = await person("admin@example.net"), target = await person("recipient@example.net");
     const { site } = await createSite({ mode: "paste", html: "<html>lost browser</html>" });
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const { POST } = await import("@/app/api/admin/sites/[slug]/owner/route");
     const call = (headers: H, email = target.user.email!) => POST(req(`/api/admin/sites/${site.slug}/owner`, { method: "POST", headers, body: { email } }), params({ slug: site.slug }));
     expect((await call(asCookie(target.cookie))).status).toBe(401);

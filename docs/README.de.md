@@ -32,7 +32,7 @@ Heute stehen unzählige KI-Agenten zur Auswahl, doch ihre Ergebnisse verteilen s
 
 **artifact-site ist ein selbst gehosteter Arbeitsbereich für Einzelpersonen und Teams, ähnlich wie Claude Artifacts oder OpenAI Sites.** Ihre verschiedenen Agenten erstellen die Inhalte; artifact-site verwaltet sie zentral: Seiten und Dokumente werden zu Links, mit Freigaben, Kommentaren und Feedback, Zugriffskontrolle und Versionsverlauf. Ihre bisherigen Agenten können die Arbeit über die CLI oder MCP weiter bearbeiten, veröffentlichen, durchsuchen und aktualisieren.
 
-> **[Live-Demo ausprobieren](https://artifact-site.app.lexmount.com/)** – keine Installation nötig. Ziehen Sie eine Datei hinein, um sie zu veröffentlichen und einen teilbaren Link zu erhalten, ohne Anmeldung.
+> **[Live-Demo ausprobieren](https://artifact-site.app.lexmount.com/)** – keine Installation nötig. Ziehen Sie eine Datei hinein, um sie zu veröffentlichen und einen teilbaren Link zu erhalten. Testen Sie die Demo anonym oder **melden Sie sich mit Google oder GitHub an**, um Ihre Sites zu behalten, in Ordnern zu organisieren und festzulegen, wer jeden Link öffnen darf.
 >
 > Anonyme Uploads laufen nach einigen Tagen ab. Dies ist eine öffentliche Demo; bitte laden Sie keine vertraulichen Informationen hoch.
 

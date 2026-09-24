@@ -7,6 +7,7 @@ carry the long version.
 
 ```bash
 npm install
+npm ci --prefix cli  # root typecheck/tests also load CLI code for cross-client acceptance
 make dev          # starts a throwaway Postgres in Docker, then `next dev` on http://127.0.0.1:4300
 npm test          # unit tests — no external services needed (SQLite is the test-only backend)
 npm run typecheck
@@ -29,6 +30,9 @@ E2E_CHROME=/path/to/chrome bash scripts/test-image.sh artifact-site:ci
   If you touch the Postgres store, run `make test-pg`; schema changes must be idempotent
   (`CREATE … IF NOT EXISTS`, additive `ALTER`) because replicas migrate concurrently under an
   advisory lock.
+- **Numbered migrations are immutable once shared or applied.** Add a new migration for changes;
+  never delete tracking rows to rerun data imports. Local `make test-pg` and CI share the
+  `test:pg:rbac` npm script; add PostgreSQL authorization regressions there.
 - **Untrusted content stays untrusted.** Anything that renders uploaded HTML outside the sandboxed
   iframe, relaxes the preview CSP, or accepts a path without going through `safeRelativePath`
   needs a security-focused review. See `SECURITY.md` for the threat model.

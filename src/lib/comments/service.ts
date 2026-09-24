@@ -1,3 +1,11 @@
+import { syncMentions } from "./mentions";
+import { autoFollow, recordReply } from "@/lib/notifications/events";
+import { rememberShareAccess } from "@/lib/notifications/receipts";
+import { isTokenSession } from "@/lib/publish-token";
+import { attachCommentImages, bindCommentAttachments } from "./attachments";
+import { requirePermission } from "@/lib/authz";
+import { canReadVersion, readableVersionFilter } from "@/lib/share";
+import type { AssociateCommentInput } from "./contracts";
 import { commentReadScopeKey } from "./contracts";
 import { canonicalCommentEmoji } from "./emoji";
 import "server-only";
@@ -5,6 +13,7 @@ import {
   createId,
   getSiteBySlug,
   getVersion,
+  listVersions,
   rbacQuery,
   rbacTransaction,
   toSite,
@@ -40,9 +49,11 @@ import type {
 } from "./contracts";
 import {
   fail,
+  commentSearchBodySql,
   loadThread,
   messageDTO,
   fingerprint,
+  legacyCommentFingerprint,
   ensureSpace,
   cursorDecode,
   cursorEncode,
@@ -123,6 +134,7 @@ async function messagePage(
   const more = rows.length > limit;
   const items = rows.slice(0, limit).map(messageDTO),
     last = items.at(-1);
+  await attachCommentImages(items);
   if (includeReactions) await attachReactions(items,userId);
   return {
     items,
@@ -164,12 +176,44 @@ async function authorizedThread(
   cache?.set(key, f);
   return { found, f };
 }
+/** The memoized values are valid only for this request and site, never across readers. */
+function detailLookups(request: Request, site: Site, session: Session | null) {
+  let edit: Promise<boolean> | undefined;
+  let readableVersions: ReturnType<typeof readableVersionFilter> | undefined;
+  let ordinals: Promise<Map<string, number>> | undefined;
+  const readOrdinals = () => ordinals ??= listVersions(site.id).then(versions => new Map(versions.map((version,index) => [version.id,versions.length-index])));
+  return {
+    readOrdinals,
+    canEdit: () => edit ??= requirePermission(request,site,"site.content.edit",session,false).then(()=>true,()=>false),
+    canReadResult: async (versionId: string) => {
+      const allowed=await (readableVersions ??= readableVersionFilter(request,site,session));
+      return allowed(versionId) && (await readOrdinals()).has(versionId);
+    },
+  };
+}
+/** Every public thread response uses the same result-version visibility rules. */
+async function visibleThread(thread: CommentThreadDetail["thread"], lookups: ReturnType<typeof detailLookups>) {
+  const visible = {...thread};
+  if (!visible.resultVersionId || !await lookups.canReadResult(visible.resultVersionId)) {
+    visible.resultVersionId = null;
+    visible.resultAssociation = null;
+    delete visible.resultVersionNumber;
+  } else {
+    visible.resultVersionNumber = (await lookups.readOrdinals()).get(visible.resultVersionId) ?? null;
+  }
+  return visible;
+}
+async function canAssociateResult(request: Request, site: Site, session: Session | null, f: CommentAccessFacts, lookups=detailLookups(request,site,session)) {
+  // Exact discussion facts remain outside the shared editorial-authority cache.
+  return Boolean(f.userId && f.canWriteArtifactDiscussion) && await lookups.canEdit();
+}
 async function detail(
   request: Request,
   site: Site,
   id: string,
   session: Session | null,
   cache?: ListFactsCache,
+  lookups = detailLookups(request,site,session),
 ): Promise<CommentThreadDetail> {
   const { found, f } = await authorizedThread(
     request,
@@ -178,6 +222,7 @@ async function detail(
     session,
     cache,
   );
+  found.thread = await visibleThread(found.thread, lookups);
   const messages = await messagePage(id, undefined, 30, session?.userId, !cache);
   const target = {
     scope: found.space,
@@ -188,6 +233,7 @@ async function detail(
     messages,
     permissions: {
       canReply: describeCommentPermissions(f).canReply,
+      canAssociateResult: await canAssociateResult(request, site, session, f, lookups),
       canResolve: canActOnComment(f, "resolve", target),
       canReopen: canActOnComment(f, "reopen", target),
       messages: Object.fromEntries(
@@ -311,6 +357,15 @@ export async function listComments(
     const actor=`$${params.length-1}`, baseline=`$${params.length}`;
     where += ` AND EXISTS (SELECT 1 FROM comment_messages unread WHERE unread.thread_id=t.id AND ${unreadMessagePredicate("unread",actor,baseline)})`;
   }
+  if (filter.q) {
+    const pattern = `%${filter.q.replace(/[\\%_]/g, character => `\\${character}`)}%`;
+    add(`EXISTS (SELECT 1 FROM comment_messages searched WHERE searched.thread_id=t.id AND searched.deleted_at IS NULL AND LOWER(${commentSearchBodySql("searched")}) LIKE LOWER(?) ESCAPE '\\')`, pattern);
+  }
+  // Participation is historical: deleting your text does not erase having joined a discussion.
+  if (filter.participated) {
+    if (!session) return fail(401, "Sign in to filter participated comments");
+    add("EXISTS (SELECT 1 FROM comment_messages participant WHERE participant.thread_id=t.id AND participant.author_user_id=?)", session.userId);
+  }
   if (filter.status) add("t.status=?", filter.status);
   const authorUserId = filter.kind === "aggregate" ? filter.authorUserId : undefined;
   const sort = filter.kind === "aggregate" ? filter.sort ?? "activity" : "activity";
@@ -324,6 +379,7 @@ export async function listComments(
     versionId: versionId ?? null,
     entry: entry ?? null,
     status: filter.status ?? null,
+    q: filter.q ?? null, participated: filter.participated ? session?.userId : null,
     ...(filter.unread ? {unread:true} : {}),
     authorUserId: authorUserId ?? null, sort,
   };
@@ -340,10 +396,24 @@ export async function listComments(
     params,
   );
   const items: CommentThreadDetail[] = [];
+  const lookups=detailLookups(request,site,session);
   for (const row of rows.slice(0, limit))
     items.push(
-      await detail(request, site, String(row.id), session, accessCache),
+      await detail(request, site, String(row.id), session, accessCache, lookups),
     );
+  if (filter.q && items.length) {
+    const pattern=`%${filter.q.replace(/[\\%_]/g, character => `\\${character}`)}%`;
+    const ids=items.map(item=>item.thread.id);
+    // One bounded query for the first visible match per authorized result thread.
+    const matches=await rbacQuery(`SELECT id,thread_id,body FROM (SELECT searched.id,searched.thread_id,${commentSearchBodySql("searched")} AS body,ROW_NUMBER() OVER (PARTITION BY searched.thread_id ORDER BY searched.created_at,searched.id) AS match_rank FROM comment_messages searched WHERE searched.thread_id IN (${ids.map((_,index)=>`$${index+1}`).join(",")}) AND searched.deleted_at IS NULL AND LOWER(${commentSearchBodySql("searched")}) LIKE LOWER($${ids.length+1}) ESCAPE '\\') ranked WHERE match_rank=1`,[...ids,pattern]);
+    const byThread=new Map(matches.map(match=>[String(match.thread_id),match]));
+    for(const item of items) {
+      const match=byThread.get(item.thread.id);
+      if(!match) continue;
+      const body=String(match.body), start=Math.max(0,body.toLowerCase().indexOf(filter.q.toLowerCase())-60);
+      item.searchMatch={messageId:String(match.id),excerpt:`${start ? "…" : ""}${Array.from(body.slice(start)).slice(0,240).join("")}`};
+    }
+  }
   await attachReactions(items.flatMap(item=>item.messages.items),session?.userId);
   const last = rows.slice(0, limit).at(-1);
   return {
@@ -370,6 +440,8 @@ export async function listAggregate(
     sort?: "activity" | "newest" | "oldest";
     status?: "open" | "resolved";
     unread?: boolean;
+    q?: string;
+    participated?: boolean;
     cursor?: string;
     limit?: number;
   },
@@ -468,13 +540,14 @@ export async function createComment(
       [identity.userId, input.clientRequestId],
     );
     if (old) {
-      if (old.request_fingerprint !== digest)
+      if (old.request_fingerprint !== digest && old.request_fingerprint !== await legacyCommentFingerprint(q, {type:"create",...input}))
         fail(409, "Request ID was already used for different content");
       return { id: String(old.thread_id), replayed: true };
     }
     if (!evidence) fail(409, "Replayed comment is no longer available");
     const spaceId = await ensureSpace(q, input.scope),
       id = createId("cth"),
+      messageId = createId("cmsg"),
       now = Date.now();
     await q(
       "INSERT INTO comment_threads(id,space_id,created_by,anchor,context_snapshot,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$6)",
@@ -488,17 +561,22 @@ export async function createComment(
       ],
     );
     await q(
-      "INSERT INTO comment_messages(id,thread_id,author_user_id,is_root,body,client_request_id,request_fingerprint,created_at) VALUES($1,$2,$3,1,$4,$5,$6,$7)",
+      "INSERT INTO comment_messages(id,thread_id,author_user_id,is_root,body,client_request_id,request_fingerprint,created_at,rich_content) VALUES($1,$2,$3,1,$4,$5,$6,$7,$8)",
       [
-        createId("cmsg"),
+        messageId,
         id,
         identity.userId,
-        input.body,
+        input.body || "[Image attachment]",
         input.clientRequestId,
         digest,
         now,
+        JSON.stringify({body:input.body,format:input.bodyFormat ?? "plain",mentions:input.mentions ?? []}),
       ],
     );
+    await bindCommentAttachments(q,input.scope,identity.userId,messageId,input.attachmentIds ?? []);
+    await syncMentions(q,{site:current,scope:input.scope,actorUserId:identity.userId},messageId,input.body,input.mentions ?? [],isTokenSession(identity),now);
+    await autoFollow(q,id,identity.userId,"create",now);
+    await rememberShareAccess(q,request,current,input.scope,identity);
     return { id, replayed: false };
   });
   return {
@@ -506,7 +584,7 @@ export async function createComment(
     replayed: result.replayed,
   };
 }
-async function writeThread(
+async function writeThread<T>(
   request: Request,
   slug: string,
   id: string,
@@ -516,7 +594,7 @@ async function writeThread(
     session: Session,
     found: NonNullable<Awaited<ReturnType<typeof loadThread>>>,
     f: CommentAccessFacts,
-  ) => Promise<unknown>,
+  ) => Promise<T>,
 ) {
   return write(request, slug, async (q, site, session) => {
     const found = await loadThread(id, q);
@@ -547,28 +625,38 @@ export async function replyComment(
       [session.userId, input.clientRequestId],
     );
     if (old) {
-      if (old.request_fingerprint !== digest)
+      if (old.request_fingerprint !== digest && old.request_fingerprint !== await legacyCommentFingerprint(q, {type:"reply",threadId:id,...input}))
         fail(409, "Request ID was already used for different content");
-      return messageDTO(old);
+      const replay = messageDTO(old);
+      await attachCommentImages([replay],q);
+      return replay;
     }
     const now = Date.now();
     const [row] = await q(
-      "INSERT INTO comment_messages(id,thread_id,author_user_id,is_root,body,client_request_id,request_fingerprint,created_at) VALUES($1,$2,$3,0,$4,$5,$6,$7) RETURNING *",
+      "INSERT INTO comment_messages(id,thread_id,author_user_id,is_root,body,client_request_id,request_fingerprint,created_at,rich_content) VALUES($1,$2,$3,0,$4,$5,$6,$7,$8) RETURNING *",
       [
         createId("cmsg"),
         id,
         session.userId,
-        input.body,
+        input.body || "[Image attachment]",
         input.clientRequestId,
         digest,
         now,
+        JSON.stringify({body:input.body,format:input.bodyFormat ?? "plain",mentions:input.mentions ?? []}),
       ],
     );
+    await bindCommentAttachments(q,found.space,session.userId,String(row.id),input.attachmentIds ?? []);
     await q("UPDATE comment_threads SET updated_at=$1 WHERE id=$2", [
       now,
       found.thread.id,
     ]);
-    return messageDTO(row);
+    await autoFollow(q,id,session.userId,"reply",now);
+    await rememberShareAccess(q,request,_site,found.space,session);
+    await recordReply(q,id,String(row.id),session.userId,isTokenSession(session),now);
+    await syncMentions(q,{site:_site,scope:found.space,actorUserId:session.userId},String(row.id),input.body,input.mentions ?? [],isTokenSession(session),now);
+    const message = messageDTO(row);
+    await attachCommentImages([message],q);
+    return message;
   });
 }
 export async function mutateMessage(
@@ -596,21 +684,29 @@ export async function mutateMessage(
       fail(403, "Action is not allowed");
     if (Number(old.revision) !== input.expectedRevision)
       fail(409, "Comment changed; refresh before trying again");
+    if (action === "edit" && !(input as EditCommentInput).body.trim()) {
+      const ids = (input as EditCommentInput).attachmentIds;
+      const retained = ids === undefined ? await q("SELECT id FROM comment_attachments WHERE message_id=$1 AND deleted_at IS NULL AND ready=1 LIMIT 1", [messageId]) : ids;
+      if (!retained.length) fail(400, "Comment needs text or an image");
+    }
     const now = Date.now();
+    const edited = input as EditCommentInput;
+    await syncMentions(q,{site:_site,scope:found.space,actorUserId:session.userId},messageId,action === "edit" ? edited.body : "",action === "edit" ? edited.mentions ?? [] : [],isTokenSession(session),now);
     let rows: Row[];
     if (action === "edit")
       rows = await q(
-        "UPDATE comment_messages SET body=$1,edited_at=$2,revision=revision+1 WHERE id=$3 AND revision=$4 RETURNING *",
+        "UPDATE comment_messages SET body=$1,edited_at=$2,revision=revision+1,rich_content=$5 WHERE id=$3 AND revision=$4 RETURNING *",
         [
-          (input as EditCommentInput).body,
+          (input as EditCommentInput).body || "[Image attachment]",
           now,
           messageId,
           input.expectedRevision,
+          JSON.stringify({body:(input as EditCommentInput).body,format:(input as EditCommentInput).bodyFormat ?? "plain",mentions:(input as EditCommentInput).mentions ?? []}),
         ],
       );
     else {
       rows = await q(
-        "UPDATE comment_messages SET body=NULL,deleted_at=$1,deleted_by=$2,revision=revision+1 WHERE id=$3 AND revision=$4 RETURNING *",
+        "UPDATE comment_messages SET body=NULL,rich_content=NULL,deleted_at=$1,deleted_by=$2,revision=revision+1 WHERE id=$3 AND revision=$4 RETURNING *",
         [now, session.userId, messageId, input.expectedRevision],
       );
       await q(
@@ -638,8 +734,12 @@ export async function mutateMessage(
         );
     }
     if (!rows.length) fail(409, "Comment changed; refresh before trying again");
+    if (action === "delete") await q("UPDATE comment_attachments SET deleted_at=$2 WHERE message_id=$1 AND deleted_at IS NULL",[messageId,now]);
+    else if ((input as EditCommentInput).attachmentIds !== undefined) await bindCommentAttachments(q,found.space,session.userId,messageId,(input as EditCommentInput).attachmentIds!);
     await q("UPDATE comment_threads SET updated_at=$1 WHERE id=$2", [now, id]);
-    return messageDTO(rows[0]);
+    const message = messageDTO(rows[0]);
+    await attachCommentImages([message],q);
+    return message;
   });
 }
 export async function resolveComment(
@@ -648,7 +748,7 @@ export async function resolveComment(
   id: string,
   input: ResolveCommentInput,
 ) {
-  return writeThread(request, slug, id, async (q, _site, session, found, f) => {
+  return writeThread(request, slug, id, async (q, site, session, found, f) => {
     if (
       !canActOnComment(f, input.status === "open" ? "reopen" : "resolve", {
         scope: found.space,
@@ -669,7 +769,33 @@ export async function resolveComment(
       ],
     );
     if (!row) fail(409, "Thread changed; refresh before trying again");
-    return (await loadThread(id, q))!.thread;
+    return visibleThread((await loadThread(id, q))!.thread, detailLookups(request, site, session));
+  });
+}
+export async function commentResultOptions(request: Request, slug: string, id: string) {
+  const site = await commentSite(slug), session = await resolveSession(request);
+  const {f} = await authorizedThread(request, site, id, session);
+  if (!await canAssociateResult(request, site, session, f)) fail(403, "Action is not allowed");
+  const versions = await listVersions(site.id);
+  const visible = [];
+  const readableVersion=await readableVersionFilter(request,site,session);
+  for (const [index,version] of versions.entries()) if (readableVersion(version.id)) visible.push({id:version.id,createdAt:version.createdAt,number:versions.length-index});
+  return {versions:visible};
+}
+/** Association is editorial metadata, not a resolution or a move to a new discussion. */
+export async function associateCommentResult(request: Request, slug: string, id: string, input: AssociateCommentInput) {
+  return writeThread(request, slug, id, async (q, site, session, found, f) => {
+    if (!await canAssociateResult(request, site, session, f)) fail(403, "Action is not allowed");
+    if (input.versionId) {
+      const version = await getVersion(input.versionId);
+      if (!version || version.siteId !== site.id || !await canReadVersion(request, site, input.versionId, session)) fail(404, "Version not found");
+    }
+    const now = Date.now();
+    const actorKind = isTokenSession(session) ? "agent" : "user";
+    const [row] = await q("UPDATE comment_threads SET result_version_id=$1,result_associated_by=$2,result_associated_at=$3,result_actor_kind=$4,revision=revision+1,updated_at=$5 WHERE id=$6 AND revision=$7 RETURNING *", [input.versionId,input.versionId ? session.userId : null,input.versionId ? now : null,input.versionId ? actorKind : null,now,id,input.expectedRevision]);
+    if (!row) fail(409, "Thread changed; refresh before trying again");
+    await q("INSERT INTO rbac_audit(id,tenant_id,actor_id,action,target_id,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [createId("rba"),site.tenantId,session.userId,"comment.result.associate",id,JSON.stringify({previousVersionId:found.thread.resultVersionId ?? null,versionId:input.versionId,actorKind}),now]);
+    return visibleThread((await loadThread(id, q))!.thread, detailLookups(request, site, session));
   });
 }
 export async function commentSettings(

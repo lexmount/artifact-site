@@ -1,12 +1,13 @@
 import "server-only";
 
 // Search over the text index (lib/site-text): the words → tokens → store → hits with a snippet.
-import { searchSiteTexts, type ListViewer } from "@/lib/db";
+import { searchSiteTexts, type ListViewer, type SiteRelationship } from "@/lib/db";
 import { siteUrl } from "@/lib/sites";
 import { queryTokens, snippetOf } from "@/lib/site-text";
 import type { SiteKind, Visibility } from "@/lib/types";
 
 export interface SearchResult {
+  relationship: SiteRelationship;
   slug: string;
   title: string;
   kind: SiteKind;
@@ -23,5 +24,5 @@ export async function searchSites(viewer: ListViewer | undefined, query: string,
   const tokens = queryTokens(query);
   if (!tokens.length) return [];
   const hits = await searchSiteTexts(viewer, tokens, limit);
-  return hits.map((h) => ({ slug: h.slug, title: h.title, kind: h.kind, visibility: h.visibility, takenDownAt: h.takenDownAt, updatedAt: h.updatedAt, url: siteUrl(h.slug), snippet: snippetOf(h.body, query) }));
+  return hits.map((h) => ({ relationship: h.relationship, slug: h.slug, title: h.title, kind: h.kind, visibility: h.visibility, takenDownAt: h.takenDownAt, updatedAt: h.updatedAt, url: siteUrl(h.slug), snippet: snippetOf(h.body, query) }));
 }

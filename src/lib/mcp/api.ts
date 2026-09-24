@@ -1,3 +1,10 @@
+import * as folders from "@/app/api/me/folders/route";
+import * as assignments from "@/app/api/me/folders/assignments/route";
+import * as commentResult from "@/app/api/sites/[slug]/comments/[threadId]/result/route";
+import * as commentList from "@/app/api/sites/[slug]/comments/agent-list/route";
+import * as commentDetail from "@/app/api/sites/[slug]/comments/[threadId]/route";
+import * as commentMessages from "@/app/api/sites/[slug]/comments/[threadId]/messages/route";
+import * as commentContext from "@/app/api/sites/[slug]/comments/[threadId]/agent-context/route";
 import * as operationStatus from "@/app/api/operations/[key]/route";
 import * as uploadStatus from "@/app/api/uploads/[versionId]/route";
 // Explicit in-process route dispatch: reuse the HTTP permission/business boundary without
@@ -19,7 +26,7 @@ import * as uploadFile from "@/app/api/uploads/[versionId]/files/[...relpath]/ro
 
 import * as official from "@/app/api/sites/[slug]/official/route";
 
-export type Operation = "operation_status" | "upload_status" | "official" | "official_set" | "official_clear" | "publish" | "get" | "rename" | "delete" | "versions" | "update" | "edit" | "fork" | "rollback" | "share" | "shares" | "search" | "read" | "list" | "whoami" | "upload_start" | "upload_file" | "upload_commit";
+export type Operation = "public_list" | "folders" | "move" | "comment_result" | "comments_list" | "comment_read" | "comment_messages" | "comment_context" | "operation_status" | "upload_status" | "official" | "official_set" | "official_clear" | "publish" | "get" | "rename" | "delete" | "versions" | "update" | "edit" | "fork" | "rollback" | "share" | "shares" | "search" | "read" | "list" | "whoami" | "upload_start" | "upload_file" | "upload_commit";
 export function apiRequest(source: Request, route: string, method = "GET", body?: BodyInit) {
   const url = new URL(route, source.url);
   const authorization = source.headers.get("authorization")!;
@@ -28,13 +35,22 @@ export function apiRequest(source: Request, route: string, method = "GET", body?
   if (typeof body === "string") headers.set("content-type", "application/json");
   return new Request(url, { method, headers, body, signal: source.signal, ...(body instanceof ReadableStream ? { duplex: "half" } : {}) });
 }
-export async function callApi(source: Request, op: Operation, args: { key?: string; slug?: string; versionId?: string; file?: string; query?: Record<string, string>; body?: unknown; raw?: BodyInit } = {}) {
+export async function callApi(source: Request, op: Operation, args: { threadId?: string; key?: string; slug?: string; versionId?: string; file?: string; query?: Record<string, string>; body?: unknown; raw?: BodyInit } = {}) {
   const slug = args.slug ?? "";
   const versionId = args.versionId ?? "";
-  const params = { params: Promise.resolve({ key: args.key ?? "", slug, versionId, relpath: (args.file ?? "").split("/") }) };
+  const params = { params: Promise.resolve({ threadId: args.threadId ?? "", key: args.key ?? "", slug, versionId, relpath: (args.file ?? "").split("/") }) };
   const item = `/api/sites/${encodeURIComponent(slug)}`;
   const query = args.query ? `?${new URLSearchParams(args.query)}` : "";
+  const thread = `${item}/comments/${encodeURIComponent(args.threadId ?? "")}`;
   const routes = {
+    public_list: ["GET", "/api/sites", collection.GET],
+    folders: ["GET", "/api/me/folders", folders.GET],
+    move: ["PUT", "/api/me/folders/assignments", assignments.PUT],
+    comments_list: ["GET", `${item}/comments/agent-list`, commentList.GET],
+    comment_read: ["GET", thread, commentDetail.GET],
+    comment_messages: ["GET", `${thread}/messages`, commentMessages.GET],
+    comment_result: ["PATCH", `${thread}/result`, commentResult.PATCH],
+    comment_context: ["GET", `${thread}/agent-context`, commentContext.GET],
     operation_status: ["GET", `/api/operations/${encodeURIComponent(args.key ?? "")}`, operationStatus.GET],
     upload_status: ["GET", `/api/uploads/${versionId}`, uploadStatus.GET],
     official: ["GET", `${item}/official`, official.GET], official_set: ["PUT", `${item}/official`, official.PUT], official_clear: ["DELETE", `${item}/official`, official.DELETE],

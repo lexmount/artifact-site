@@ -1,10 +1,11 @@
 "use client";
+import { invalidateClientCaches } from "@/lib/client-cache";
 // Client-side auth state. One shared fetch of /api/auth/me, cached per page load.
 //
 // `oidcEnabled` matters as much as `user`: with no IdP configured the product must look exactly
 // as it did before identity existed, so every auth affordance hides rather than offering a login
 // that cannot work.
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 export interface MeUser {
   id: string;
@@ -24,33 +25,62 @@ export interface AuthState {
 type Loaded = { user: MeUser | null; oidcEnabled: boolean; isAdmin: boolean };
 let cached: Loaded | null = null;
 let inflight: Promise<Loaded> | null = null;
+let generation = 0;
+const loadingSnapshot: AuthState = { user: null, oidcEnabled: false, isAdmin: false, loading: true };
+let clientSnapshot: AuthState = loadingSnapshot;
+const listeners = new Set<() => void>();
+
+function publish(result: Loaded): void {
+  clientSnapshot = { ...result, loading: false };
+  for (const listener of listeners) listener();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function getClientSnapshot(): AuthState { return clientSnapshot; }
+function getServerSnapshot(): AuthState { return loadingSnapshot; }
 
 function load(): Promise<Loaded> {
   if (cached) return Promise.resolve(cached);
   if (!inflight) {
+    const started = generation;
     inflight = fetch("/api/auth/me")
       .then((r) => r.json())
       .then((body: { user?: MeUser | null; oidcEnabled?: boolean; isAdmin?: boolean }) => {
-        cached = { user: body.user ?? null, oidcEnabled: Boolean(body.oidcEnabled), isAdmin: Boolean(body.isAdmin) };
-        return cached;
+        const result = { user: body.user ?? null, oidcEnabled: Boolean(body.oidcEnabled), isAdmin: Boolean(body.isAdmin) };
+        if (started === generation) { cached = result; publish(result); }
+        return result;
       })
-      .catch(() => ({ user: null, oidcEnabled: false, isAdmin: false }))
-      .finally(() => { inflight = null; });
+      .catch(() => {
+        const unavailable = { user: null, oidcEnabled: false, isAdmin: false };
+        if (started === generation) publish(unavailable);
+        return unavailable;
+      })
+      .finally(() => { if (started === generation) inflight = null; });
   }
   return inflight;
 }
 
 /** Drop the cache after a login or logout so the header re-reads the real state. */
 export function resetAuthCache(): void {
+  generation += 1;
+  inflight = null;
   cached = null;
+  clientSnapshot = loadingSnapshot;
+  for (const listener of listeners) listener();
+  invalidateClientCaches();
+  void load();
 }
 
 export function useAuth(): AuthState {
-  const [state, setState] = useState<AuthState>({ user: null, oidcEnabled: false, isAdmin: false, loading: true });
+  // Hydration uses the stable server snapshot, while later client-side mounts can synchronously
+  // reuse the resolved snapshot instead of flashing the loading placeholder on every navigation.
+  const state = useSyncExternalStore(subscribe, getClientSnapshot, getServerSnapshot);
   useEffect(() => {
-    let alive = true;
-    load().then((r) => { if (alive) setState({ ...r, loading: false }); });
-    return () => { alive = false; };
+    void load();
   }, []);
   return state;
 }

@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
   // Emit a self-contained server bundle (.next/standalone/server.js) so the
   // Docker runtime image can drop node_modules and the source tree entirely.
   output: "standalone",
+  // A short, in-memory router cache avoids refetching on back-and-forth navigation.
+  // Mutations refresh the router; sign-in/out performs a full navigation.
+  experimental: { staleTimes: { dynamic: 30 } },
 
   // PDF.js resolves its Node worker beside pdf.mjs. Bundling relocates that import into
   // .next/server/chunks, where no worker exists; keep the package's native module layout.
@@ -21,6 +24,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/*": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
     "/for-agents": ["./src/content/publish-skill.md"],
+    "/for-agents/reference": ["./src/content/publish-skill.md"],
     "/for-agents.md": ["./src/content/publish-skill.md"],
   },
 

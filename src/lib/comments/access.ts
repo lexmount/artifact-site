@@ -1,3 +1,5 @@
+import { receiptShare, sessionReceiptShare } from "@/lib/notifications/receipts";
+import { rolePermissions } from "@/lib/role-bindings";
 import { readerVersionAllowed } from "@/lib/version-access";
 import "server-only";
 import { rbacQuery, toSite, toShareRow } from "@/lib/db";
@@ -25,10 +27,18 @@ export async function resolveCommentAccess(
   request: Request, site: Site, scope: CommentScope, existingSession?: Session | null,
 ): Promise<CommentAccessFacts> {
   const session = existingSession === undefined ? await resolveSession(request) : existingSession;
+  return resolveCommentFacts(request,site,scope,session);
+}
+/** Recipient checks have no session, anonymous cookie or administrative elevation. */
+export async function resolveCommentRecipientAccess(site: Site, scope: CommentScope, userId: string) {
+  return resolveCommentFacts(new Request("https://recipient.invalid"),site,scope,null,userId);
+}
+async function resolveCommentFacts(request:Request,site:Site,scope:CommentScope,session:Session|null,recipientUserId?:string):Promise<CommentAccessFacts> {
+  const identity = recipientUserId ? {userId:recipientUserId} : session;
   const denied: CommentAccessFacts = {
-    scope, userId: session?.userId ?? null, canReadArtifact: false, canReadMainArtifact: false,
+    scope, userId: identity?.userId ?? null, canReadArtifact: false, canReadMainArtifact: false,
     canWriteArtifactDiscussion: false, accountRole: null, managementRole: null,
-    mainPolicy: "off", shareMode: null,
+    mainPolicy: "off", shareMode: null, permissions: [],
   };
   if (site.id !== scope.siteId) return denied;
   // Do not trust a stale Site object from a page or the pre-transaction read.
@@ -38,16 +48,17 @@ export async function resolveCommentAccess(
   const [version] = await rbacQuery("SELECT id FROM versions WHERE id=$1 AND site_id=$2", [scope.versionId, current.id]);
   if (!version) return denied;
   if (session) await assertSessionCurrent(rbacQuery, session);
-  const account = await accountSiteRole(current, session);
+  if (recipientUserId && !(await rbacQuery("SELECT id FROM users WHERE id=$1 AND disabled_at IS NULL",[recipientUserId])).length) return denied;
+  const account = await accountSiteRole(current, identity);
   const management = await managementRole(request, current, session);
-  const accountRole = account === "owner" || account === "site-admin" || account === "editor" ? account : null;
+  const accountRole = account;
   const elevated = management === "platform-admin" || management === "tenant-admin" ? management : null;
   const manager = elevated !== null || accountRole === "owner" || accountRole === "site-admin";
   // Ordinary artifact readers may access latest and the currently designated official snapshot.
   // This predicate is evaluated from the fresh site row and never grants arbitrary history.
   const readablePublicVersion = readerVersionAllowed(current, scope.versionId);
   // A separate no-share path: neither token carrier nor passcode cookies are consulted here.
-  const mainReadable = Boolean(accountRole || elevated || isAnonymousCreator(resolveViewer(request, session), current)
+  const mainReadable = Boolean((accountRole && (readablePublicVersion || (await rolePermissions(accountRole)).includes("site.history.read"))) || elevated || isAnonymousCreator(resolveViewer(request, session), current)
     || (!current.takenDownAt && current.visibility !== "private" && readablePublicVersion));
   const [settings] = await rbacQuery("SELECT main_policy FROM site_comment_settings WHERE site_id=$1", [current.id]);
   const mainPolicy = settings ? (settings.main_policy === "login" || settings.main_policy === "members" ? settings.main_policy : "off") : "login";
@@ -66,12 +77,14 @@ export async function resolveCommentAccess(
       if (!admitted && live && token && safeEqual(hashToken(token), share.tokenHash)) {
         admitted = (await sharePolicyAccess(request, share, { session })).ok;
       }
+      if (!admitted && live && !token) admitted = Boolean(recipientUserId ? await receiptShare(current,scope.versionId,recipientUserId,share.id) : await sessionReceiptShare(current,scope.versionId,session,share.id));
       shareReadable = live && admitted;
       if (shareReadable) shareMode = share.mode;
     }
   }
   return {
-    scope, userId: session?.userId ?? null, accountRole, managementRole: elevated, mainPolicy, shareMode,
+    scope, userId: identity?.userId ?? null, accountRole, managementRole: elevated, mainPolicy, shareMode,
+    permissions: await rolePermissions(elevated ?? accountRole),
     canReadMainArtifact: mainReadable,
     canReadArtifact: scope.entry.kind === "main" ? mainReadable : shareExists && ((manager && mainReadable) || shareReadable),
     canWriteArtifactDiscussion: !current.takenDownAt && Boolean(session) && (!session?.scopes || session.scopes.includes(SCOPE_WRITE)),

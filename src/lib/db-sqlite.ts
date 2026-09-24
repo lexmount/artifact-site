@@ -1,7 +1,7 @@
 import { listSharesQuery } from "@/lib/share-queries";
 import { migrateNumbered } from "@/lib/migrations";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { searchTenantUsers, migrateRbac, initializeUserTenant, type RbacQuery } from "@/lib/rbac-store";
+import { searchTenantUsers, initializeUserTenant, type RbacQuery } from "@/lib/rbac-store";
 import { isDeepStrictEqual } from "node:util";
 // SQLite metadata backend (node:sqlite). Node-local, single-writer — the default. Methods are
 // async to satisfy the MetadataStore interface, but the underlying calls are synchronous.
@@ -13,8 +13,8 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dataPath } from "@/lib/config";
 import type {
-  AuditEntry, EditPolicy, InsertShareInput, Session, Share, ShareGrant, SharePolicy, ShareRow, ShareView,
-  Site, SiteCollaborator, SiteOpen, SiteSummary, SiteView, SiteViewStats, User, Version, Visibility,
+  AuditEntry, InsertShareInput, Session, Share, ShareGrant, SharePolicy, ShareRow, ShareView,
+  Site, SiteOpen, SiteSummary, SiteView, SiteViewStats, User, Version, Visibility,
   AdminAction, AdminLogEntry, AdminOverview, AdminSiteRow, AdminUserRow, SettingRow, SettingWrite,
   OauthAuthorization, OauthClientRecord, OauthConnection, OauthToken,
 } from "@/lib/types";
@@ -49,7 +49,6 @@ import {
   toSummary,
   toUploadSession,
   type UploadSessionRow,
-  toCollaborator,
   toSession,
   toUser,
   toVersion,
@@ -340,27 +339,6 @@ export class SqliteStore implements MetadataStore {
         DELETE FROM site_texts_fts WHERE site_id = OLD.site_id;
       END;
 
-      CREATE TABLE IF NOT EXISTS site_collaborators (
-        site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        role TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('editor')),
-        granted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-        granted_at INTEGER NOT NULL,
-        PRIMARY KEY (site_id, user_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_collab_user ON site_collaborators(user_id, granted_at DESC);
-
-      CREATE TABLE IF NOT EXISTS site_invites (
-        id TEXT PRIMARY KEY,
-        site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-        email TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('editor')),
-        invited_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL,
-        accepted_at INTEGER
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_site_invites_email ON site_invites(site_id, lower(email));
 
       -- Share links. Mirrors the Postgres side statement for statement; see the comments there for
       -- why each link is a separate object with its own lookup hash.
@@ -379,6 +357,8 @@ export class SqliteStore implements MetadataStore {
         allow_ai INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS idx_shares_site ON site_shares(site_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_shares_creator ON site_shares(created_by);
+      CREATE INDEX IF NOT EXISTS idx_shares_anon_creator ON site_shares(created_anon);
 
       CREATE TABLE IF NOT EXISTS share_grants (
         share_id TEXT NOT NULL REFERENCES site_shares(id) ON DELETE CASCADE,
@@ -483,8 +463,6 @@ export class SqliteStore implements MetadataStore {
     if (!columns.has("edit_token")) this.db.exec("ALTER TABLE sites ADD COLUMN edit_token TEXT");
     this.addColumnIfMissing("sites", "owner_id", "TEXT REFERENCES users(id)");
     this.addColumnIfMissing("sites", "visibility", "TEXT NOT NULL DEFAULT 'public'");
-    this.addColumnIfMissing("sites", "edit_policy", "TEXT NOT NULL DEFAULT 'owner'");
-    this.addColumnIfMissing("sites", "claim_token", "TEXT");
     this.addColumnIfMissing("sites", "anon_owner_id", "TEXT");
     this.addColumnIfMissing("versions", "created_by", "TEXT REFERENCES users(id)");
     this.addColumnIfMissing("site_shares", "allow_ai", "INTEGER NOT NULL DEFAULT 0");
@@ -505,7 +483,7 @@ export class SqliteStore implements MetadataStore {
     this.addColumnIfMissing("sites", "official_set_at", "BIGINT");
     this.addColumnIfMissing("sites", "official_set_by", "TEXT");
     this.addColumnIfMissing("sites", "official_revision", "BIGINT NOT NULL DEFAULT 0");
-    await this.rbacTransaction(async q => { await migrateRbac(q); await migrateNumbered(q, "sqlite"); });
+    await this.rbacTransaction(async q => { await migrateNumbered(q, "sqlite"); });
     await this.backfillEditTokens();
   }
 
@@ -525,16 +503,16 @@ export class SqliteStore implements MetadataStore {
 
   async insertSite(input: InsertSiteInput): Promise<void> {
     const now = Date.now();
-    this.db.prepare("INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, claim_token, anon_owner_id, visibility) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?)")
-      .run(input.id, input.slug, input.title, input.kind, now, now, input.editToken, input.claimToken ?? null, input.anonOwnerId ?? null, input.visibility);
+    this.db.prepare("INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, anon_owner_id, visibility) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?)")
+      .run(input.id, input.slug, input.title, input.kind, now, now, input.editToken, input.anonOwnerId ?? null, input.visibility);
   }
 
   async insertSiteWithVersion(site: InsertSiteInput, version: InsertVersionInput, audit?: InsertAuditInput): Promise<void> {
     const now = Date.now();
     this.db.exec("BEGIN");
     try {
-      this.db.prepare("INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, claim_token, anon_owner_id, owner_id, visibility, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)")
-        .run(site.id, site.slug, site.title, site.kind, version.id, now, now, site.editToken, site.claimToken ?? null, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, site.tenantId ?? (site.ownerId ? "init" : "anonymous"));
+      this.db.prepare("INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, anon_owner_id, owner_id, visibility, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)")
+        .run(site.id, site.slug, site.title, site.kind, version.id, now, now, site.editToken, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, site.tenantId ?? (site.ownerId ? "init" : "anonymous"));
       this.db.prepare("INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now);
       if (audit) this.writeAuditRow(audit, now);
@@ -676,17 +654,17 @@ export class SqliteStore implements MetadataStore {
       SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
              (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.rowid <= (SELECT rowid FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
-             ${options?.withViews ? `CASE WHEN (s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (s.owner_id IS NULL AND s.anon_owner_id = ?) THEN (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) + COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id), 0) END AS total_views,` : ""}
+             ${options?.withViews ? `CASE WHEN (s.owner_id = ? AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (s.owner_id IS NULL AND s.anon_owner_id = ?) THEN (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) + COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id), 0) END AS total_views,` : ""}
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
         AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL)
-             OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
+             OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = ?)
-             OR EXISTS (SELECT 1 FROM site_members c
-                         WHERE c.site_id = s.id AND c.user_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
-      ${options?.ownedOnly ? `AND ((s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (? IS NULL AND s.owner_id IS NULL AND s.anon_owner_id = ?))` : ""}
+             OR EXISTS (SELECT 1 FROM authorization_site_members c
+                         WHERE c.site_id = s.id AND c.subject_type<>'everyone' AND c.user_id = ?))
+      ${options?.ownedOnly ? `AND ((s.owner_id = ? AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (? IS NULL AND s.owner_id IS NULL AND s.anon_owner_id = ?))` : ""}
       ORDER BY s.updated_at DESC, s.slug ASC
       ${options?.limit ? `LIMIT ${Math.max(1, Math.min(100, Math.trunc(options.limit)))}` : ""}
     `).all(...(options?.withViews ? [viewer?.userId ?? null, viewer?.anonId ?? null] : []), viewer?.userId ?? null, viewer?.anonId ?? null, viewer?.userId ?? null, ...(options?.ownedOnly ? [viewer?.userId ?? null, viewer?.userId ?? null, viewer?.anonId ?? null] : [])) as Row[];
@@ -727,6 +705,37 @@ export class SqliteStore implements MetadataStore {
     // Only an insert keeps candidateId; the returned/read-back id makes `created` atomic,
     // including simultaneous first sign-ins for the same provider subject.
     const candidateId = createId("usr");
+
+    if (input.migrateVerifiedEmail && input.emailVerified && input.email) {
+      const migrationEmail = input.email;
+      const exact = this.db.prepare("SELECT id FROM users WHERE auth_provider=? AND provider_subject=?")
+        .get(input.authProvider, input.providerSubject) as Row | undefined;
+      if (!exact) {
+        const emailMatches = this.db.prepare(
+          "SELECT id, provider_subject FROM users WHERE auth_provider=? AND email_verified=1 AND lower(email)=lower(?) ORDER BY created_at, id LIMIT 2",
+        ).all(input.authProvider, input.email) as Row[];
+        if (emailMatches[0]) {
+          const id = emailMatches[0].id as string;
+          await this.rbacTransaction(async (q) => {
+            this.db.prepare(
+              `UPDATE users SET provider_subject=?, email=?, email_verified=1,
+                 display_name=?, avatar_url=?, updated_at=?, last_login_at=? WHERE id=?`,
+            ).run(input.providerSubject, migrationEmail,
+                  input.displayName ?? null, input.avatarUrl ?? null, now, now, id);
+            await initializeUserTenant(q, id);
+          });
+          const migration = {
+            userId: id, oldSubject: emailMatches[0].provider_subject,
+            newSubject: input.providerSubject, matchedUserIds: emailMatches.map(row => row.id),
+          };
+          console.info("[oidc-account-migration]", JSON.stringify(migration));
+          if (emailMatches.length > 1)
+            console.warn("[oidc-account-migration] Duplicate email; selected earliest account", JSON.stringify(migration));
+          return { ...(await this.getUser(id))!, created: false };
+        }
+      }
+    }
+
     this.db.prepare(
       `INSERT INTO users (id, auth_provider, provider_subject, email, email_verified, display_name, avatar_url, created_at, updated_at, last_login_at)
        VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -748,7 +757,7 @@ export class SqliteStore implements MetadataStore {
   }
 
   async getUserByVerifiedEmail(email: string): Promise<User | null> {
-    const row = this.db.prepare("SELECT * FROM users WHERE lower(email)=lower(?) AND email_verified = 1").get(email) as Row | undefined;
+    const row = this.db.prepare("SELECT * FROM users WHERE lower(email)=lower(?) AND email_verified = 1 ORDER BY created_at, id LIMIT 1").get(email) as Row | undefined;
     return row ? toUser(row) : null;
   }
 
@@ -756,17 +765,13 @@ export class SqliteStore implements MetadataStore {
     return (await searchTenantUsers(this.rbacQuery, q, viewerId, limit)).map(toUser);
   }
 
-  async removeCollaborator(siteId: string, userId: string): Promise<void> {
-    this.db.prepare("DELETE FROM site_members WHERE site_id=? AND user_id=?").run(siteId, userId);
+  async updateSiteVisibility(siteId: string, visibility: Visibility): Promise<void> {
+    this.db.prepare("UPDATE sites SET visibility=?, updated_at=? WHERE id=? AND deleted_at IS NULL")
+      .run(visibility, Date.now(), siteId);
   }
 
-  async updateSiteSharing(siteId: string, visibility: Visibility, editPolicy: EditPolicy): Promise<void> {
-    this.db.prepare("UPDATE sites SET visibility=?, edit_policy=?, updated_at=? WHERE id=? AND deleted_at IS NULL")
-      .run(visibility, editPolicy, Date.now(), siteId);
-  }
-
-  async listCollaborators(siteId: string): Promise<SiteCollaborator[]> {
-    return (this.db.prepare("SELECT * FROM site_members WHERE site_id=? ORDER BY granted_at").all(siteId) as Row[]).map(toCollaborator);
+  async listAudienceExcludedUserIds(siteId: string): Promise<string[]> {
+    return (this.db.prepare("SELECT user_id FROM authorization_site_members WHERE subject_type='user' AND role IN ('admin','editor') AND site_id=? ORDER BY granted_at").all(siteId) as Row[]).map(row => String(row.user_id));
   }
 
   // --- share links -------------------------------------------------------------
@@ -806,16 +811,16 @@ export class SqliteStore implements MetadataStore {
   }
 
   async revokeShare(id: string, at: number): Promise<void> {
-    this.db.prepare("UPDATE site_shares SET revision=revision+1, revoked_at=? WHERE id=? AND revoked_at IS NULL").run(at, id);
+    this.db.prepare("UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1, revoked_at=? WHERE id=? AND revoked_at IS NULL").run(at, id);
   }
 
   async updateSharePolicy(id: string, policy: SharePolicy, passcodeHash: string | null, expiresAt: number | null): Promise<void> {
-    this.db.prepare("UPDATE site_shares SET revision=revision+1, policy=?, passcode_hash=?, expires_at=? WHERE id=?")
+    this.db.prepare("UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1, policy=?, passcode_hash=?, expires_at=? WHERE id=?")
       .run(policy, passcodeHash, expiresAt, id);
   }
 
   async setShareAllowAi(id: string, allowAi: boolean): Promise<void> {
-    this.db.prepare("UPDATE site_shares SET revision=revision+1, allow_ai=? WHERE id=?").run(allowAi ? 1 : 0, id);
+    this.db.prepare("UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1, allow_ai=? WHERE id=?").run(allowAi ? 1 : 0, id);
   }
 
   async listLiveShares(siteId: string, now: number): Promise<ShareRow[]> {
@@ -832,7 +837,7 @@ export class SqliteStore implements MetadataStore {
     this.db.exec("SAVEPOINT share_grant_mutation");
     try {
       const changes = work();
-      if (Number(changes) > 0) this.db.prepare("UPDATE site_shares SET revision=revision+1 WHERE id=?").run(shareId);
+      if (Number(changes) > 0) this.db.prepare("UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1 WHERE id=?").run(shareId);
       this.db.exec("RELEASE share_grant_mutation");
     } catch (error) {
       this.db.exec("ROLLBACK TO share_grant_mutation");
@@ -1027,7 +1032,7 @@ export class SqliteStore implements MetadataStore {
     const now = Date.now();
     this.db.exec("BEGIN");
     try {
-      const r = this.db.prepare("UPDATE sites SET owner_id=?, edit_token='', claim_token=NULL, anon_owner_id=NULL, tenant_id=CASE WHEN tenant_id='anonymous' THEN 'init' ELSE tenant_id END, updated_at=? WHERE id=? AND owner_id IS NULL AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members tm JOIN users u ON u.id=tm.user_id JOIN tenants t ON t.id=tm.tenant_id WHERE tm.user_id=? AND tm.tenant_id=CASE WHEN sites.tenant_id='anonymous' THEN 'init' ELSE sites.tenant_id END AND u.disabled_at IS NULL AND t.disabled_at IS NULL)")
+      const r = this.db.prepare("UPDATE sites SET owner_id=?, edit_token='', anon_owner_id=NULL, tenant_id=CASE WHEN tenant_id='anonymous' THEN 'init' ELSE tenant_id END, updated_at=? WHERE id=? AND owner_id IS NULL AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM authorization_tenant_members tm JOIN users u ON u.id=tm.user_id JOIN tenants t ON t.id=tm.tenant_id WHERE tm.user_id=? AND tm.tenant_id=CASE WHEN sites.tenant_id='anonymous' THEN 'init' ELSE sites.tenant_id END AND u.disabled_at IS NULL AND t.disabled_at IS NULL)")
         .run(ownerId, now, siteId, ownerId);
       if (Number(r.changes ?? 0) === 0) {
         this.db.exec("ROLLBACK");
@@ -1053,10 +1058,8 @@ export class SqliteStore implements MetadataStore {
   }
 
   async clearSiteOwner(siteId: string): Promise<void> {
-  // Reset edit_policy alongside the owner. Leaving 'login' on an unowned site would keep it
-  // writable by every authenticated user with nobody left who can change that back — the owner
-  // was the only role permitted to touch sharing settings.
-    this.db.prepare("UPDATE sites SET owner_id=NULL, edit_token='', claim_token=NULL, edit_policy='owner', updated_at=? WHERE id=?").run(Date.now(), siteId);
+    // Removing ownership must retire anonymous management credentials.
+    this.db.prepare("UPDATE sites SET owner_id=NULL, edit_token='', updated_at=? WHERE id=?").run(Date.now(), siteId);
   }
 
   async listSitesByOwner(ownerId: string): Promise<SiteSummary[]> {
@@ -1066,17 +1069,17 @@ export class SqliteStore implements MetadataStore {
              (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) + COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id), 0) AS total_views,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
-      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members m WHERE m.tenant_id=s.tenant_id AND m.user_id=s.owner_id)
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = ? AND EXISTS (SELECT 1 FROM authorization_tenant_members m WHERE m.tenant_id=s.tenant_id AND m.user_id=s.owner_id)
       ORDER BY s.updated_at DESC`).all(ownerId) as Row[]).map(toSummary);
   }
 
   async listSitesForCollaborator(userId: string): Promise<SiteSummary[]> {
-    return (this.db.prepare(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
+    return (this.db.prepare(`SELECT DISTINCT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
              (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.rowid <= (SELECT rowid FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
-      JOIN site_members c ON c.site_id = s.id AND c.user_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)
+      JOIN authorization_site_members c ON c.site_id = s.id AND c.subject_type<>'everyone' AND c.user_id = ?
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
       ORDER BY s.updated_at DESC`).all(userId) as Row[]).map(toSummary);
   }
@@ -1491,17 +1494,20 @@ export class SqliteStore implements MetadataStore {
     // FTS5: quoted terms are ANDed, a trailing * is a prefix; bm25 is "lower is better", the title column weighted up.
     const match = tokens.map((t) => `"${t.text}"${t.prefix ? "*" : ""}`).join(" ");
     const rows = this.db.prepare(`
-      SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.updated_at, substr(t.body, 1, 30000) AS body
+      SELECT CASE WHEN s.owner_id = ? THEN 'owned'
+             WHEN s.owner_id IS NULL AND s.anon_owner_id = ? THEN 'anonymous'
+             WHEN EXISTS (SELECT 1 FROM authorization_site_members c WHERE c.site_id=s.id AND c.subject_type<>'everyone' AND c.user_id=?) THEN 'collaborating'
+             ELSE 'public' END AS relationship, s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.updated_at, substr(t.body, 1, 30000) AS body
       FROM site_texts_fts f
       JOIN site_texts t ON t.site_id = f.site_id
       JOIN sites s ON s.id = t.site_id AND s.current_version_id = t.version_id
       WHERE site_texts_fts MATCH ? AND s.deleted_at IS NULL
         AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL)
-             OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
+             OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = ?)
-             OR EXISTS (SELECT 1 FROM site_members c WHERE c.site_id = s.id AND c.user_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
+             OR EXISTS (SELECT 1 FROM authorization_site_members c WHERE c.site_id = s.id AND c.subject_type<>'everyone' AND c.user_id = ?))
       ORDER BY bm25(site_texts_fts, 0, 10.0, 1.0) ASC, s.updated_at DESC
-      LIMIT ?`).all(match, viewer?.userId ?? null, viewer?.anonId ?? null, viewer?.userId ?? null, limit) as Row[];
+      LIMIT ?`).all(viewer?.userId ?? null, viewer?.anonId ?? null, viewer?.userId ?? null, match, viewer?.userId ?? null, viewer?.anonId ?? null, viewer?.userId ?? null, limit) as Row[];
     return rows.map(toSearchHit);
   }
 
@@ -1571,7 +1577,7 @@ export class SqliteStore implements MetadataStore {
              (SELECT COALESCE(SUM(v.byte_size), 0) FROM versions v WHERE v.site_id = s.id) AS byte_total
       FROM sites s LEFT JOIN users u ON u.id = s.owner_id
       WHERE (? = '' OR lower(s.title) LIKE ? ESCAPE '\\' OR lower(s.slug) LIKE ? ESCAPE '\\' OR lower(COALESCE(u.email, '')) LIKE ? ESCAPE '\\')
-        AND (? IS NULL OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)))
+        AND (? IS NULL OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)))
         AND (? = 0 OR s.owner_id IS NULL)
         AND CASE ? WHEN 'deleted' THEN (s.deleted_at IS NOT NULL AND s.purged_at IS NULL)
                     WHEN 'taken_down' THEN (s.deleted_at IS NULL AND s.taken_down_at IS NOT NULL)

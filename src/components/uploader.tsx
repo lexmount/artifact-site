@@ -4,62 +4,19 @@ import { track, analyticsRequest } from "@/lib/analytics";
 // The product's front door: a large drag-and-drop zone that accepts a single .html, a whole
 // folder (drag or webkitdirectory pick), a .zip, or pasted HTML — then POSTs multipart to
 // /api/sites and redirects to the new /s/<slug>. No forms, no build step, no config.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { chooseUploadRoute, INLINE_UPLOAD_MAX_BYTES } from "@/lib/upload-route";
 import { UploadCloud, FileCode2, FolderUp, FileArchive, ClipboardPaste, Loader2, ArrowUp, ChevronDown } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 import { useUploadConfirmation } from "@/components/upload-confirmation";
 import MoreMenu from "@/components/more-menu";
+import QuotaNotice from "@/components/quota-notice";
+import { ClientQuotaExceeded, quotaDetailsFrom, type QuotaDetails } from "@/lib/quota-client";
 
-type Picked = { path: string; file: File };
+import { collectFromDrop, type Picked } from "@/lib/upload-pick";
 
-
-/** Zips cannot take the chunked route (the server has to unpack one to know what is inside), so a
- *  large zip can only be called out up front rather than sent off to wait for a 413 — an error that
- *  would then need explaining all over again. */
-/** Recursively read a dropped directory entry into files carrying their relative paths. */
-function readEntry(entry: FileSystemEntry, out: Picked[]): Promise<void> {
-  return new Promise((resolve) => {
-    if (entry.isFile) {
-      (entry as FileSystemFileEntry).file((file) => {
-        out.push({ path: entry.fullPath.replace(/^\//, ""), file });
-        resolve();
-      }, () => resolve());
-    } else if (entry.isDirectory) {
-      const reader = (entry as FileSystemDirectoryEntry).createReader();
-      const entries: FileSystemEntry[] = [];
-      const readBatch = () => {
-        reader.readEntries(async (batch) => {
-          if (batch.length === 0) {
-            await Promise.all(entries.map((e) => readEntry(e, out)));
-            resolve();
-          } else {
-            entries.push(...batch);
-            readBatch();
-          }
-        }, () => resolve());
-      };
-      readBatch();
-    } else {
-      resolve();
-    }
-  });
-}
-
-async function collectFromDrop(dt: DataTransfer): Promise<Picked[]> {
-  const items = Array.from(dt.items).filter((i) => i.kind === "file");
-  const entries = items.map((i) => i.webkitGetAsEntry?.() ?? null);
-  if (entries.some(Boolean)) {
-    const out: Picked[] = [];
-    await Promise.all(entries.map((e) => (e ? readEntry(e, out) : Promise.resolve())));
-    if (out.length) return out;
-  }
-  // Fallback: plain file list with no directory structure.
-  return Array.from(dt.files).map((file) => ({ path: file.name, file }));
-}
-
-export default function Uploader({ compact = false }: { compact?: boolean } = {}) {
+export default function Uploader({ compact = false, footerAction }: { compact?: boolean; footerAction?: ReactNode } = {}) {
   const t = useT();
   const router = useRouter();
   const { confirmUpload, uploadConfirmation } = useUploadConfirmation();
@@ -68,6 +25,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
   /** Chunked-upload progress (bytes). The old path has no readable progress, so this is only set on the chunked route. */
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [quota, setQuota] = useState<QuotaDetails | null>(null);
   const [paste, setPaste] = useState(false);
   const [pasteHtml, setPasteHtml] = useState("");
   const [pasteTitle, setPasteTitle] = useState("");
@@ -77,6 +35,22 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
   const folderInput = useRef<HTMLInputElement>(null);
   const zipInput = useRef<HTMLInputElement>(null);
   const [pageDrag, setPageDrag] = useState(false);
+
+  function fail(data: unknown, fallback: string): never {
+    const details = quotaDetailsFrom(data);
+    if (details) {
+      setQuota(details);
+      setError(null);
+      throw new ClientQuotaExceeded(details);
+    }
+    const message = data && typeof data === "object" && "error" in data && typeof data.error === "string" ? data.error : fallback;
+    throw new Error(message);
+  }
+
+  function showFailure(error: unknown, fallback: string) {
+    if (error instanceof ClientQuotaExceeded) return;
+    setError(error instanceof Error ? error.message : fallback);
+  }
 
   // Compact mode: the whole window is the drop target. A drag entering the document raises the
   // overlay; leaving it (or dropping) lowers it. Counted, because dragenter/leave fire per element.
@@ -113,6 +87,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
     if (official === null) return;
     setBusy(true);
     setError(null);
+    setQuota(null);
     setProgress({ done: 0, total: files.reduce((sum, f) => sum + f.file.size, 0) });
     try {
       const opened = await analyticsRequest("publish", () => fetch("/api/uploads", {
@@ -120,7 +95,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
         body: JSON.stringify({ title: title || undefined, official }),
       }));
       const session = await opened.json().catch(() => ({}));
-      if (!opened.ok || !session.versionId) throw new Error(session?.error || t("Could not start the upload"));
+      if (!opened.ok || !session.versionId) fail(session, t("Could not start the upload"));
 
       let done = 0;
       for (const picked of files) {
@@ -133,7 +108,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
         }));
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err?.error || t("{path} failed to upload", { path: picked.path }));
+          fail(err, t("{path} failed to upload", { path: picked.path }));
         }
         done += picked.file.size;
         setProgress({ done, total: files.reduce((sum, f) => sum + f.file.size, 0) });
@@ -144,12 +119,13 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
         body: JSON.stringify({ title: title || undefined, official }),
       }));
       const data = await committed.json().catch(() => ({}));
-      if (!committed.ok || !data.slug) throw new Error(data?.error || t("Failed to commit the upload"));
+      if (!committed.ok || !data.slug) fail(data, t("Failed to commit the upload"));
       if (data.editToken) { try { localStorage.setItem(`sites:editToken:${data.slug}`, data.editToken); } catch { /* ignore */ } }
       track("artifact_publish_success", { upload_method: "chunked" });
+      router.refresh();
       router.push(`/s/${data.slug}?published=1`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t("Upload failed"));
+      showFailure(e, t("Upload failed"));
       setBusy(false);
       setProgress(null);
     }
@@ -161,18 +137,20 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
     body.set("official", String(official));
     setBusy(true);
     setError(null);
+    setQuota(null);
     try {
       const res = await analyticsRequest("publish", () => fetch("/api/sites", { method: "POST", body }));
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || t("Publish failed ({status})", { status: res.status }));
+      if (!res.ok) fail(data, t("Publish failed ({status})", { status: res.status }));
       const slug: string | undefined = data.slug ?? data?.site?.slug;
       if (!slug) throw new Error(t("Published, but no site identifier came back"));
       // Owner token: remember it so this browser can edit/delete/rename/rollback this site later.
       if (data.editToken) { try { localStorage.setItem(`sites:editToken:${slug}`, data.editToken); } catch { /* ignore */ } }
       track("artifact_publish_success", { upload_method: "inline" });
+      router.refresh();
       router.push(`/s/${slug}?published=1`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t("Publish failed"));
+      showFailure(e, t("Publish failed"));
       setBusy(false);
     }
   }
@@ -186,7 +164,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
   function submitPicked(picked: Picked[]) {
     if (picked.length === 0) return;
     const route = chooseUploadRoute(picked.map((p) => ({ path: p.path, size: p.file.size })), INLINE_UPLOAD_MAX_BYTES, t);
-    if (route.kind === "error") { setError(route.message); return; }
+    if (route.kind === "error") { setQuota(null); setError(route.message); return; }
     // A single large HTML / PDF, and folders over the total limit, take the chunked route (streamed; the whole thing is never read into server memory).
     if (route.kind === "chunked") { void submitChunked(picked, (dropTitle || "").trim()); return; }
 
@@ -280,7 +258,10 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
             </MoreMenu>
           </span>
         </div>
-        <div className="formats">{t("No build, no configuration — upload and share.")}</div>
+        <div className="hero-upload-footer">
+          <div className="formats">{t("No build, no configuration — upload and share.")}</div>
+          {footerAction}
+        </div>
         {progress && progress.total > 0 && (
           <div className="upload-progress" role="status" aria-live="polite">
             <div className="upload-progress-bar"><span style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} /></div>
@@ -288,6 +269,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
           </div>
         )}
         {error && <p className="upload-error" role="alert">{error}</p>}
+        {quota && <QuotaNotice details={quota} />}
         {inputs}
         {pageDrag && (
           <div
@@ -356,7 +338,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
             <button data-analytics-button="upload" type="button" className="btn" onClick={() => zipInput.current?.click()} disabled={busy}>
               <FileArchive size={15} /> {t("Choose a .zip")}
             </button>
-            <button data-analytics-button="upload" type="button" className="btn ghost" onClick={() => { setPaste(true); setError(null); }} disabled={busy}>
+            <button data-analytics-button="upload" type="button" className="btn ghost" onClick={() => { setPaste(true); setError(null); setQuota(null); }} disabled={busy}>
               <ClipboardPaste size={15} /> {t("Paste HTML")}
             </button>
           </div>
@@ -377,7 +359,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
             <textarea id="paste-html" value={pasteHtml} placeholder="<!doctype html> …" onChange={(e) => setPasteHtml(e.target.value)} spellCheck={false} />
           </div>
           <div className="row">
-            <button type="button" className="btn ghost" onClick={() => { setPaste(false); setError(null); }} disabled={busy}>{t("Back to drop zone")}</button>
+            <button type="button" className="btn ghost" onClick={() => { setPaste(false); setError(null); setQuota(null); }} disabled={busy}>{t("Back to drop zone")}</button>
             <button data-analytics-button="upload" type="button" className="btn solid" onClick={submitPaste} disabled={busy}>
               {busy ? <><Loader2 size={15} className="spin" /> {t("Publishing")}</> : t("Publish and get a link")}
             </button>
@@ -385,6 +367,7 @@ export default function Uploader({ compact = false }: { compact?: boolean } = {}
         </div>
       )}
       {error && <p className="upload-error" role="alert">{error}</p>}
+      {quota && <QuotaNotice details={quota} />}
     </div>
   );
 }

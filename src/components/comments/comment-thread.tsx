@@ -1,12 +1,18 @@
 "use client";
+import { commentRequest } from "./comment-client";
+import FollowDiscussion from "@/components/notifications/follow-discussion";
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from "react";
+import { commentTextParts } from "@/lib/comments/format";
+import { CommentHighlight } from "./comment-highlight";
+import { CommentBody } from "./comment-body";
+import { CommentImages } from "./comment-images";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { Check, MapPin, MessageCircle, MoreHorizontal, SmilePlus } from "lucide-react";
 import { useT, useLocale } from "@/components/locale-provider";
 import type { CommentMessage, CommentThreadDetail } from "@/lib/comments/contracts";
 import { COMMENT_EMOJI, type CommentEmoji } from "@/lib/comments/contracts";
-import { commentAnchorLabel } from "@/lib/comments/presentation";
+import { commentAnchorLabel, commentAnchorSource } from "@/lib/comments/presentation";
 import { relTime } from "@/lib/rel-time";
 const FullEmojiPicker = dynamic(() => import("./full-emoji-picker"), { ssr: false });
 
@@ -40,26 +46,30 @@ export const CommentSummary = memo(function CommentSummary({
   userId,
   onChoose,
   unread,
+  query,
 }: {
   detail: CommentThreadDetail;
   source: string;
   userId?: string;
   unread?: boolean;
+  query?: string;
   onChoose: (detail: CommentThreadDetail) => void;
 }) {
   const t = useT(),
     first = detail.messages.items[0];
   return (
-    <button className="comment-summary" type="button" onClick={() => onChoose(detail)}>
+    <button data-thread-id={detail.thread.id} className="comment-summary" type="button" onClick={() => onChoose(detail)}>
       {first && <CommentAuthor message={first} userId={userId} />}
       {unread && <span className="comment-unread-dot" role="status" aria-label={t("Unread")} />}
       <span className="comment-summary-body">
-        {first?.content.state === "visible" ? first.content.body : t("This comment was deleted.")}
+        <CommentHighlight query={query} text={first?.content.state === "visible" ? (first.content.body ? (first.content.format === "lightweight" ? commentTextParts(first.content.body).map(part=>part.text).join("") : first.content.body) : t("Image attachment")) : t("This comment was deleted.")}/>
       </span>
+      {detail.searchMatch && <span className="comment-search-match">{t("Matching comment or reply")} · <CommentHighlight text={detail.searchMatch.excerpt} query={query}/></span>}
+      {Boolean(first?.reactions?.length) && <span className="comment-summary-reactions">{first.reactions!.map(reaction=><span key={reaction.emoji} data-selected={reaction.reacted}>{reaction.emoji} {reaction.count}</span>)}</span>}
       {(detail.thread.context.excerpt || detail.thread.anchor.kind === "document") && (
         <span className="comment-summary-quote">{commentAnchorLabel(detail.thread.anchor, detail.thread.context.excerpt, t)}</span>
       )}
-      {Boolean(first?.reactions?.length) && <span className="comment-summary-reactions">{first.reactions!.map(reaction=><span key={reaction.emoji} data-selected={reaction.reacted}>{reaction.emoji} {reaction.count}</span>)}</span>}
+      <span className="comment-file-source" title={`${t("View location")} · ${commentAnchorSource(detail.thread.anchor, t)}`}>{commentAnchorSource(detail.thread.anchor, t)}</span>
       <span className="comment-summary-meta">
         {source}
         <span>
@@ -73,6 +83,7 @@ export const CommentSummary = memo(function CommentSummary({
   );
 });
 export function CommentConversation({
+  endpoint, shareToken, query,
   detail,
   source,
   userId,
@@ -89,6 +100,9 @@ export function CommentConversation({
 }: {
   detail: CommentThreadDetail;
   source: string;
+  endpoint: string;
+  query?: string;
+  shareToken?: string;
   userId?: string;
   busy: boolean;
   onReply: () => void;
@@ -103,10 +117,29 @@ export function CommentConversation({
 }) {
   const t = useT(),
     locale = useLocale();
+  const locatedNotification = useRef<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const messageId = params.get("message"), notificationId = params.get("notification");
+    if (!messageId || !notificationId || locatedNotification.current === notificationId) return;
+    const message = detail.messages.items.find(m => m.id === messageId);
+    if (!message) { if (detail.messages.nextCursor && !busy) onMore(); return; }
+    const node = document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+    if (!node) return;
+    node.scrollIntoView({block:"center",behavior:"instant"});
+    if (message.content.state === "deleted") return;
+    locatedNotification.current = notificationId;
+    void commentRequest("/api/notifications",undefined,{method:"POST",body:JSON.stringify({id:notificationId})}).then(()=>window.dispatchEvent(new Event("artifact:notifications-read"))).catch(()=>{locatedNotification.current=null;});
+  },[detail,busy,onMore]);
   return (
-    <article className="comment-conversation comment-thread">
+    <article className="comment-conversation comment-thread" onKeyDown={event => {
+      if (event.key !== "Escape" || !(event.target instanceof Element)) return;
+      const menu = event.target.closest("details");
+      if (menu?.open) { event.stopPropagation(); menu.open = false; menu.querySelector("summary")?.focus(); }
+    }}>
       <div className="comment-conversation-toolbar">
         <span>{source}</span>
+        {userId && <FollowDiscussion key={detail.thread.id} endpoint={`${endpoint}/${detail.thread.id}`} shareToken={shareToken}/>}
         <details className="comment-overflow">
           <summary aria-label={t("Discussion actions")}>
             <MoreHorizontal size={18} />
@@ -121,15 +154,17 @@ export function CommentConversation({
         <div className="comment-message" data-message-id={message.id} key={message.id}>
           <CommentAuthor message={message} userId={userId} />
           <p className={message.content.state === "deleted" ? "comment-deleted" : "comment-body"}>
-            {message.content.state === "visible" ? message.content.body : t("This comment was deleted.")}
+            {message.content.state === "visible" ? <CommentBody body={message.content.body} mentions={message.content.mentions} format={message.content.format} query={query}/> : t("This comment was deleted.")}
           </p>
+          {message.content.state === "visible" && <CommentImages attachments={message.attachments} endpoint={endpoint} shareToken={shareToken}/>}
+          {message.content.state === "visible" && <CommentReactions message={message} canReact={detail.permissions.canReply} busy={busy} onReact={onReact} />}
           {message.isRoot && (
-            <button className="comment-location" onClick={onLocate}>
+            <button className="comment-location" onClick={onLocate} title={`${t("View location")} · ${commentAnchorSource(detail.thread.anchor, t)}`}>
               <MapPin size={14} />
-              {commentAnchorLabel(detail.thread.anchor, detail.thread.context.excerpt, t)}
+              <span>{commentAnchorLabel(detail.thread.anchor, detail.thread.context.excerpt, t)}<small>{commentAnchorSource(detail.thread.anchor, t)}</small></span>
             </button>
           )}
-          {message.content.state === "visible" && <CommentReactions message={message} canReact={detail.permissions.canReply} busy={busy} onReact={onReact} />}
+
           {(detail.permissions.messages[message.id]?.canEdit ||
             detail.permissions.messages[message.id]?.canDelete) && (
             <details className="comment-message-menu">

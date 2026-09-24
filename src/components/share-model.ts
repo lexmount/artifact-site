@@ -28,33 +28,8 @@ const DAY_MS = 86_400_000;
 export const VISIBILITY_LABEL: Record<Visibility, string> = {
   public: "Public — listed on the home page",
   unlisted: "Unlisted — anyone with the link can view",
-  private: "Private — only me and collaborators; others need a share link",
+  private: "Private — authorized people and share links",
 };
-
-export const EDIT_POLICY_LABEL = {
-  owner: "Read-only sharing — only me and collaborators can edit",
-  login: "Any signed-in user can edit the content",
-} as const;
-
-/**
- * "Write implies read": `private` + "all signed-in users may edit" is a "can change but cannot see"
- * deadlock, and the server's PUT /sharing answers 400 outright. Rather than let the user click and
- * eat an error, pull the edit tier back to owner the moment private is selected and explain what
- * happened — what the user really means is "close the door", not "open up editing".
- */
-export function reconcileSharing(next: { visibility: Visibility; editPolicy: "owner" | "login" }): {
-  visibility: Visibility;
-  editPolicy: "owner" | "login";
-  adjusted: boolean;
-} {
-  if (next.visibility === "private" && next.editPolicy === "login") {
-    return { visibility: "private", editPolicy: "owner", adjusted: true };
-  }
-  return { ...next, adjusted: false };
-}
-
-export const EDIT_POLICY_LOCK_NOTICE =
-  "A private site cannot also be open to editing by all signed-in users (that is a deadlock: able to edit but unable to view), so editing has been set back to \"only me and collaborators\".";
 
 // ── Share policies ───────────────────────────────────────────────────────────
 
@@ -361,6 +336,30 @@ export function readShares(body: unknown): ShareListItem[] {
   return pickArray(body, "shares", "items", "data").filter((x): x is ShareListItem => str(asObject(x).id) != null);
 }
 
+const QUICK_SHARE_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+const QUICK_SHARE_LIFETIME_TOLERANCE_MS = 1000;
+
+/** A quick-share click is idempotent: reuse the newest matching live, latest-version link. */
+export function reusableQuickShare(
+  shares: ReadonlyArray<ShareListItem>,
+  policy: "public" | "login",
+  now: number,
+): ShareListItem | null {
+  const mode = policy === "login" ? "comment" : "view";
+  return [...shares]
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .find((share) => share.policy === policy
+      && share.mode === mode
+      && share.versionId == null
+      && share.label == null
+      && !share.allowAi
+      && !share.hasPasscode
+      && share.expiresAt != null
+      && Math.abs((share.expiresAt - share.createdAt) - QUICK_SHARE_LIFETIME_MS) <= QUICK_SHARE_LIFETIME_TOLERANCE_MS
+      && Boolean(share.url)
+      && shareStateOf(share, now) === "live") ?? null;
+}
+
 /** The people list is taken straight from the list row — there is no separate GET; every "people" share carries its grants. */
 export function readListedGrants(share: ShareListItem): PickedPerson[] {
   return (share.grants ?? []).map((g) => ({
@@ -478,4 +477,11 @@ export function shareSettingsPatch(share: ShareListItem, draft: ShareSettingsDra
 export function shareConflictCode(body: unknown): "share_revision_conflict" | "share_revoked" | null {
   const code = asObject(body).code;
   return code === "share_revision_conflict" || code === "share_revoked" ? code : null;
+}
+
+/** Preserve existing query parameters and fragments when opening a discussion. */
+export function shareDiscussionUrl(url: string): string {
+  const target = new URL(url);
+  target.searchParams.set("comments", "1");
+  return target.href;
 }

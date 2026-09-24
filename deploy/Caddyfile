@@ -3,5 +3,7 @@
 {$ARTIFACT_DOMAIN} {
 	encode zstd gzip
 	# The app sets its own security headers (CSP, Referrer-Policy, nosniff); nothing to add here.
-	reverse_proxy app:4300
+	reverse_proxy app:4300 {
+		flush_interval -1
+	}
 }

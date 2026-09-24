@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDbForTests, getSite, updateSiteSharing } from "@/lib/db";
+import { closeDbForTests, getSite, updateSiteVisibility } from "@/lib/db";
 import { createSite, getSiteView } from "@/lib/sites";
 import { canReadSite } from "@/lib/share";
 import { PUT as sharingPUT } from "@/app/api/sites/[slug]/sharing/route";
@@ -52,10 +52,10 @@ const strangerCreds = { "x-forwarded-proto": "https" };
 const mine = async () =>
   (await createSite({ mode: "paste", html: "<title>t</title><body>secret</body>" }, { anonOwnerId: ANON })).site;
 
-const setVisibility = (slug: string, visibility: string, editPolicy = "owner") =>
+const setVisibility = (slug: string, visibility: string, editPolicy?: string) =>
   sharingPUT(new Request(`https://x/api/sites/${slug}/sharing`, {
     method: "PUT", headers: { ...ownerCreds, "content-type": "application/json" },
-    body: JSON.stringify({ visibility, editPolicy }),
+    body: JSON.stringify({ visibility, ...(editPolicy ? {editPolicy} : {}) }),
   }), params(slug));
 
 const req = (path: string, headers: Record<string, string>) => new Request(`https://x${path}`, { headers });
@@ -80,7 +80,7 @@ describe("PUT /sharing accepts private now that it is enforced", () => {
 describe("a private site refuses a stranger at every content outlet", () => {
   it("GET /api/sites/:slug — which carries the full source", async () => {
     const site = await mine();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
 
     const res = await itemGET(req(`/api/sites/${site.slug}`, strangerCreds), params(site.slug));
     expect(res.status).toBe(404);                       // 404, not 403: do not confirm it exists
@@ -89,7 +89,7 @@ describe("a private site refuses a stranger at every content outlet", () => {
 
   it("/api/preview — where the bytes actually come out", async () => {
     const site = await mine();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
 
     const res = await previewGET(
       req(`/api/preview/${site.slug}`, strangerCreds),
@@ -102,7 +102,7 @@ describe("a private site refuses a stranger at every content outlet", () => {
   // The one that makes the other two worth anything: fork copies the whole tree to the forker.
   it("POST /fork — otherwise the gate is theatre", async () => {
     const site = await mine();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
 
     const res = await forkPOST(new Request(`https://x/api/sites/${site.slug}/fork`, {
       method: "POST", headers: { ...strangerCreds, origin: "https://x" },
@@ -145,7 +145,7 @@ describe("metadata is gated too — the leak that hid behind a clean <head>", ()
 describe("the owner keeps full access to their own private site", () => {
   it("canReadSite says yes for the creating browser", async () => {
     const site = await mine();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const view = (await getSiteView(site.slug))!;
 
     expect(await canReadSite(req(`/s/${site.slug}`, ownerCreds), view.site)).toBe(true);
@@ -154,7 +154,7 @@ describe("the owner keeps full access to their own private site", () => {
 
   it("and can still read the source through the API", async () => {
     const site = await mine();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
 
     const res = await itemGET(req(`/api/sites/${site.slug}`, ownerCreds), params(site.slug));
     expect(res.status).toBe(200);
@@ -167,7 +167,7 @@ describe("the owner keeps full access to their own private site", () => {
 describe("public and unlisted are untouched", () => {
   it.each(["public", "unlisted"] as const)("%s stays readable by a stranger everywhere", async (visibility) => {
     const site = await mine();
-    await updateSiteSharing(site.id, visibility, "owner");
+    await updateSiteVisibility(site.id, visibility);
     const view = (await getSiteView(site.slug))!;
 
     expect(await canReadSite(req(`/s/${site.slug}`, strangerCreds), view.site)).toBe(true);

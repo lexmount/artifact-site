@@ -64,7 +64,7 @@ export async function POST(
       const site = toSite(row);
       const { actor } = await requirePermission(request, site, "site.owner.transfer", session);
       const members = await q(
-        "SELECT m.user_id FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.user_id=$2 AND u.disabled_at IS NULL",
+        "SELECT m.user_id FROM authorization_tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.user_id=$2 AND u.disabled_at IS NULL",
         [site.tenantId, target.id],
       );
       if (!members.length)
@@ -72,7 +72,7 @@ export async function POST(
           "The new owner must be an active member of this tenant",
         );
       await q(
-        "UPDATE sites SET owner_id=$1,edit_token='',claim_token=NULL,anon_owner_id=NULL,updated_at=$2 WHERE id=$3",
+        "UPDATE sites SET owner_id=$1,edit_token='',anon_owner_id=NULL,updated_at=$2 WHERE id=$3",
         [target.id, Date.now(), site.id],
       );
       await recordRbacAudit(

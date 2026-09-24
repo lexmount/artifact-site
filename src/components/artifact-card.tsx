@@ -1,4 +1,6 @@
 "use client";
+import ArtifactCover from "@/components/artifact-cover";
+import ProgressivePreview from "@/components/progressive-preview";
 
 // A site as a picture with a caption: the live thumbnail, the title, one line of meta. The whole
 // card is the link. Optional owner actions sit outside the navigation link.
@@ -20,7 +22,7 @@ export default function ArtifactCard({ site, note, actions, href, preview }: { s
       <SiteLink slug={site.slug} href={href ?? `/s/${site.slug}`} className="artifact-card-link" aria-label={t("Open {title}", { title: site.title })}>
         <div className="preview">
           {/* Same posture as the home grid's thumbnails: no scripts, not focusable, display only. */}
-          <iframe src={preview ?? `/api/preview/${site.slug}?thumb=1`} title={t("{title} preview", { title: site.title })} loading="lazy" tabIndex={-1} inert sandbox="" aria-hidden="true" />
+          {site.kind === "document" ? <ArtifactCover site={site} /> : <ProgressivePreview key={`${site.slug}:${site.updatedAt}:${preview ?? ""}`} site={site} src={preview ?? `/api/preview/${site.slug}?thumb=1`} />}
         </div>
         <p className="recent-title">{site.title}</p>
       </SiteLink>

@@ -47,8 +47,9 @@ describe.skipIf(!base)("agent connection guide", () => {
     await page.keyboard.press("End");
     await page.waitForSelector('#tab-mcp[aria-selected="true"]');
     await page.click('a[href="#full-guide"]');
-    expect(await page.$eval("#full-guide", (el) => (el as HTMLDetailsElement).open)).toBe(true);
-    expect(await page.$eval("#full-guide article", (el) => el.textContent?.length)).toBeGreaterThan(1000);
+    await page.click('#full-guide a[href="/for-agents/reference"]');
+    await page.waitForSelector("article.prose");
+    expect(await page.$eval("article.prose", (el) => el.textContent?.length)).toBeGreaterThan(1000);
     expect((await fetch(`${base}/for-agents.md`)).status).toBe(200);
     await page.close();
   });

@@ -1,3 +1,5 @@
+import { receiptShare, sessionReceiptShare } from "@/lib/notifications/receipts";
+import { databaseRoleAllows, everyoneRole } from "@/lib/role-bindings";
 import { readerVersionAllowed } from "@/lib/version-access";
 import { managementReason } from "@/lib/management-reason";
 import "server-only";
@@ -16,7 +18,7 @@ import {
   memberRole,
   recordRbacAudit,
 } from "@/lib/rbac-access";
-import { readAccess, canReadVersion, requestShareAccess, isLive } from "@/lib/share";
+import { readAccess, readableVersionFilter, shareTokenFromRequest, requestShareAccess, isLive } from "@/lib/share";
 import { resolveAuthority, resolveViewer } from "@/lib/authz";
 import { config } from "@/lib/config";
 import { isAdmin } from "@/lib/auth";
@@ -69,6 +71,7 @@ export async function authorizePreview(
       const user = await getUser(grant.userId);
       if (!user || user.disabledAt) return null;
     }
+    if (grant.receiptShareId && (!grant.userId || !await receiptShare(site,grant.versionId,grant.userId,grant.receiptShareId))) return null;
     if (grant.shareId) {
       if (site.takenDownAt) return null;
       const share = await getShare(grant.shareId);
@@ -110,7 +113,8 @@ export async function authorizePreview(
             (await memberRole(site.tenantId, user.id)) === "admin";
       const legacy = Boolean(site.editToken) && !site.ownerId && site.tenantId === "anonymous" && grant.editTokenHash === anonymousFingerprint(site.editToken);
       if (
-        !member &&
+        !(member && (readerVersionAllowed(site,grant.versionId) || await databaseRoleAllows(member,"site.history.read"))) &&
+        !(await everyoneRole(site.id) && !site.takenDownAt && readerVersionAllowed(site,grant.versionId)) &&
         !manager &&
         !(
           grant.operator &&
@@ -136,7 +140,11 @@ export async function authorizePreview(
     new URL(request.url).searchParams.get("v") ||
     share?.versionId ||
     site.currentVersionId;
-  if (!(await canReadVersion(request, site, versionId, session))) return null;
+  const version=await getVersion(versionId);
+  if(!version || version.siteId !== site.id)return null;
+  const independentlyReadable=(await readableVersionFilter(request,site,session))(versionId);
+  const receipt=!independentlyReadable && !shareTokenFromRequest(request) ? await sessionReceiptShare(site,versionId,session):null;
+  if(!independentlyReadable && !receipt)return null;
   if (site.visibility !== "private" && !site.takenDownAt && versionId === site.currentVersionId && !share)
     return { versionId, key: null };
   // Version filtering is side-effect free; this entry point owns the administrative read audit.
@@ -151,15 +159,19 @@ export async function authorizePreview(
     await recordRbacAudit(rbacQuery, site.tenantId, session?.userId ?? null,
       "site.read", site.id, managementReason(request) ?? "Administrative preview");
   const authority = await resolveAuthority(resolveViewer(request, session), site);
+  // Attribute a key only to a share that actually admits this version. A direct
+  // viewer grant can independently admit current/official alongside a pinned link.
+  const previewShare = share && readerVersionAllowed(site,versionId,share.versionId) ? share : receipt;
   const grant: PreviewGrant = {
     versionId,
-    shareId: share?.id ?? null,
+    ...(receipt ? {receiptShareId:receipt.id} : {}),
+    shareId: previewShare?.id ?? null,
     userId: session?.userId ?? null,
     ...(session ? {sessionId:session.id} : {}),
     anonOwnerHash: anonIdFromRequest(request)
       ? anonymousFingerprint(anonIdFromRequest(request)!)
       : null,
-    fingerprint: share ? fingerprint(share) : "",
+    fingerprint: previewShare ? fingerprint(previewShare) : "",
     ...(manager === "platform-admin" || manager === "tenant-admin"
       ? { management: manager }
       : {}),

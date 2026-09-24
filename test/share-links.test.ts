@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  closeDbForTests, createShare, getShare, listShareGrants, recordShareView, updateSharePolicy, updateSiteSharing, upsertUser,
+  closeDbForTests, createShare, getShare, listShareGrants, recordShareView, updateSharePolicy, updateSiteVisibility, upsertUser,
 } from "@/lib/db";
 import { createSite, getSiteView } from "@/lib/sites";
 import { mintSession } from "@/lib/session";
@@ -315,7 +315,7 @@ describe("whom each policy admits and whom it refuses", () => {
     const owner = await signIn("Owner");
     const site = await siteOwnedBy(owner);
     const share = await mint(site, owner, { policy: "passcode" });
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const priv = { ...site, visibility: "private" as const };
 
     expect(await canReadSite(reader(), priv, null)).toBe(false);
@@ -618,7 +618,7 @@ describe("fork does not ride along on read permission", () => {
     const owner = await signIn("Owner");
     const stranger = await signIn("Stranger");
     const site = await siteOwnedBy(owner);
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const share = await mint(site, owner, { policy: "login" });
 
     const asStranger = reader(stranger.cookie);
@@ -632,7 +632,7 @@ describe("fork does not ride along on read permission", () => {
   it("the owner forking their own private site works as before", async () => {
     const owner = await signIn("Owner");
     const site = await siteOwnedBy(owner);
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
 
     const res = await forkPOST(write(`/api/sites/${site.slug}/fork`, owner.cookie, "POST"), params({ slug: site.slug }));
     expect(res.status).toBe(200);
@@ -645,7 +645,7 @@ describe("fork does not ride along on read permission", () => {
     // Set explicitly. This file's ARTIFACT_PUBLIC_URL is a non-intranet address, so a new site
     // defaults to private — relying on the default for a "public site" is luck, and this case
     // tests precisely "unaffected when public".
-    await updateSiteSharing(site.id, "public", "owner");
+    await updateSiteVisibility(site.id, "public");
 
     const res = await forkPOST(write(`/api/sites/${site.slug}/fork`, stranger.cookie, "POST"), params({ slug: site.slug }));
     expect(res.status).toBe(404);

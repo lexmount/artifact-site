@@ -98,6 +98,10 @@ export interface StoredVersion { siteId: string; versionId: string; newestMtime:
 export interface RangeSlice { bytes: Uint8Array; total: number }
 
 export interface Storage {
+  /** Private re-encoded comment images, never part of a publicly served version tree. */
+  writeCommentAttachment(id: string, bytes: Uint8Array, mimeType: "image/png" | "image/jpeg"): Promise<void>;
+  readCommentAttachment(id: string): Promise<Uint8Array>;
+  removeCommentAttachment(id: string): Promise<void>;
   /** Validate + write a whole version's files. Returns the stored fileCount + byteSize. */
   writeVersionFiles(siteId: string, versionId: string, files: readonly UploadFile[]): Promise<{ fileCount: number; byteSize: number }>;
   /**
@@ -139,6 +143,24 @@ export interface Storage {
 // --- Local (filesystem) backend ----------------------------------------------
 
 class LocalStorage implements Storage {
+  async writeCommentAttachment(id: string, bytes: Uint8Array, mimeType: "image/png" | "image/jpeg") {
+    // The filesystem has no MIME metadata; authorized reads use the attachment row.
+    void mimeType;
+    const dest = resolveInside(dataPath("comment-attachments"), safeRelativePath(id));
+    await mkdir(path.dirname(dest), {recursive:true});
+    await writeFile(dest, bytes);
+  }
+  async readCommentAttachment(id: string) {
+    const root = dataPath("comment-attachments"), file = resolveInside(root, safeRelativePath(id));
+    if ((await lstat(file)).isSymbolicLink()) throw new StorageError("symbolic links are not served");
+    const [realRoot, realFile] = await Promise.all([realpath(root), realpath(file)]);
+    if (!realFile.startsWith(`${realRoot}${path.sep}`)) throw new StorageError("path escapes root");
+    return readFile(file);
+  }
+  async removeCommentAttachment(id: string) {
+    await rm(resolveInside(dataPath("comment-attachments"), safeRelativePath(id)), {force:true});
+  }
+
   async writeVersionFiles(siteId: string, versionId: string, files: readonly UploadFile[]): Promise<{ fileCount: number; byteSize: number }> {
     const safe = files.map((file) => ({ relpath: safeRelativePath(file.relpath), bytes: file.bytes }));
     assertWithinLimits(safe);

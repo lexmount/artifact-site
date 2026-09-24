@@ -32,7 +32,7 @@ Il existe aujourd’hui une multitude d’agents d’IA, mais leurs productions 
 
 **artifact-site est un espace de travail auto-hébergé pour les particuliers et les équipes, comparable à Claude Artifacts ou OpenAI Sites.** Vos différents agents créent les contenus ; artifact-site les centralise : pages et documents deviennent des liens pour faciliter le partage, les commentaires et retours, le contrôle d’accès et la conservation des versions. Les agents que vous utilisez déjà peuvent continuer à modifier, publier, rechercher et mettre à jour ces créations via la CLI ou MCP.
 
-> **[Essayer la démo en ligne](https://artifact-site.app.lexmount.com/)** — aucune installation requise. Glissez-déposez un fichier pour le publier et obtenir un lien de partage, sans vous connecter.
+> **[Essayer la démo en ligne](https://artifact-site.app.lexmount.com/)** — aucune installation requise. Glissez-déposez un fichier pour le publier et obtenir un lien de partage. Essayez-la anonymement ou **connectez-vous avec Google ou GitHub** pour conserver vos sites, les classer dans des dossiers et contrôler qui peut ouvrir chaque lien.
 >
 > Les envois anonymes expirent après quelques jours. Il s'agit d'une démo publique : merci de ne pas y déposer d'informations sensibles.
 

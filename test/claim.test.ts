@@ -9,7 +9,7 @@ import { join } from "node:path";
 import {
   insertAdminLog, attributeUnattributedVersions, claimSiteAudited, clearSiteOwner, closeDbForTests, createId,
   getSite, insertAudit, insertSiteWithVersion, listSitesByOwner,
-  updateSiteSharing, upsertUser, type InsertAuditInput,
+  updateSiteVisibility, upsertUser, type InsertAuditInput,
 } from "@/lib/db";
 import { mintSession } from "@/lib/session";
 import { POST } from "@/app/api/me/adopt/route";
@@ -31,7 +31,7 @@ afterEach(async () => {
 async function anonymousSite(slug = "s1") {
   const siteId = createId("site");
   await insertSiteWithVersion(
-    { id: siteId, slug, title: "t", kind: "single", editToken: "et", claimToken: "ct", visibility: "public" },
+    { id: siteId, slug, title: "t", kind: "single", editToken: "et", visibility: "public" },
     { id: createId("ver"), siteId, entry: "index.html", fileCount: 1, byteSize: 4, source: "upload" },
   );
   return siteId;
@@ -172,7 +172,7 @@ describe("token-based adoption defers to recorded browser provenance", () => {
   it("refuses a site that recorded its creating browser, so a shared token cannot take it", async () => {
     const id = createId("site");
     await insertSiteWithVersion(
-      { id, slug: "has-anon", title: "t", kind: "single", editToken: "et", claimToken: "ct", anonOwnerId: "anon_creator", visibility: "public" },
+      { id, slug: "has-anon", title: "t", kind: "single", editToken: "et", anonOwnerId: "anon_creator", visibility: "public" },
       { id: createId("ver"), siteId: id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" },
     );
     const recipient = await upsertUser({ authProvider: "t", providerSubject: "recipient" });
@@ -190,7 +190,7 @@ describe("token-based adoption defers to recorded browser provenance", () => {
   it("refuses token-only automatic adoption of pre-identity sites", async () => {
     const id = createId("site");
     await insertSiteWithVersion(
-      { id, slug: "legacy", title: "t", kind: "single", editToken: "et", claimToken: "ct", visibility: "public" },
+      { id, slug: "legacy", title: "t", kind: "single", editToken: "et", visibility: "public" },
       { id: createId("ver"), siteId: id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" },
     );
     const author = await upsertUser({ authProvider: "t", providerSubject: "legacy-author" });
@@ -201,7 +201,7 @@ describe("token-based adoption defers to recorded browser provenance", () => {
   it("still rejects a wrong token on a pre-identity site", async () => {
     const id = createId("site");
     await insertSiteWithVersion(
-      { id, slug: "legacy2", title: "t", kind: "single", editToken: "et", claimToken: "ct", visibility: "public" },
+      { id, slug: "legacy2", title: "t", kind: "single", editToken: "et", visibility: "public" },
       { id: createId("ver"), siteId: id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" },
     );
     const stranger = await upsertUser({ authProvider: "t", providerSubject: "stranger" });
@@ -216,7 +216,7 @@ describe("anonymous browser identity", () => {
     const b = createId("site");
     for (const [id, slug] of [[a, "a1"], [b, "b1"]] as const) {
       await insertSiteWithVersion(
-        { id, slug, title: "t", kind: "single", editToken: "e", claimToken: "c", anonOwnerId: "anon_browser_1", visibility: "public" },
+        { id, slug, title: "t", kind: "single", editToken: "e", anonOwnerId: "anon_browser_1", visibility: "public" },
         { id: createId("ver"), siteId: id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" },
       );
     }
@@ -235,8 +235,7 @@ describe("anonymous browser identity", () => {
     const owner = await upsertUser({ authProvider: "t", providerSubject: "owner" });
     const other = await upsertUser({ authProvider: "t", providerSubject: "other" });
     await insertSiteWithVersion(
-      { id, slug: "owned", title: "t", kind: "single", editToken: "e", claimToken: "c",
-        anonOwnerId: "anon_browser_2", ownerId: owner.id, visibility: "public" },
+      { id, slug: "owned", title: "t", kind: "single", editToken: "e", anonOwnerId: "anon_browser_2", ownerId: owner.id, visibility: "public" },
       { id: createId("ver"), siteId: id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" },
     );
 
@@ -250,17 +249,15 @@ describe("disowning", () => {
     const id = createId("site");
     const owner = await upsertUser({ authProvider: "t", providerSubject: "o" });
     await insertSiteWithVersion(
-      { id, slug: "opened", title: "t", kind: "single", editToken: "e", claimToken: "c", ownerId: owner.id, visibility: "public" },
+      { id, slug: "opened", title: "t", kind: "single", editToken: "e", ownerId: owner.id, visibility: "public" },
       { id: createId("ver"), siteId: id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" },
     );
-    await updateSiteSharing(id, "public", "login");
-    expect((await getSite(id))!.editPolicy).toBe("login");
+    await updateSiteVisibility(id, "public");
 
     // Disowning while 'login' stayed set left the site writable by every authenticated user with
     // nobody able to change it back — sharing settings are owner-only, and there was no owner.
     await clearSiteOwner(id);
     const after = (await getSite(id))!;
     expect(after.ownerId).toBeNull();
-    expect(after.editPolicy).toBe("owner");
   });
 });

@@ -7,12 +7,28 @@ export function commentHeaders(shareToken?: string): Headers {
   return headers;
 }
 export class CommentRequestError extends Error {
-  constructor(public status: number) { super(`Comment request failed (${status})`); }
+  constructor(public status: number, public reason?: "image_unavailable") { super(`Comment request failed (${status})`); }
+}
+/** Only committed discussion mutations invalidate readers; draft assets and receipts do not. */
+export function commentMutationEndpoint(url: string, method = "GET"): string | null {
+  if (["GET","HEAD"].includes(method.toUpperCase())) return null;
+  const [path] = url.split("?");
+  const match = /^(.*\/comments)(.*)$/.exec(path);
+  if (!match || /^\/(attachments|unread)(?:\/|$)/.test(match[2]) || !/^(?:|\/[^/]+\/(?:status|result|messages(?:\/[^/]+(?:\/reactions)?)?))$/.test(match[2])) return null;
+  return match[1];
 }
 export async function commentRequest<T>(url: string, shareToken?: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, headers: commentHeaders(shareToken), cache: "no-store" });
-  if (!response.ok) throw new CommentRequestError(response.status);
-  return response.json() as Promise<T>;
+  const endpoint = commentMutationEndpoint(url, init?.method);
+  const signal = (phase: string) => { if (endpoint && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("artifact:comment-mutation", {detail:{endpoint,phase}})); };
+  signal("start");
+  try {
+    const response = await fetch(url, { ...init, headers: commentHeaders(shareToken), cache: "no-store" });
+    if (!response.ok) {
+      const detail = await response.json().catch(()=>null);
+      throw new CommentRequestError(response.status, detail?.code === "image_unavailable" ? "image_unavailable" : undefined);
+    }
+    return await response.json() as T;
+  } finally { signal("end"); }
 }
 export function mergeThreads(current: CommentThreadDetail[], page: CommentPage<CommentThreadDetail>): CommentThreadDetail[] {
   const rows = new Map(current.map(row => [row.thread.id, row]));

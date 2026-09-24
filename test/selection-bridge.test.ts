@@ -23,11 +23,11 @@ describe("preview bootstrap — the reporter is gated and aimed", () => {
     expect(injectPreviewBootstrap(DOC, "/api/preview/s1/")).toContain("__artifactSelection");
   });
 
-  it("does NOT inject when the deployment has no assistant — previews stay silent", () => {
+  it("does NOT inject selection reporting when the deployment has no assistant", () => {
     const out = injectPreviewBootstrap(DOC, "/api/preview/s1/");
     expect(out).not.toContain("__artifactSelection");
     expect(out).toContain("localStorage"); // the storage shim still rides along
-    expect(out.match(/data-artifact-bootstrap/g)?.length).toBe(2); // Storage shim and dormant comment bridge.
+    expect(out.match(/data-artifact-bootstrap/g)?.length).toBe(3); // Storage shim, host-navigation handshake and dormant comment bridge.
   });
 
   it("injects next to the storage shim once an assistant is configured", () => {
@@ -35,7 +35,7 @@ describe("preview bootstrap — the reporter is gated and aimed", () => {
     const out = injectPreviewBootstrap(DOC, "/api/preview/s1/");
     expect(out).toContain("selectionchange");
     expect(out).toContain("__artifactSelection");
-    expect(out.match(/data-artifact-bootstrap/g)?.length).toBe(3);
+    expect(out.match(/data-artifact-bootstrap/g)?.length).toBe(4);
     expect(out.indexOf("selectionchange")).toBeLessThan(out.indexOf("</head>"));
   });
 

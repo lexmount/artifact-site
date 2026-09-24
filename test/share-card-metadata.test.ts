@@ -106,6 +106,7 @@ describe("GET /s/[slug] metadata", () => {
     expect(m.openGraph?.title).toBe("看板 — artifact-site");
     expect(m.openGraph).toMatchObject({ type: "article", siteName: "artifact-site", url });
     expect(m.alternates?.canonical).toBe(url);
+    expect(m.robots).toEqual({ index: false, follow: false });
   });
 
   it("still renders a card when the entry cannot be read", async () => {

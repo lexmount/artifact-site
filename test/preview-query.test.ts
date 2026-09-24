@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { closeDbForTests, createId, createShare, revokeShare, updateSiteSharing } from "@/lib/db";
+import { closeDbForTests, createId, createShare, revokeShare, updateSiteVisibility } from "@/lib/db";
 import { createSite, editSite } from "@/lib/sites";
 import { GET } from "@/app/api/preview/[slug]/[[...path]]/route";
 import { mintScopedPreviewKey, PREVIEW_KEY_TTL_MS } from "@/lib/preview-key";
@@ -40,7 +40,7 @@ async function shareFor(site: Site) {
 describe("artifact query parameters are not preview controls", () => {
   it.each(["public", "private"] as const)("serves all resource types with cache queries on %s artifacts", async (visibility) => {
     const site = await make();
-    await updateSiteSharing(site.id, visibility, "owner");
+    await updateSiteVisibility(site.id, visibility);
     const segment = visibility === "private" ? `${site.slug}~${await keyFor(site)}` : site.slug;
     for (const [file, type] of [["styles.css", "text/css"], ["app.js", "javascript"], ["data.json", "application/json"], ["nested/font.woff2", "font/woff2"], ["image.svg", "image/svg+xml"], ["index.html", "text/html"]]) {
       const response = await get(segment, file, "v=20260806-01&share=asset&t=timestamp&comment-image=1");
@@ -85,7 +85,7 @@ describe("artifact query parameters are not preview controls", () => {
 
   it("supports explicit resource version/share controls and preserves image mode through exchange", async () => {
     const site = await make();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const { token, share } = await shareFor(site);
     const target = new URL(previewTarget(site.slug, site.currentVersionId, "image.svg", token), origin);
     const response = await get(site.slug, "image.svg", `${target.search.slice(1)}&v=cache&theme=dark`);
@@ -134,7 +134,7 @@ describe("artifact query parameters are not preview controls", () => {
 
   it("exchanges namespaced shares on the private entry URL", async () => {
     const site = await make();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const { token } = await shareFor(site);
     const target = new URL(previewTarget(site.slug, site.currentVersionId, "", token), origin);
     const response = await get(site.slug, "", target.search.slice(1) + "&share=legacy-invalid&theme=dark");
@@ -171,10 +171,33 @@ describe("artifact query parameters are not preview controls", () => {
   it("does not let resource queries bypass private access, expired keys, or foreign grants", async () => {
     const site = await make();
     const other = await make();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     expect((await get(site.slug, "styles.css", `v=cache&t=${site.editToken}`)).status).toBe(404);
     for (const key of [await keyFor(site, Date.now() - PREVIEW_KEY_TTL_MS - 1), await keyFor(other), "invalid"]) {
       expect((await get(`${site.slug}~${key}`, "styles.css", "v=cache")).status).toBe(404);
     }
   });
+});
+
+it("uses PDF.js only for PDF navigation, preserving bytes, downloads and ranges", async () => {
+  const { site } = await createSite({ mode: "folder", files: [
+    { relpath: "index.html", bytes: bytes('<a href="docs/报告.pdf">Read PDF</a>') },
+    { relpath: "docs/报告.pdf", bytes: bytes("%PDF-1.4 fixture") },
+  ] }, {});
+  const segment = `${site.slug}~${await keyFor(site)}`;
+  const nav = await get(segment, "docs/报告.pdf", "", { "sec-fetch-dest": "iframe" });
+  expect(nav.headers.get("content-type")).toContain("text/html");
+  expect(await nav.text()).toContain('id="doc-config"');
+  expect(nav.headers.get("content-security-policy")).toContain("sandbox");
+  expect(nav.headers.get("content-security-policy")).not.toContain("allow-same-origin");
+  const raw = await get(segment, "docs/报告.pdf");
+  expect(raw.headers.get("content-type")).toBe("application/pdf");
+  expect(await raw.text()).toBe("%PDF-1.4 fixture");
+  expect(raw.headers.get("vary")).toContain("Sec-Fetch-Dest");
+  const range = await get(segment, "docs/报告.pdf", "", { range: "bytes=0-3" });
+  expect(range.status).toBe(206); expect(await range.text()).toBe("%PDF");
+  const download = await get(segment, "docs/报告.pdf", "__artifact_download=1", { "sec-fetch-dest": "document" });
+  expect(download.headers.get("content-disposition")).toContain("attachment");
+  expect(await download.text()).toBe("%PDF-1.4 fixture");
+  expect((await get(segment, "docs/missing.pdf", "", { "sec-fetch-dest": "iframe" })).status).toBe(404);
 });

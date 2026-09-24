@@ -66,6 +66,9 @@ export async function prepareCommentEvidence(site: Site, version: Version, ancho
         const height = item.height / (view[3] - view[1]);
         return x + width >= region.x && x <= region.x + region.width && y >= region.y && y - height <= region.y + region.height;
       }).map(item => "str" in item ? item.str : "").join(" ").slice(0, 2000) || null;
+      // Prefer the selected substring only after certifying it against immutable PDF text.
+      const selected = anchor.quote?.exact.replace(/\s+/g, " ").trim();
+      if (selected && context.excerpt?.replace(/\s+/g, " ").includes(selected)) context.excerpt = selected;
       page.cleanup();
       context.rendition = { filePath, sha256: hash };
     } catch (error) {

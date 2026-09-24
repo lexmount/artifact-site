@@ -8,11 +8,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // bundled into a client component. The import is a build-time tripwire (see next.js docs).
 import "server-only";
 import pg from "pg";
-import { searchTenantUsers, migrateRbac, initializeUserTenant, type RbacQuery } from "@/lib/rbac-store";
+import { searchTenantUsers, initializeUserTenant, type RbacQuery } from "@/lib/rbac-store";
 import { config } from "@/lib/config";
 import type {
-  AuditEntry, EditPolicy, InsertShareInput, Session, Share, ShareGrant, SharePolicy, ShareRow, ShareView,
-  Site, SiteCollaborator, SiteOpen, SiteSummary, SiteView, SiteViewStats, User, Version, Visibility,
+  AuditEntry, InsertShareInput, Session, Share, ShareGrant, SharePolicy, ShareRow, ShareView,
+  Site, SiteOpen, SiteSummary, SiteView, SiteViewStats, User, Version, Visibility,
   AdminAction, AdminLogEntry, AdminOverview, AdminSiteRow, AdminUserRow, SettingRow, SettingWrite,
   OauthAuthorization, OauthClientRecord, OauthConnection, OauthToken,
 } from "@/lib/types";
@@ -47,7 +47,6 @@ import {
   toSummary,
   toUploadSession,
   type UploadSessionRow,
-  toCollaborator,
   toSession,
   toUser,
   toVersion,
@@ -102,8 +101,8 @@ const MIGRATIONS: readonly string[] = [
      updated_at       BIGINT NOT NULL,
      last_login_at    BIGINT
    )`,
-  // The ONLY join key to the IdP. Never the email — matching on email would let an attacker
-  // pre-register a victim's address and inherit their grants at first login.
+  // The normal IdP join key. The temporary OIDC cutover bridge may replace an unknown subject
+  // after matching a same-provider email that was verified on both the stored and incoming user.
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_users_provider ON users (auth_provider, provider_subject)`,
   `CREATE INDEX IF NOT EXISTS idx_users_email ON users (lower(email))`,
 
@@ -180,13 +179,6 @@ const MIGRATIONS: readonly string[] = [
   // --- site ownership + sharing ------------------------------------------------
   `ALTER TABLE sites ADD COLUMN IF NOT EXISTS owner_id TEXT REFERENCES users(id) ON DELETE SET NULL`,
   `ALTER TABLE sites ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public'`,
-  // Defaults to the most restrictive tier. An anonymously-created site therefore starts read-only
-  // to everyone until its creator signs in and claims it — a safe resting state, not a bug.
-  `ALTER TABLE sites ADD COLUMN IF NOT EXISTS edit_policy TEXT NOT NULL DEFAULT 'owner'`,
-  // Claim receipt for anonymous creation: minted at upload, stored only in the creator's browser,
-  // redeemed on first sign-in. Never rendered into a link, which is what makes it usable as
-  // ownership proof (the older edit_token was broadcast by design, so it could not be).
-  `ALTER TABLE sites ADD COLUMN IF NOT EXISTS claim_token TEXT`,
   // Anonymous owner: a random id held in a browser cookie. Deliberately NOT the client IP -- behind
   // a gateway every visitor shares one address, so an IP-keyed identity would let colleagues edit
   // each other's sites (and would evaporate on a network change). On sign-in every row carrying the
@@ -199,35 +191,11 @@ const MIGRATIONS: readonly string[] = [
   // nothing reads it until the identity routes land.
   `ALTER TABLE versions ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id) ON DELETE SET NULL`,
 
-  `CREATE TABLE IF NOT EXISTS site_collaborators (
-     site_id    TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-     user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-     role       TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('editor')),
-     granted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-     granted_at BIGINT NOT NULL,
-     PRIMARY KEY (site_id, user_id)
-   )`,
-  `CREATE INDEX IF NOT EXISTS idx_collab_user ON site_collaborators (user_id, granted_at DESC)`,
-
-  // `id` is itself the invite credential (high entropy) — the email is display-only, so an
-  // unverified or attacker-registered address can never redeem someone else's invite.
-  `CREATE TABLE IF NOT EXISTS site_invites (
-     id          TEXT PRIMARY KEY,
-     site_id     TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-     email       TEXT NOT NULL,
-     role        TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('editor')),
-     invited_by  TEXT REFERENCES users(id) ON DELETE SET NULL,
-     created_at  BIGINT NOT NULL,
-     expires_at  BIGINT NOT NULL,
-     accepted_at BIGINT
-   )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS uq_site_invites_email ON site_invites (site_id, lower(email))`,
 
   // --- share links -------------------------------------------------------------
   // A share is an object, not a column on sites: one artifact can carry several links with
   // different audiences, a link can be revoked without touching the site, and a view can be
-  // attributed to the link it arrived through. Distinct from site_invites, which grants EDIT on a
-  // whole site — this grants READ on one link, and the two lists differ per link.
+  // attributed to the link it arrived through. Link access remains independent of role bindings.
   //
   // Tokens are retained for authorized management; hashes remain the reader lookup key.
   `CREATE TABLE IF NOT EXISTS site_shares (
@@ -478,6 +446,9 @@ const MIGRATIONS: readonly string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_site_texts_tokens ON site_texts USING GIN (tokens)`,
   `ALTER TABLE site_texts ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0`,
+  // Account-wide education checks stop after three rows; avoid scanning every site's links.
+  `CREATE INDEX IF NOT EXISTS idx_shares_creator ON site_shares (created_by)`,
+  `CREATE INDEX IF NOT EXISTS idx_shares_anon_creator ON site_shares (created_anon)`,
 ];
 /**
  * Exactly one of userId / email, as share_grants' CHECK constraint demands. Validated here rather
@@ -527,7 +498,18 @@ export class PostgresStore implements MetadataStore {
   private pool!: pg.Pool;
   rbacQuery: RbacQuery = async (sql, params = []) => {
     const transaction = this.rbacContext.getStore();
-    return transaction ? transaction(sql, params) : (await this.pool.query(sql, [...params])).rows as Row[];
+    if (transaction) return transaction(sql, params);
+    const started=performance.now();
+    const client=await this.pool.connect();
+    const acquired=performance.now();
+    let failure: unknown;
+    try { return (await client.query(sql,[...params])).rows as Row[]; }
+    catch (error) { failure = error; throw error; }
+    finally {
+      const elapsed=performance.now()-started;
+      client.release(failure instanceof Error ? failure : undefined);
+      if(config.perfLogMs>0 && elapsed>=config.perfLogMs) console.info("[performance]",JSON.stringify({operation:"db.query",durationMs:Math.round(elapsed),poolWaitMs:Math.round(acquired-started),queryMs:Math.round(performance.now()-acquired),waiting:this.pool.waitingCount}));
+    }
   };
   /** Never await network/request I/O inside work. */
   async rbacTransaction<T>(work: (q: RbacQuery) => Promise<T>): Promise<T> {
@@ -595,7 +577,6 @@ export class PostgresStore implements MetadataStore {
       await client.query("ALTER TABLE sites ADD COLUMN IF NOT EXISTS official_set_at BIGINT");
       await client.query("ALTER TABLE sites ADD COLUMN IF NOT EXISTS official_set_by TEXT");
       await client.query("ALTER TABLE sites ADD COLUMN IF NOT EXISTS official_revision BIGINT NOT NULL DEFAULT 0");
-      await migrateRbac(async (sql, params = []) => (await client.query(sql, [...params])).rows as Row[]);
       await migrateNumbered(async (sql, params = []) => (await client.query(sql, [...params])).rows as Row[], "postgres");
       // Backfill edit tokens for any legacy rows (e.g. data imported from a SQLite dump). No-op on a
       // fresh DB. Done inside the lock so concurrent replicas can't double-mint.
@@ -628,8 +609,8 @@ export class PostgresStore implements MetadataStore {
   async insertSite(input: InsertSiteInput): Promise<void> {
     const now = Date.now();
     await this.pool.query(
-      "INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, claim_token, anon_owner_id, visibility) VALUES ($1,$2,$3,$4,NULL,$5,$5,NULL,$6,$7,$8,$9)",
-      [input.id, input.slug, input.title, input.kind, now, input.editToken, input.claimToken ?? null, input.anonOwnerId ?? null, input.visibility],
+      "INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, anon_owner_id, visibility) VALUES ($1,$2,$3,$4,NULL,$5,$5,NULL,$6,$7,$8)",
+      [input.id, input.slug, input.title, input.kind, now, input.editToken, input.anonOwnerId ?? null, input.visibility],
     );
   }
 
@@ -639,8 +620,8 @@ export class PostgresStore implements MetadataStore {
     try {
       await client.query("BEGIN");
       await client.query(
-        "INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, claim_token, anon_owner_id, owner_id, visibility, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$6,NULL,$7,$8,$9,$10,$11,$12)",
-        [site.id, site.slug, site.title, site.kind, version.id, now, site.editToken, site.claimToken ?? null, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, site.tenantId ?? (site.ownerId ? "init" : "anonymous")],
+        "INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, anon_owner_id, owner_id, visibility, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$6,NULL,$7,$8,$9,$10,$11)",
+        [site.id, site.slug, site.title, site.kind, version.id, now, site.editToken, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, site.tenantId ?? (site.ownerId ? "init" : "anonymous")],
       );
       await client.query(
         "INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
@@ -797,7 +778,7 @@ export class PostgresStore implements MetadataStore {
     // predates it (or was taken while it was still nullable) would otherwise read as "not public"
     // and silently empty the directory. The default is spelled the same way in toSummary().
     // The OR arms are the "it's mine" escape hatch; `owner_id IS NULL` on the anon arm mirrors
-    // resolveCapability — once an account claims a site, the creating browser is no longer it.
+    // resolveAuthority — once an account claims a site, the creating browser is no longer it.
     //
     // Keep collaborator sites available to directory/folder consumers. ownedOnly adds a
     // stricter ownership predicate for the home shelf without widening visibility.
@@ -805,17 +786,17 @@ export class PostgresStore implements MetadataStore {
       SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
              (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.seq <= (SELECT seq FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
-             ${options?.withViews ? `CASE WHEN (s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (s.owner_id IS NULL AND s.anon_owner_id = $2) THEN (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) + COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id), 0) END AS total_views,` : ""}
+             ${options?.withViews ? `CASE WHEN (s.owner_id = $1 AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR (s.owner_id IS NULL AND s.anon_owner_id = $2) THEN (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) + COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id), 0) END AS total_views,` : ""}
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
         AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL)
-             OR (s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
+             OR (s.owner_id = $1 AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = $2)
-             OR EXISTS (SELECT 1 FROM site_members c
-                         WHERE c.site_id = s.id AND c.user_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
-      ${options?.ownedOnly ? `AND ((s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR ($1::text IS NULL AND s.owner_id IS NULL AND s.anon_owner_id = $2))` : ""}
+             OR EXISTS (SELECT 1 FROM authorization_site_members c
+                         WHERE c.site_id = s.id AND c.subject_type<>'everyone' AND c.user_id = $1))
+      ${options?.ownedOnly ? `AND ((s.owner_id = $1 AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)) OR ($1::text IS NULL AND s.owner_id IS NULL AND s.anon_owner_id = $2))` : ""}
       ORDER BY s.updated_at DESC, s.slug ASC
       ${options?.limit ? `LIMIT ${Math.max(1, Math.min(100, Math.trunc(options.limit)))}` : ""}
     `, [viewer?.userId ?? null, viewer?.anonId ?? null]);
@@ -860,6 +841,61 @@ export class PostgresStore implements MetadataStore {
     // Only an insert keeps candidateId; the returned/read-back id makes `created` atomic,
     // including simultaneous first sign-ins for the same provider subject.
     const candidateId = createId("usr");
+
+    if (input.migrateVerifiedEmail && input.emailVerified && input.email) {
+      const migrationEmail = input.email;
+      // Established subjects stay on the normal hot path. First use of a new subject is serialized
+      // across replicas so competing callbacks cannot create or migrate different rows.
+      const exact = await this.one(
+        "SELECT id FROM users WHERE auth_provider=$1 AND provider_subject=$2",
+        [input.authProvider, input.providerSubject],
+      );
+      if (!exact) {
+        const migrated = await this.rbacTransaction(async (q) => {
+          const afterLock = await q(
+            "SELECT id FROM users WHERE auth_provider=$1 AND provider_subject=$2",
+            [input.authProvider, input.providerSubject],
+          );
+          if (afterLock[0]) return { id: afterLock[0].id as string, created: false };
+
+          const emailMatches = await q(
+            "SELECT id, provider_subject FROM users WHERE auth_provider=$1 AND email_verified=true AND lower(email)=lower($2) ORDER BY created_at, id LIMIT 2",
+            [input.authProvider, migrationEmail],
+          );
+          if (emailMatches[0]) {
+            const id = emailMatches[0].id as string;
+            await q(
+              `UPDATE users SET provider_subject=$1, email=$2,
+                 email_verified=true, display_name=$3, avatar_url=$4, updated_at=$5, last_login_at=$5
+               WHERE id=$6`,
+              [input.providerSubject, migrationEmail, input.displayName ?? null,
+               input.avatarUrl ?? null, now, id],
+            );
+            await initializeUserTenant(q, id);
+            return { id, created: false, migration: {
+              userId: id, oldSubject: emailMatches[0].provider_subject,
+              newSubject: input.providerSubject, matchedUserIds: emailMatches.map(row => row.id),
+            } };
+          }
+          await q(
+            `INSERT INTO users (id, auth_provider, provider_subject, email, email_verified, display_name, avatar_url, created_at, updated_at, last_login_at)
+             VALUES ($1,$2,$3,$4,true,$5,$6,$7,$7,$7)`,
+            [candidateId, input.authProvider, input.providerSubject, migrationEmail,
+             input.displayName ?? null, input.avatarUrl ?? null, now],
+          );
+          await initializeUserTenant(q, candidateId);
+          return { id: candidateId, created: true };
+        });
+        // Log only committed migrations, without email addresses or credentials.
+        if (migrated.migration) {
+          console.info("[oidc-account-migration]", JSON.stringify(migrated.migration));
+          if (migrated.migration.matchedUserIds.length > 1)
+            console.warn("[oidc-account-migration] Duplicate email; selected earliest account", JSON.stringify(migrated.migration));
+        }
+        return { ...(await this.getUser(migrated.id))!, created: migrated.created };
+      }
+    }
+
     const { rows } = await this.pool.query(
       `INSERT INTO users (id, auth_provider, provider_subject, email, email_verified, display_name, avatar_url, created_at, updated_at, last_login_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$8)
@@ -881,7 +917,7 @@ export class PostgresStore implements MetadataStore {
   }
 
   async getUserByVerifiedEmail(email: string): Promise<User | null> {
-    const row = await this.one("SELECT * FROM users WHERE lower(email)=lower($1) AND email_verified = true", [email]);
+    const row = await this.one("SELECT * FROM users WHERE lower(email)=lower($1) AND email_verified = true ORDER BY created_at, id LIMIT 1", [email]);
     return row ? toUser(row) : null;
   }
 
@@ -889,18 +925,14 @@ export class PostgresStore implements MetadataStore {
     return (await searchTenantUsers(this.rbacQuery, q, viewerId, limit)).map(toUser);
   }
 
-  async removeCollaborator(siteId: string, userId: string): Promise<void> {
-    await this.pool.query("DELETE FROM site_members WHERE site_id=$1 AND user_id=$2", [siteId, userId]);
+  async updateSiteVisibility(siteId: string, visibility: Visibility): Promise<void> {
+    await this.pool.query("UPDATE sites SET visibility=$1, updated_at=$2 WHERE id=$3 AND deleted_at IS NULL",
+      [visibility, Date.now(), siteId]);
   }
 
-  async updateSiteSharing(siteId: string, visibility: Visibility, editPolicy: EditPolicy): Promise<void> {
-    await this.pool.query("UPDATE sites SET visibility=$1, edit_policy=$2, updated_at=$3 WHERE id=$4 AND deleted_at IS NULL",
-      [visibility, editPolicy, Date.now(), siteId]);
-  }
-
-  async listCollaborators(siteId: string): Promise<SiteCollaborator[]> {
-    const { rows } = await this.pool.query("SELECT * FROM site_members WHERE site_id=$1 ORDER BY granted_at", [siteId]);
-    return (rows as Row[]).map(toCollaborator);
+  async listAudienceExcludedUserIds(siteId: string): Promise<string[]> {
+    const { rows } = await this.pool.query("SELECT user_id FROM authorization_site_members WHERE subject_type='user' AND role IN ('admin','editor') AND site_id=$1 ORDER BY granted_at", [siteId]);
+    return (rows as Row[]).map(row => String(row.user_id));
   }
 
   // --- share links -------------------------------------------------------------
@@ -948,18 +980,18 @@ export class PostgresStore implements MetadataStore {
   async revokeShare(id: string, at: number): Promise<void> {
     // `AND revoked_at IS NULL` keeps the FIRST revocation's timestamp: revoking twice is a no-op,
     // not a rewrite of when the link actually died.
-    await this.rbacQuery("UPDATE site_shares SET revision=revision+1, revoked_at=$1 WHERE id=$2 AND revoked_at IS NULL", [at, id]);
+    await this.rbacQuery("UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1, revoked_at=$1 WHERE id=$2 AND revoked_at IS NULL", [at, id]);
   }
 
   async updateSharePolicy(id: string, policy: SharePolicy, passcodeHash: string | null, expiresAt: number | null): Promise<void> {
     // A full assignment of all three columns: null CLEARS the passcode / the expiry, which is what
     // "switch this link back to Signed-in users, no expiry" has to mean.
-    await this.rbacQuery("UPDATE site_shares SET revision=revision+1, policy=$1, passcode_hash=$2, expires_at=$3 WHERE id=$4",
+    await this.rbacQuery("UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1, policy=$1, passcode_hash=$2, expires_at=$3 WHERE id=$4",
       [policy, passcodeHash, expiresAt, id]);
   }
 
   async setShareAllowAi(id: string, allowAi: boolean): Promise<void> {
-    await this.rbacQuery("UPDATE site_shares SET revision=revision+1, allow_ai=CASE WHEN $1=1 THEN true ELSE false END WHERE id=$2", [allowAi ? 1 : 0, id]);
+    await this.rbacQuery("UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1, allow_ai=CASE WHEN $1=1 THEN true ELSE false END WHERE id=$2", [allowAi ? 1 : 0, id]);
   }
 
   async listLiveShares(siteId: string, now: number): Promise<ShareRow[]> {
@@ -985,7 +1017,7 @@ export class PostgresStore implements MetadataStore {
       await this.rbacQuery(
         `WITH mutation AS (INSERT INTO share_grants (share_id, user_id, email, granted_by, granted_at) VALUES ($1,$2,NULL,$3,$4)
          ON CONFLICT (share_id, user_id) WHERE user_id IS NOT NULL DO NOTHING RETURNING share_id)
-         UPDATE site_shares SET revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)`,
+         UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)`,
         [shareId, userId, grantedBy, now]);
       return;
     }
@@ -994,19 +1026,19 @@ export class PostgresStore implements MetadataStore {
     await this.rbacQuery(
       `WITH mutation AS (INSERT INTO share_grants (share_id, user_id, email, granted_by, granted_at) VALUES ($1,NULL,$2,$3,$4)
        ON CONFLICT (share_id, lower(email)) WHERE email IS NOT NULL DO NOTHING RETURNING share_id)
-         UPDATE site_shares SET revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)`,
+         UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)`,
       [shareId, email, grantedBy, now]);
   }
 
   async removeShareGrant(shareId: string, target: { userId?: string | null; email?: string | null }): Promise<void> {
     const { userId, email } = shareGrantTarget(target);
     if (userId != null) {
-      await this.rbacQuery("WITH mutation AS (DELETE FROM share_grants WHERE share_id=$1 AND user_id=$2 RETURNING share_id) UPDATE site_shares SET revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)", [shareId, userId]);
+      await this.rbacQuery("WITH mutation AS (DELETE FROM share_grants WHERE share_id=$1 AND user_id=$2 RETURNING share_id) UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)", [shareId, userId]);
       return;
     }
     // lower() on both sides — the same key addShareGrant collapsed the row onto, so removing 'A@b.c'
     // removes the row stored as 'a@B.C'.
-    await this.rbacQuery("WITH mutation AS (DELETE FROM share_grants WHERE share_id=$1 AND lower(email)=lower($2) RETURNING share_id) UPDATE site_shares SET revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)", [shareId, email]);
+    await this.rbacQuery("WITH mutation AS (DELETE FROM share_grants WHERE share_id=$1 AND lower(email)=lower($2) RETURNING share_id) UPDATE site_shares SET access_revision=access_revision+1, revision=revision+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM mutation)", [shareId, email]);
   }
 
   async listShareGrants(shareId: string): Promise<ShareGrant[]> {
@@ -1202,7 +1234,7 @@ export class PostgresStore implements MetadataStore {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(4127714)");
         const res = await client.query(
-          "UPDATE sites SET owner_id=$1, edit_token='', claim_token=NULL, anon_owner_id=NULL, tenant_id=CASE WHEN tenant_id='anonymous' THEN 'init' ELSE tenant_id END, updated_at=$2 WHERE id=$3 AND owner_id IS NULL AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members tm JOIN users u ON u.id=tm.user_id JOIN tenants t ON t.id=tm.tenant_id WHERE tm.user_id=$1 AND tm.tenant_id=CASE WHEN sites.tenant_id='anonymous' THEN 'init' ELSE sites.tenant_id END AND u.disabled_at IS NULL AND t.disabled_at IS NULL)",
+          "UPDATE sites SET owner_id=$1, edit_token='', anon_owner_id=NULL, tenant_id=CASE WHEN tenant_id='anonymous' THEN 'init' ELSE tenant_id END, updated_at=$2 WHERE id=$3 AND owner_id IS NULL AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM authorization_tenant_members tm JOIN users u ON u.id=tm.user_id JOIN tenants t ON t.id=tm.tenant_id WHERE tm.user_id=$1 AND tm.tenant_id=CASE WHEN sites.tenant_id='anonymous' THEN 'init' ELSE sites.tenant_id END AND u.disabled_at IS NULL AND t.disabled_at IS NULL)",
           [ownerId, Date.now(), siteId]);
         if ((res.rowCount ?? 0) === 0) {
           await client.query("ROLLBACK");
@@ -1231,10 +1263,8 @@ export class PostgresStore implements MetadataStore {
   }
 
   async clearSiteOwner(siteId: string): Promise<void> {
-  // Reset edit_policy alongside the owner. Leaving 'login' on an unowned site would keep it
-  // writable by every authenticated user with nobody left who can change that back — the owner
-  // was the only role permitted to touch sharing settings.
-    await this.pool.query("UPDATE sites SET owner_id=NULL, edit_token='', claim_token=NULL, edit_policy='owner', updated_at=$1 WHERE id=$2", [Date.now(), siteId]);
+    // Removing ownership must retire anonymous management credentials.
+    await this.pool.query("UPDATE sites SET owner_id=NULL, edit_token='', updated_at=$1 WHERE id=$2", [Date.now(), siteId]);
   }
 
   async listSitesByOwner(ownerId: string): Promise<SiteSummary[]> {
@@ -1244,18 +1274,18 @@ export class PostgresStore implements MetadataStore {
              (SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id) + (SELECT COUNT(*) FROM share_views shv WHERE shv.site_id=s.id) + COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id), 0) AS total_views,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
-      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members m WHERE m.tenant_id=s.tenant_id AND m.user_id=s.owner_id)
+      WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND s.owner_id = $1 AND EXISTS (SELECT 1 FROM authorization_tenant_members m WHERE m.tenant_id=s.tenant_id AND m.user_id=s.owner_id)
       ORDER BY s.updated_at DESC`, [ownerId]);
     return (rows as Row[]).map(toSummary);
   }
 
   async listSitesForCollaborator(userId: string): Promise<SiteSummary[]> {
-    const { rows } = await this.pool.query(`SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
+    const { rows } = await this.pool.query(`SELECT DISTINCT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.created_at, s.updated_at, s.official_version_id,
              (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.seq <= (SELECT seq FROM versions WHERE id=s.official_version_id)) AS official_version_number,
              v.entry AS entry,
              (SELECT COUNT(*) FROM versions vc WHERE vc.site_id = s.id) AS version_count
       FROM sites s LEFT JOIN versions v ON v.id = s.current_version_id
-      JOIN site_members c ON c.site_id = s.id AND c.user_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)
+      JOIN authorization_site_members c ON c.site_id = s.id AND c.subject_type<>'everyone' AND c.user_id = $1
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
       ORDER BY s.updated_at DESC`, [userId]);
     return (rows as Row[]).map(toSummary);
@@ -1697,16 +1727,19 @@ export class PostgresStore implements MetadataStore {
     // The body's opening is enough for a snippet; a later match falls back to the opening anyway.
     const query = tokens.map((t) => (t.prefix ? `${t.text}:*` : t.text)).join(" & ");
     const { rows } = await this.pool.query(`
-      SELECT s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.updated_at, left(t.body, 30000) AS body,
+      SELECT CASE WHEN s.owner_id = $1 THEN 'owned'
+             WHEN s.owner_id IS NULL AND s.anon_owner_id = $2 THEN 'anonymous'
+             WHEN EXISTS (SELECT 1 FROM authorization_site_members c WHERE c.site_id=s.id AND c.subject_type<>'everyone' AND c.user_id=$1) THEN 'collaborating'
+             ELSE 'public' END AS relationship, s.slug, s.title, s.kind, s.visibility, s.taken_down_at, s.updated_at, left(t.body, 30000) AS body,
              ts_rank(t.tokens, q) AS rank
       FROM site_texts t
       JOIN sites s ON s.id = t.site_id AND s.current_version_id = t.version_id,
            to_tsquery('simple', $3) q
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND t.tokens @@ q
         AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL)
-             OR (s.owner_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
+             OR (s.owner_id = $1 AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = $2)
-             OR EXISTS (SELECT 1 FROM site_members c WHERE c.site_id = s.id AND c.user_id = $1 AND EXISTS (SELECT 1 FROM tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=c.user_id)))
+             OR EXISTS (SELECT 1 FROM authorization_site_members c WHERE c.site_id = s.id AND c.subject_type<>'everyone' AND c.user_id = $1))
       ORDER BY rank DESC, s.updated_at DESC
       LIMIT $4`, [viewer?.userId ?? null, viewer?.anonId ?? null, query, limit]);
     return (rows as Row[]).map(toSearchHit);

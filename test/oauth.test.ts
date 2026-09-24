@@ -398,6 +398,10 @@ describe("scope and lifecycle", () => {
     expect((await whoami(new Request(`${origin}/api/auth/me`, { headers: { authorization: `Bearer ${bearer}` } }))).status).toBe(200);
     const listing = await rpc(bearer, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "artifact_site_find", arguments: {} } });
     expect(listing.status).toBe(200);
+    const folders = await rpc(bearer, { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "artifact_site_folders", arguments: {} } });
+    expect(folders.status).toBe(200);
+    const move = await rpc(bearer, { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "artifact_site_move", arguments: { slug: "anything", folder_id: null } } });
+    expect(move.status).toBe(403); expect((await move.json()).code).toBe("insufficient_scope");
   });
 
   it("cannot mint tokens or approve devices from an OAuth session", async () => {

@@ -40,3 +40,10 @@ export class UploadConflictError extends Error {
     this.name = "UploadConflictError";
   }
 }
+
+/** Explicit public codes; no arbitrary library error fields are reflected to clients. */
+export class CommentImageError extends Error {
+  constructor(public statusCode: number, public code: "image_unavailable" | "image_too_large" | "image_invalid", message: string) {
+    super(message); this.name = "CommentImageError";
+  }
+}

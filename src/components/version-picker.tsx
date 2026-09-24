@@ -15,8 +15,9 @@
 //   3. Make a copy and edit it          → POST /fork, then jump to the copy's edit page
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import ViewerBrand from "@/components/viewer-brand";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Copy, Eye, History, Loader2, MousePointerClick, Pencil } from "lucide-react";
+import { Copy, Eye, History, Loader2, MousePointerClick, Pencil } from "lucide-react";
 import type { VersionInfo } from "@/lib/types";
 import { relTime } from "@/lib/rel-time";
 import { baseVersionUsable, fmtBytes, versionLabel, type EditEntryPlan } from "@/lib/edit-base";
@@ -79,8 +80,7 @@ export default function VersionPicker({ slug, title, kind, versions, currentVers
       <header className="editor-bar">
         <div className="editor-bar-left">
           <Link className="brand" href={`/s/${slug}`} aria-label={t("Back to the viewer")}>
-            <span aria-hidden="true"><ArrowLeft size={15} /></span>
-            <b>artifact-site</b>
+            <ViewerBrand />
           </Link>
           <div className="header-title" title={title}>{title}</div>
           <span className="editor-meta">{countText(t, versions.length, "{n} version", "{n} versions")}</span>

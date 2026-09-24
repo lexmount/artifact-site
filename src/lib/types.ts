@@ -172,24 +172,6 @@ export interface SiteViewStats {
   lastViewedAt: number | null;
 }
 
-/**
- * Who — BEYOND the owner and explicit collaborators — may edit. `owner` = nobody else (a
- * read-only share); `login` = any signed-in user.
- *
- * There is deliberately no anonymous tier: an edit nobody can attribute leaves
- * `versions.created_by` empty, which makes ownership, audit and revocation meaningless.
- * Creating a site stays anonymous (that is the product's hero flow) and reading stays fully
- * anonymous — the asymmetry is the whole point.
- */
-export type EditPolicy = "owner" | "login";
-
-/**
- * Graded write permission. The authz layer resolves a request to one of these and each route
- * declares the level it needs — a plain boolean cannot express "may edit content but must not
- * delete the site", which is exactly the boundary `login`/`link` shares depend on.
- */
-export type Capability = "none" | "content" | "manage" | "owner";
-
 /** A hosted front-end site. `currentVersionId` points at the version served at /s/<slug>. */
 export interface Site {
   /** Organization owning this resource. */
@@ -214,21 +196,8 @@ export interface Site {
   takenDownAt: number | null;
   /** Visible to the owner and administrators only — never rendered to a visitor. */
   takenDownReason: string | null;
-  /**
-   * DEPRECATED — no longer an authorization credential. Editing requires a signed-in account, so
-   * a bearer capability that anyone could forward cannot be honoured. The column survives only so
-   * pre-identity rows keep round-tripping; nothing in the authz path reads it.
-   */
+  /** Anonymous management credential; never grants access to account-owned sites. */
   editToken: string;
-  /**
-   * Claim receipt, minted when a site is created anonymously and kept only in that browser's
-   * localStorage. Redeeming it on first sign-in attaches the site to that account.
-   *
-   * Safe as ownership proof precisely because nothing broadcasts it: with editing governed by
-   * `editPolicy` + collaborators, there is no "copy editable link" affordance to mail it around
-   * — which is exactly why the older, broadcast `editToken` could never serve this role.
-   */
-  claimToken: string;
   /** Owner account; null until an anonymously-created site is claimed. */
   ownerId: string | null;
   /**
@@ -238,11 +207,10 @@ export interface Site {
    */
   anonOwnerId: string | null;
   visibility: Visibility;
-  editPolicy: EditPolicy;
 }
 
-/** An account. Identity source is pluggable: (authProvider, providerSubject) is the only join key
- *  to the IdP — never the email, which would let an attacker pre-register a victim's address. */
+/** An account. Identity normally joins on (authProvider, providerSubject). A temporary OIDC
+ *  cutover bridge may replace an unknown subject by same-provider verified email. */
 export interface User {
   id: string;
   /** Default tenant for creation; authorization uses tenant_members. */
@@ -353,15 +321,6 @@ export interface OauthConnection {
   scope: string;
   connectedAt: number;
   lastUsedAt: number | null;
-}
-
-/** An explicit per-user grant. Collaborators always outrank `editPolicy`. */
-export interface SiteCollaborator {
-  siteId: string;
-  userId: string;
-  role: "admin" | "editor";
-  grantedBy: string | null;
-  grantedAt: number;
 }
 
 // --- audit --------------------------------------------------------------------

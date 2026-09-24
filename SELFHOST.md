@@ -65,7 +65,9 @@ Caddy:
 
 ```
 artifacts.example.net {
-    reverse_proxy 127.0.0.1:4300
+    reverse_proxy 127.0.0.1:4300 {
+        flush_interval -1
+    }
 }
 ```
 
@@ -84,6 +86,7 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300s;
+        proxy_buffering off; # Stream Next.js loading boundaries immediately.
     }
 }
 ```
@@ -336,3 +339,42 @@ Opening either removes that exact entrance from this browser's Recently viewed h
 an expired session or lost access can also remove a still-existing private site; after signing in,
 owners can reopen it from My sites to record it again. Share-link login and passcode prompts keep
 history. No client-visible deletion/access-denial signal is added.
+
+
+## Navigation performance
+
+The list pages render metadata covers rather than loading every artifact in an iframe. Personal
+lists include server-computed permissions and folder data; both directories use bounded SQL
+pagination, title search and stable sorting. Search, folder, view and page selection live in the URL.
+The browser router reuses pages for 30 seconds. Mutations refresh that cache; signing in or out
+navigates the whole document. This short UI cache never replaces authorization on an API operation.
+
+At the **public TLS terminator**, enable HTTP/2 (or HTTP/3). HTTP/1.1 between the proxy and Node is
+normal and independent of the browser protocol. Caddy negotiates HTTP/2 automatically. For Nginx,
+use the HTTP/2 syntax supported by your installed release. Disable response buffering as above so
+loading boundaries can stream. Do not change the artifact CSP or sandbox to reduce console errors.
+
+Run `bash scripts/deploy/performance.sh https://your-domain.example` to inspect protocol, first-byte
+and full-response times without credentials. The script needs a curl build with HTTP/2 support;
+otherwise it reports that limitation. A local/VPN/intercepting proxy may change protocol negotiation:
+compare this result with Chrome Network's **Protocol** and **Timing** columns on the user's path.
+Do not treat an anonymous curl result as a signed-in browser benchmark.
+
+In Chrome Performance, `artifact:navigation-commit` measures a primary-navigation click to the
+React route commit; `artifact:directory-ready` marks the rendered list. Resource Timing exposes
+pre-request, first-byte and response phases. These markers stay local and send no telemetry.
+`ARTIFACT_PERF_LOG_MS` (default `1000`, `0` to disable) logs slow standalone RBAC/directory database
+queries as `[performance]` with pool wait, query duration and pool queue length. It deliberately
+omits SQL, parameters, identifiers and credentials. It does not time every transaction or legacy
+store method; use Postgres statistics/slow-query tooling for a full database profile.
+
+Acceptance: at most 12 directory rows per page; zero automatic artifact preview requests; zero
+per-site permission requests for signed-in lists; returning within the cache window should not
+re-fetch the same list. Record navigation time separately from list readiness and preview loading.
+### Collaboration notifications
+
+Discussion authors and first-time repliers follow automatically. Explicit unfollows persist. Reply events and recipient inbox rows commit atomically with comments; no queue or external notification service is required. Browser inbox reads revalidate current discussion permissions. Notifications never contain stored comment bodies or share tokens.
+
+Platform administrators can configure **Settings → Notification retention (days)** (1–3650, default 90), overriding `ARTIFACT_NOTIFICATION_RETENTION_DAYS`. Unlike other retention settings, `0` does not mean forever: notification retention must be 1–3650 days. Maintenance removes expired events and their inbox rows in batches, without deleting comments or subscriptions.
+
+Authenticated visitors who comment or explicitly follow using a verified share link receive a version-specific access receipt lasting at most 30 days and no later than link expiry. Receipts are checked against the original resource tenant, current link rules, grant membership, version policy and account status. Authorization changes invalidate receipts; label changes do not. Following without independently verified access cannot issue a receipt.

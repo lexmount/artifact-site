@@ -116,11 +116,13 @@ export function removeRecent(items: readonly RecentEntry[], slug: string): Recen
   return items.filter((i) => i.slug !== slug);
 }
 
-/** Directory absence is not deletion. Refresh only unpinned, direct-link snapshots. */
+/** Directory absence is not deletion. Preserve pinned snapshots, but inherit known takedowns. */
 export function recentShelfItems(entries: readonly RecentEntry[], allSites: readonly SiteSummary[]) {
   const live = new Map(allSites.map(s => [s.slug, s]));
   return entries.map(e => ({
-    summary: e.versionId || e.shareToken ? toSummary(e) : live.get(e.slug) ?? toSummary(e),
+    summary: e.versionId || e.shareToken
+      ? { ...toSummary(e), takenDownAt: live.get(e.slug)?.takenDownAt ?? null }
+      : live.get(e.slug) ?? toSummary(e),
     visitedAt: e.visitedAt, href: recentHref(e), preview: recentPreview(e),
   }));
 }

@@ -3,37 +3,33 @@
 // in full, and the skill metadata, so nothing that was here before is gone.
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import { marked } from "marked";
+import Link from "next/link";
 import AppShell from "@/components/app-shell";
 import AgentConnectionGuide from "@/components/agent-connection-guide";
 import { config } from "@/lib/config";
 import GuideLinks from "@/components/guide-links";
-import { parseSkill, resolvePublicBase } from "@/lib/publish-skill";
+import { resolvePublicBase } from "@/lib/publish-skill";
 import { policy } from "@/lib/settings";
-import { getT } from "@/lib/i18n-server";
+import { getLocale, getT } from "@/lib/i18n-server";
+import { marketingMetadata } from "@/lib/marketing-metadata";
 
 export const dynamic = "force-dynamic"; // the copy-me skill URL is derived from the request Host.
 
 export async function generateMetadata(): Promise<Metadata> {
-  const t = await getT();
-  return {
+  const [h, locale, t] = await Promise.all([headers(), getLocale(), getT()]);
+  return marketingMetadata({
+    base: resolvePublicBase(h),
+    path: "/for-agents",
+    locale,
     title: t("Publish skill — for AI / agents"),
     description: t("Send one address to your AI and it can publish front-end output as a link you can share and edit in place."),
-  };
+  });
 }
 
 export default async function PublishGuide() {
   const t = await getT();
   const base = resolvePublicBase(await headers());
   const skillUrl = `${base}/for-agents.md`;
-  const { meta, body } = parseSkill(base);
-  // Rendered into dangerouslySetInnerHTML below. The document itself is ours and static, but it is
-  // no longer entirely so: `base` is substituted into it and can come from the request's Host header
-  // when ARTIFACT_PUBLIC_URL is unset. That value is validated to a bare hostname in
-  // resolvePublicBase — do not relax that check without sanitising here instead.
-  const html = await marked.parse(body);
-
-
   return (
     <AppShell>
       <div className="guide">
@@ -55,11 +51,7 @@ export default async function PublishGuide() {
           <summary>{t("Supported files and limits")}</summary>
           <p>{t("HTML, folders, ZIP, PDF and Office documents. Sizes, formats and what a hosted page may do at runtime are set out in the full guide below.")}</p>
         </details>
-        <details id="full-guide">
-          <summary>{t("Full publishing guide")} <code>{meta.name}</code></summary>
-          {meta.description && <p className="guide-meta">{meta.description}</p>}
-          <article className="prose" dangerouslySetInnerHTML={{ __html: html }} />
-        </details>
+        <p id="full-guide"><Link prefetch={false} href="/for-agents/reference">{t("Full publishing guide")} →</Link></p>
       </div>
     </AppShell>
   );

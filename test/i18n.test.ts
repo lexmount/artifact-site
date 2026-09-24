@@ -1,7 +1,7 @@
 // The translation core: English is the key, a missing entry is English (never blank), placeholders
 // are filled by name, and locale resolution prefers an explicit choice over Accept-Language.
 import { afterEach, describe, expect, it } from "vitest";
-import { __resetMessagesForTests, interpolate, registerMessages, resolveLocale, translate, translatorFor } from "@/lib/i18n";
+import { __resetMessagesForTests, interpolate, localeFromSearch, registerMessages, resolveLocale, translate, translatorFor } from "@/lib/i18n";
 import { zhCN } from "@/locales/zh-CN";
 import { relTime } from "@/lib/rel-time";
 
@@ -48,6 +48,15 @@ describe("resolveLocale", () => {
     expect(resolveLocale(null, "fr-FR,fr;q=0.9,en;q=0.5")).toBe("en");
     expect(resolveLocale("klingon", "de")).toBe("en");
     expect(resolveLocale(undefined, undefined)).toBe("en");
+  });
+});
+
+describe("localeFromSearch", () => {
+  it("accepts supported URL overrides and ignores invalid ones", () => {
+    expect(localeFromSearch("?lang=zh-CN")).toBe("zh-CN");
+    expect(localeFromSearch("?x=1&lang=en-US")).toBe("en");
+    expect(localeFromSearch("?lang=fr")).toBeNull();
+    expect(localeFromSearch("?x=1")).toBeNull();
   });
 });
 

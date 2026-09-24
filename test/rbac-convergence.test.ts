@@ -1,8 +1,11 @@
+import { resolveRole } from "./fixtures/authorization-role";
+import { restorePreCleanupSchema } from "./fixtures/pre-cleanup-schema";
+import { putTenantAdmin, putUserSiteRole } from "@/lib/role-bindings";
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
-import { closeDbForTests, createId, upsertUser, getSite, rbacQuery, updateSiteSharing, setEditToken, createShare } from '@/lib/db';
+import { closeDbForTests, createId, upsertUser, getSite, rbacQuery, updateSiteVisibility, setEditToken, createShare } from '@/lib/db';
 import { createSite } from '@/lib/sites';
 import { mintSession } from '@/lib/session';
-import { resolveCapability, resolveViewer } from '@/lib/authz';
+import { resolveViewer } from '@/lib/authz';
 import { authorizePreview } from '@/lib/preview-access';
 import { hashToken, canReadSite } from '@/lib/share';
 import { DELETE as disown } from '@/app/api/sites/[slug]/ownership/route';
@@ -30,16 +33,16 @@ it('disown must not reactivate old edit token', async () => {
     const owner = await identity();
     const { site } = await createSite({ mode: 'paste', html: '<html>private</html>' }, { ownerId: owner.user.id });
     const tokenReq = new Request(origin, { headers: { 'x-edit-token': site.editToken } });
-    expect(await resolveCapability(resolveViewer(tokenReq), site)).toBe('none');
+    expect(await resolveRole(resolveViewer(tokenReq), site)).toBe(null);
     expect((await disown(req('/api/sites/' + site.slug + '/ownership', 'DELETE', owner.cookie), ctx(site.slug))).status).toBe(410);
     const fresh = (await getSite(site.id))!;
     expect(fresh.ownerId).toBe(owner.user.id);
-    expect(await resolveCapability(resolveViewer(tokenReq), fresh)).toBe('none');
+    expect(await resolveRole(resolveViewer(tokenReq), fresh)).toBe(null);
 });
 it('rotating anonymous edit token must invalidate private preview grant', async () => {
     vi.stubEnv('ARTIFACT_ENFORCE_OWNERSHIP', 'off');
     const { site } = await createSite({ mode: 'paste', html: '<html>private</html>' }, {});
-    await updateSiteSharing(site.id, 'private', 'owner');
+    await updateSiteVisibility(site.id, 'private');
     const fresh = (await getSite(site.id))!;
     const access = await authorizePreview(new Request(origin, { headers: { 'x-edit-token': site.editToken } }), fresh, null);
     expect(access?.key).toBeTruthy();
@@ -49,19 +52,19 @@ it('rotating anonymous edit token must invalidate private preview grant', async 
 it('revoked editor must not keep uploading bytes', async () => {
     const owner = await identity(), editor = await identity();
     const { site } = await createSite({ mode: 'paste', html: '<html>one</html>' }, { ownerId: owner.user.id });
-    await rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'editor',1)", [site.id, editor.user.id]);
+    await putUserSiteRole(rbacQuery, site.id, editor.user.id, 'editor', null);
     const opened = await openUpload(req('/api/uploads', 'POST', editor.cookie, { slug: site.slug }));
     expect(opened.status).toBe(201);
     const { versionId } = await opened.json();
     expect((await putFile(new Request(origin + '/api/uploads/' + versionId + '/files/index.html', { method: 'PUT', headers: { origin, cookie: editor.cookie }, body: '<html>staged before revocation</html>' }), { params: Promise.resolve({ versionId, relpath: ['index.html'] }) })).status).toBe(200);
-    await rbacQuery('DELETE FROM site_members WHERE site_id=$1 AND user_id=$2', [site.id, editor.user.id]);
+    await rbacQuery('DELETE FROM role_bindings WHERE resource_site_id=$1 AND subject_user_id=$2', [site.id, editor.user.id]);
     const put = await putFile(new Request(origin + '/api/uploads/' + versionId + '/files/index.html', { method: 'PUT', headers: { origin, cookie: editor.cookie }, body: '<html>two</html>' }), { params: Promise.resolve({ versionId, relpath: ['index.html'] }) });
     expect.soft(put.status).toBe(403);
     expect((await commit(req('/api/uploads/' + versionId + '/commit', 'POST', editor.cookie, {}), { params: Promise.resolve({ versionId }) })).status).toBe(403);
 });
 it('fork must respect login creation policy', async () => {
     const { site } = await createSite({ mode: 'paste', html: '<html>one</html>' }, {});
-    await updateSiteSharing(site.id, 'public', 'owner');
+    await updateSiteVisibility(site.id, 'public');
     vi.stubEnv('ARTIFACT_CREATE_POLICY', 'login');
     expect((await fork(req('/api/sites/' + site.slug + '/fork', 'POST'), ctx(site.slug))).status).toBe(401);
 });
@@ -79,7 +82,7 @@ it('share metadata must not expose a disabled tenant report', async () => {
 it('editor metadata must not expose private report title', async () => {
     const owner = await identity();
     const { site } = await createSite({ mode: 'paste', html: '<html><title>PRIVATE SECRET TITLE</title></html>' }, { ownerId: owner.user.id });
-    await updateSiteSharing(site.id, 'private', 'owner');
+    await updateSiteVisibility(site.id, 'private');
     const { generateMetadata } = await import('@/app/s/[slug]/edit/page');
     const meta = await generateMetadata(ctx(site.slug));
     expect(JSON.stringify(meta)).not.toContain('PRIVATE SECRET');
@@ -87,11 +90,11 @@ it('editor metadata must not expose private report title', async () => {
 it('revocation during storage write must prevent publishing', async () => {
     const owner = await identity(), editor = await identity();
     const { site } = await createSite({ mode: 'paste', html: '<html>one</html>' }, { ownerId: owner.user.id });
-    await rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'editor',1)", [site.id, editor.user.id]);
+    await putUserSiteRole(rbacQuery, site.id, editor.user.id, 'editor', null);
     const { getStorage } = await import('@/lib/storage');
     const storage = getStorage();
     const write = storage.writeVersionFiles.bind(storage);
-    vi.spyOn(storage, 'writeVersionFiles').mockImplementationOnce(async (...args) => { await rbacQuery('DELETE FROM site_members WHERE site_id=$1 AND user_id=$2', [site.id, editor.user.id]); return write(...args); });
+    vi.spyOn(storage, 'writeVersionFiles').mockImplementationOnce(async (...args) => { await rbacQuery('DELETE FROM role_bindings WHERE resource_site_id=$1 AND subject_user_id=$2', [site.id, editor.user.id]); return write(...args); });
     const { POST } = await import('@/app/api/sites/[slug]/edit/route');
     const response = await POST(req('/api/sites/' + site.slug + '/edit', 'POST', editor.cookie, { content: '<html>changed after revocation</html>' }), ctx(site.slug));
     expect.soft(response.status).toBe(403);
@@ -118,7 +121,7 @@ it('MCP ZIP commit must retain the tenant selected at upload start', async () =>
     const tenant = createId('tenant');
     temporaryTenants.push(tenant);
     await rbacQuery('INSERT INTO tenants(id,name) VALUES($1,$2)', [tenant, 'Upload target']);
-    await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'member')", [tenant, owner.user.id]);
+    await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)", [tenant, owner.user.id]);
     const { insertPublishToken, getSiteBySlug } = await import('@/lib/db');
     const { createPublishTokenSecret, hashTokenSecret } = await import('@/lib/publish-token');
     const token = createPublishTokenSecret();
@@ -152,23 +155,29 @@ it('migration retires only owned credentials and preserves ownership, visibility
     const owner = await identity();
     const { site } = await createSite({ mode: 'paste', html: '<html>Keep</html>' }, { ownerId: owner.user.id });
     const { site: anonymous } = await createSite({ mode: 'paste', html: '<html>Anonymous</html>' }, {});
-    await updateSiteSharing(site.id, 'unlisted', 'owner');
+    await updateSiteVisibility(site.id, 'unlisted');
+    await restorePreCleanupSchema();
     await rbacQuery("UPDATE sites SET edit_token='historical',claim_token='receipt' WHERE id=$1", [site.id]);
     const share = await createShare({ id: createId('shr'), siteId: site.id, tokenHash: hashToken(createId('token')), policy: 'public', passcodeHash: null, label: null, createdBy: owner.user.id, createdAnonId: null, expiresAt: null });
     const before = (await getSite(site.id))!;
     const { rbacTransaction, getShare } = await import('@/lib/db');
-    const { migrateRbac } = await import('@/lib/rbac-store');
+    const { bootstrapAuthorization } = await import('@/lib/migrations/bootstrap-authorization');
+    const { migrateNumbered } = await import('@/lib/migrations');
+    await rbacQuery("CREATE TABLE rbac_migrations(id TEXT PRIMARY KEY)");
+    await rbacQuery("INSERT INTO rbac_migrations(id) VALUES('initial')");
+    const migrateRbac = async (q: typeof rbacQuery) => { await bootstrapAuthorization(q, process.env.ARTIFACT_DB_DRIVER === 'postgres' ? 'postgres' : 'sqlite'); };
     await rbacQuery("DELETE FROM rbac_migrations WHERE id='retire-owned-edit-tokens'");
     await rbacTransaction(migrateRbac);
     await rbacTransaction(migrateRbac);
-    expect(await getSite(site.id)).toEqual({ ...before, editToken: '', claimToken: '' });
+    await rbacTransaction(q => migrateNumbered(q, process.env.ARTIFACT_DB_DRIVER === "postgres" ? "postgres" : "sqlite"));
+    expect(await getSite(site.id)).toEqual({ ...before, editToken: '' });
     expect((await getSite(anonymous.id))!.editToken).toBe(anonymous.editToken);
     expect((await getShare(share.id))!.revokedAt).toBeNull();
     expect((await getShare(share.id))!.policy).toBe('public');
 });
 it('anonymous receipt exchange enables SSR but cannot bypass cookie CSRF or claim ownership', async () => {
     const { site } = await createSite({ mode: 'paste', html: '<html>Anonymous</html>' }, {});
-    await updateSiteSharing(site.id, 'private', 'owner');
+    await updateSiteVisibility(site.id, 'private');
     const { POST, GET } = await import('@/app/api/sites/[slug]/permissions/route');
     const exchange = await POST(new Request(origin + '/api/sites/' + site.slug + '/permissions', { method: 'POST', headers: { 'x-edit-token': site.editToken } }), ctx(site.slug));
     expect(exchange.status).toBe(200);
@@ -186,7 +195,7 @@ it('anonymous receipt exchange enables SSR but cannot bypass cookie CSRF or clai
 it('session revocation invalidates a derived private preview grant', async () => {
     const owner = await identity();
     const { site } = await createSite({ mode: 'paste', html: '<html>Private</html>' }, { ownerId: owner.user.id });
-    await updateSiteSharing(site.id, 'private', 'owner');
+    await updateSiteVisibility(site.id, 'private');
     const fresh = (await getSite(site.id))!;
     const grant = await authorizePreview(req('/s/' + site.slug, 'GET', owner.cookie), fresh, null);
     expect(grant?.key).toBeTruthy();
@@ -210,7 +219,7 @@ it('rename rechecks ownership after parsing the request body', async () => {
 it('view shares read fixed text but never expose source or fork permissions', async () => {
     const owner = await identity();
     const { site } = await createSite({ mode: 'paste', html: '<html><body>Original snapshot</body></html>' }, { ownerId: owner.user.id });
-    await updateSiteSharing(site.id, 'private', 'owner');
+    await updateSiteVisibility(site.id, 'private');
     const token = createId('share');
     await createShare({ id: createId('shr'), siteId: site.id, tokenHash: hashToken(token), policy: 'public', mode: 'view', versionId: site.currentVersionId, passcodeHash: null, label: null, createdBy: owner.user.id, createdAnonId: null, expiresAt: null });
     const { POST: edit } = await import('@/app/api/sites/[slug]/edit/route');
@@ -230,7 +239,7 @@ it('view shares read fixed text but never expose source or fork permissions', as
 it('final rename revalidation does not duplicate the management audit', async () => {
  const owner = await identity(), manager = await identity();
  const {site} = await createSite({mode:'paste',html:'<html>Managed</html>'},{ownerId:owner.user.id});
- await rbacQuery("UPDATE tenant_members SET role='admin' WHERE tenant_id='init' AND user_id=$1",[manager.user.id]);
+ await putTenantAdmin(rbacQuery,"init",manager.user.id,true,null);
  const request = new Request(req('/api/sites/'+site.slug,'PATCH',manager.cookie,{title:'Renamed'}),{headers:{origin,cookie:manager.cookie,'content-type':'application/json','x-management-reason':'Requested correction'}});
  const {PATCH} = await import('@/app/api/sites/[slug]/route');
  expect((await PATCH(request,ctx(site.slug))).status).toBe(200);
@@ -271,7 +280,7 @@ it('preserves rejected bearer diagnostics in the upload origin gate', async () =
 it('checks management uploads on every PUT without repeating the entry audit', async () => {
  const owner = await identity(), manager = await identity();
  const {site} = await createSite({mode:'paste',html:'<html>Managed upload</html>'},{ownerId:owner.user.id});
- await rbacQuery("UPDATE tenant_members SET role='admin' WHERE tenant_id='init' AND user_id=$1",[manager.user.id]);
+ await putTenantAdmin(rbacQuery,"init",manager.user.id,true,null);
  const headers = {origin,cookie:manager.cookie,'content-type':'application/json','x-management-reason':'Upload correction'};
  const opened = await openUpload(new Request(origin+'/api/uploads',{method:'POST',headers,body:JSON.stringify({slug:site.slug})}));
  expect(opened.status).toBe(201);
@@ -284,7 +293,7 @@ it('checks management uploads on every PUT without repeating the entry audit', a
 it('records management extracted-text access once', async () => {
  const owner = await identity(), manager = await identity();
  const {site} = await createSite({mode:'paste',html:'<html>Managed text</html>'},{ownerId:owner.user.id});
- await rbacQuery("UPDATE tenant_members SET role='admin' WHERE tenant_id='init' AND user_id=$1",[manager.user.id]);
+ await putTenantAdmin(rbacQuery,"init",manager.user.id,true,null);
  const {GET} = await import('@/app/api/sites/[slug]/text/route');
  expect((await GET(new Request(origin+'/api/sites/'+site.slug+'/text',{headers:{cookie:manager.cookie,'x-management-reason':'Read correction'}}),ctx(site.slug))).status).toBe(200);
  expect(await rbacQuery("SELECT id FROM rbac_audit WHERE action='site.read' AND target_id=$1",[site.id])).toHaveLength(1);

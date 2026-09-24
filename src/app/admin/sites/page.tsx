@@ -13,7 +13,7 @@ import ReasonDialog from "@/components/admin/reason-dialog";
 import MoreMenu from "@/components/more-menu";
 import type { AdminSiteRow, AdminSiteState } from "@/lib/types";
 
-type Row = Omit<AdminSiteRow, "editToken" | "claimToken" | "anonOwnerId"> & { anonymous: boolean };
+type Row = Omit<AdminSiteRow, "editToken" | "anonOwnerId"> & { anonymous: boolean };
 type Act = { kind: "assign" | "takeDown" | "restore" | "delete" | "undelete"; site: Row };
 const PAGE = 50;
 

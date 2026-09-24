@@ -18,7 +18,6 @@ export interface CreatedSite {
   title: string;
   kind: SiteKind;
   editToken?: string;
-  claimToken?: string;
   notice?: string;
 }
 
@@ -41,7 +40,7 @@ export interface SiteInfo {
   files: string[];
 }
 
-export interface SearchResult { slug: string; title: string; kind: SiteKind; visibility?: string; takenDownAt?: number | null; updatedAt?: number; url: string; snippet: string }
+export interface SearchResult { relationship?: "owned" | "collaborating" | "anonymous" | "public"; slug: string; title: string; kind: SiteKind; visibility?: string; takenDownAt?: number | null; updatedAt?: number; url: string; snippet: string }
 export interface SiteText { slug: string; url: string; title: string; kind: SiteKind; versionId: string; file: string | null; chars: number; truncated: boolean; text: string }
 
 export interface VersionRow { id: string; createdAt: number; source?: string; fileCount?: number; bytes?: number }
@@ -70,7 +69,8 @@ export type DevicePoll =
   | { status: "expired" }
   | { status: "approved"; token: string; user: { email?: string; id?: string } };
 
-export interface Me { uploadLimits?: UploadLimits; user: { id: string; email?: string; displayName?: string } | null; oidcEnabled: boolean }
+export interface Folder { id: string; name: string; createdAt: number }
+export interface Me { operator?: boolean; uploadLimits?: UploadLimits; user: { id: string; email?: string; displayName?: string } | null; oidcEnabled: boolean }
 
 /** An HTTP-level failure. `status` is the code, `message` the server's `{error}` text when it sent one. */
 export class ApiError extends Error {
@@ -190,6 +190,11 @@ export class ArtifactSiteClient {
   listVersions(slug: string): Promise<{ versions: VersionRow[]; currentVersionId: string }> {
     return this.json("GET", `/api/sites/${enc(slug)}/versions`);
   }
+  publicSites(): Promise<{ sites: SiteRow[] }> { return this.json("GET", "/api/sites"); }
+  listFolders(): Promise<{ folders: Folder[]; assign: Record<string, string> }> { return this.json("GET", "/api/me/folders"); }
+  moveToFolder(slug: string, folderId: string | null): Promise<{ ok: true; slug: string; folderId: string | null }> {
+    return this.json("PUT", "/api/me/folders/assignments", { body: { slug, folderId } });
+  }
   mySites(): Promise<{ owned: SiteRow[]; collaborating: SiteRow[] }> { return this.json("GET", "/api/me/sites"); }
   rename(slug: string, title: string): Promise<{ slug: string; title: string }> {
     return this.json("PATCH", `/api/sites/${enc(slug)}`, { body: { title } });
@@ -214,8 +219,8 @@ export class ArtifactSiteClient {
     return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("file", filename, bytes), official), query: { expected_version: expectedVersion } });
   }
   /** The current version as a zip, plus the version id to pass back as `expected_version`. */
-  async export(slug: string): Promise<{ zip: Uint8Array; versionId: string | null }> {
-    const res = await this.request("GET", `/api/sites/${enc(slug)}/export`);
+  async export(slug: string, versionId?: string): Promise<{ zip: Uint8Array; versionId: string | null }> {
+    const res = await this.request("GET", `/api/sites/${enc(slug)}/export`, {query:{version_id:versionId}});
     return { zip: new Uint8Array(await res.arrayBuffer()), versionId: res.headers.get("x-artifact-version") };
   }
 
@@ -257,8 +262,18 @@ export class ArtifactSiteClient {
     return this.json("GET", "/api/search", { query: { q: query, limit: limit === undefined ? undefined : String(limit) } });
   }
   /** The current version as plain text, or one file of the tree verbatim (`file`). */
-  readText(slug: string, opts: { file?: string; maxChars?: number } = {}): Promise<SiteText> {
-    return this.json("GET", `/api/sites/${enc(slug)}/text`, { query: { file: opts.file, max_chars: opts.maxChars === undefined ? undefined : String(opts.maxChars) } });
+  readText(slug: string, opts: { file?: string; maxChars?: number; versionId?: string } = {}): Promise<SiteText> {
+    return this.json("GET", `/api/sites/${enc(slug)}/text`, { query: { version_id:opts.versionId, file: opts.file, max_chars: opts.maxChars === undefined ? undefined : String(opts.maxChars) } });
+  }
+
+  listComments(slug: string, opts: {versionId?: string; shareId?: string; aggregate?: boolean; allVersions?: boolean; status?: string; cursor?: string; limit?: number} = {}): Promise<Record<string, unknown>> {
+    return this.json("GET", `/api/sites/${enc(slug)}/comments/agent-list`, {query: {versionId:opts.versionId,shareId:opts.shareId,aggregate:opts.aggregate ? "true" : undefined,allVersions:opts.allVersions ? "true" : undefined,status:opts.status,cursor:opts.cursor,limit:opts.limit === undefined ? undefined : String(opts.limit)}});
+  }
+  readComment(slug: string, threadId: string, cursor?: string, limit?: number): Promise<Record<string, unknown>> {
+    return this.json("GET", `/api/sites/${enc(slug)}/comments/${enc(threadId)}${cursor ? "/messages" : ""}`, {query: cursor ? {cursor,limit:limit === undefined ? undefined : String(limit)} : undefined});
+  }
+  commentContext(slug: string, threadId: string): Promise<Record<string, unknown>> {
+    return this.json("GET", `/api/sites/${enc(slug)}/comments/${enc(threadId)}/agent-context`);
   }
 
   /** The agent skill as this deployment serves it (base URL already rewritten). */

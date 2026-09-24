@@ -7,13 +7,12 @@ export const editor: Messages = {
   "All files come from earlier version {label}. Saving creates a new latest version; {label} and the official version remain unchanged.": "所有文件均来自历史版本 {label}。保存后将创建新的最新版，{label} 和正式版均保持不变。",
 
   // ── site-viewer ──────────────────────────────────────────────────────────────
-  "Published · Only you can open it for now. Create a share link under Sharing settings before sending it to others":
-    "已发布 · 目前只有你能打开，到「分享设置」里建一条分享链接再发给别人",
+  "Published · This site is private. Create a share link under Sharing settings to invite more people":
+    "已发布 · 此站点为私有站点，到「分享设置」里创建分享链接以邀请更多人",
   "Published · Copy the link under Sharing settings": "已发布 · 到「分享设置」里复制链接",
   "Rename failed": "重命名失败",
   "Renamed": "已重命名",
   "Uploading the new version failed": "上传新版本失败",
-  "New version published · The share link is unchanged": "已发布新版本 · 分享链接不变",
   "Save as new site failed": "另存失败",
   "Saved as a new site": "已另存为新站点",
   "Rolled back · A new version was created": "已回滚 · 已生成新版本",
@@ -25,16 +24,12 @@ export const editor: Messages = {
   "Desktop": "桌面",
   "Tablet": "平板",
   "Mobile": "手机",
-  "Re-upload the whole document: a new version is published at the same link, and earlier versions can be rolled back":
-    "重传整份文档：同一链接发布新版本，历史版本可回滚",
   "Upload new version": "上传新版本",
   "Copy into a separate new site": "复制成一个独立的新站点",
   "Save as new site": "另存为新站点",
   "Sharing settings": "分享设置",
   "Sign in required": "需登录",
   "Edit": "编辑",
-  "Private site: others cannot open this address directly. Get a share link from Sharing settings":
-    "私有站点，直接发这个地址别人打不开；到「分享设置」取一条分享链接",
   "Open the artifact itself in a new window (without this action bar). This is not a share link — use Sharing settings to show it to others.":
     "在新窗口打开产物本身（不含这条操作条）。这不是分享链接——给别人看请用「分享设置」。",
   "Open the artifact itself in a new window, without this action bar.": "在新窗口打开产物本身，不含这条操作条。",

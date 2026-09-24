@@ -37,6 +37,7 @@ export interface PolicySettings {
   defaultVisibility: Visibility;
   anonSiteTtlDays: number;
   auditRetentionDays: number;
+  notificationRetentionDays: number;
   quotaSitesPerUser: number;
   quotaBytesPerUser: number;
   quotaSitesPerAnon: number;
@@ -63,6 +64,7 @@ export const SETTINGS: { [K in SettingKey]: Kind & { env: string; fromEnv: () =>
   anonymousSites: { kind: "enum", options: ["full", "read-only"], env: "ARTIFACT_ANONYMOUS_SITES", fromEnv: () => config.anonymousSites },
   defaultVisibility: { kind: "enum", options: ["public", "unlisted", "private"], env: "ARTIFACT_DEFAULT_VISIBILITY", fromEnv: () => config.defaultVisibility },
   anonSiteTtlDays: { kind: "int", min: 0, max: 3650, env: "ARTIFACT_ANON_SITE_TTL_DAYS", fromEnv: () => Math.round(config.anonSiteTtlMs / 86_400_000) },
+  notificationRetentionDays: { kind: "int", min: 1, max: 3650, env: "ARTIFACT_NOTIFICATION_RETENTION_DAYS", fromEnv: () => config.notificationRetentionDays },
   auditRetentionDays: { kind: "int", min: 0, max: 3650, env: "ARTIFACT_AUDIT_RETENTION_DAYS", fromEnv: () => config.auditRetentionDays },
   quotaSitesPerUser: { kind: "int", min: 0, max: 1_000_000, env: "ARTIFACT_QUOTA_SITES_PER_USER", fromEnv: () => config.quota.sitesPerUser },
   quotaBytesPerUser: { kind: "int", min: 0, max: Number.MAX_SAFE_INTEGER, env: "ARTIFACT_QUOTA_BYTES_PER_USER", fromEnv: () => config.quota.bytesPerUser },
@@ -145,6 +147,7 @@ export function setting<K extends SettingKey>(key: K, refresh = true): PolicySet
 
 function policyView(refresh: boolean) {
   return {
+    get notificationRetentionDays(): number { return setting("notificationRetentionDays", refresh); },
     get createPolicy(): CreatePolicy { return setting("createPolicy", refresh); },
     get anonymousSites(): AnonymousSites { return setting("anonymousSites", refresh); },
     get defaultVisibility(): Visibility { return setting("defaultVisibility", refresh); },

@@ -1,13 +1,10 @@
+import { resolveRole } from "./fixtures/authorization-role";
 import { addCollaborator } from "./fixtures/legacy-identity";
-// Pins the capability matrix. The bug this guards against is subtle and was shipped in an earlier
-// draft: four routes (rename / delete / edit / rollback) all called one identical boolean gate, so
-// every tier allowed to edit was silently allowed to DELETE. The "login" tier below is the one that
-// matters — it must reach `content` and stop there.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { atLeast, resolveCapability, resolveViewer } from "@/lib/authz";
+import { resolveViewer } from "@/lib/authz";
 import { closeDbForTests, createId, insertSiteWithVersion, upsertUser } from "@/lib/db";
 import type { Session, Site } from "@/lib/types";
 
@@ -18,8 +15,7 @@ function site(over: Partial<Site> = {}): Site {
     tenantId: "init",
     id: "site_1", slug: "s1", title: "t", kind: "single", currentVersionId: "ver_1",
     createdAt: 1, updatedAt: 1, deletedAt: null, purgedAt: null, takenDownAt: null, takenDownReason: null,
-    editToken: "legacy-token", claimToken: "claim-token",
-    ownerId: null, anonOwnerId: null, visibility: "public", editPolicy: "owner",
+    editToken: "legacy-token", ownerId: null, anonOwnerId: null, visibility: "public",
     ...over,
   };
 }
@@ -49,35 +45,24 @@ afterEach(async () => {
   for (const k of ["ARTIFACT_OIDC_ISSUER", "ARTIFACT_OIDC_CLIENT_ID", "ARTIFACT_OIDC_CLIENT_SECRET"]) delete process.env[k];
 });
 
-describe("atLeast", () => {
-  it("orders capabilities so owner implies everything", () => {
-    expect(atLeast("owner", "content")).toBe(true);
-    expect(atLeast("manage", "content")).toBe(true);
-    expect(atLeast("content", "manage")).toBe(false);
-    expect(atLeast("none", "content")).toBe(false);
-  });
-});
-
-describe("legacy mode (ARTIFACT_ENFORCE_OWNERSHIP off)", () => {
+describe("account tenant boundaries", () => {
   it("an off switch cannot enable tokens on account-tenant orphans", async () => {
     const s = site();
     const withToken = resolveViewer(req({ "x-edit-token": "legacy-token" }));
-    expect(await resolveCapability(withToken, s)).toBe("none");
+    expect(await resolveRole(withToken, s)).toBe(null);
 
     const without = resolveViewer(req());
-    expect(await resolveCapability(without, s)).toBe("none");
+    expect(await resolveRole(without, s)).toBe(null);
   });
 
-  it("ignores sessions entirely, so a half-upgraded fleet stays self-consistent", async () => {
-    const s = site({ ownerId: "usr_a", editPolicy: "login" });
+  it("rejects an owner identity without an active account and membership", async () => {
+    const s = site({ ownerId: "usr_a" });
     const viewer = resolveViewer(req(), session("usr_a"));
-    expect(await resolveCapability(viewer, s)).toBe("none");
+    expect(await resolveRole(viewer, s)).toBe(null);
   });
 });
 
-describe("enforced mode", () => {
-  // Enforcement now requires a configured IdP — without one it deliberately degrades (see the
-  // "enforcement requires a configured IdP" block below), so the fixture must supply one.
+describe("role authority", () => {
   beforeEach(() => {
     process.env.ARTIFACT_ENFORCE_OWNERSHIP = "on";
     process.env.ARTIFACT_OIDC_ISSUER = "https://idp.example/oidc";
@@ -86,35 +71,31 @@ describe("enforced mode", () => {
   });
 
   it("denies every anonymous write, even with a valid legacy token", async () => {
-    const s = site({ editPolicy: "login" });
+    const s = site({});
     const viewer = resolveViewer(req({ "x-edit-token": "legacy-token" }));
-    expect(await resolveCapability(viewer, s)).toBe("none");
+    expect(await resolveRole(viewer, s)).toBe(null);
   });
 
   it("gives the owner full control", async () => {
     const user = await upsertUser({ authProvider: "test", providerSubject: "owner" });
     const s = site({ ownerId: user.id });
-    expect(await resolveCapability(resolveViewer(req(), session(user.id)), s)).toBe("owner");
+    expect(await resolveRole(resolveViewer(req(), session(user.id)), s)).toBe("owner");
   });
 
   it("stops a non-owner on an owner-only site", async () => {
     const s = site({ ownerId: "usr_a" });
-    expect(await resolveCapability(resolveViewer(req(), session("usr_b")), s)).toBe("none");
+    expect(await resolveRole(resolveViewer(req(), session("usr_b")), s)).toBe(null);
   });
 
-  // THE regression guard: the open tier must not reach delete/rename/rollback.
   it("does not grant editing merely for signing in", async () => {
-    const s = site({ ownerId: "usr_a", editPolicy: "login" });
-    const cap = await resolveCapability(resolveViewer(req(), session("usr_stranger")), s);
-    expect(cap).toBe("none");
-    expect(atLeast(cap, "content")).toBe(false);
-    expect(atLeast(cap, "manage")).toBe(false);
-    expect(atLeast(cap, "owner")).toBe(false);   // ← would be a one-request site deletion
+    const s = site({ ownerId: "usr_a" });
+    const cap = await resolveRole(resolveViewer(req(), session("usr_stranger")), s);
+    expect(cap).toBe(null);
   });
 
   it("leaves an unclaimed anonymous site read-only for everyone", async () => {
-    const s = site({ ownerId: null, editPolicy: "owner" });
-    expect(await resolveCapability(resolveViewer(req(), session("usr_anyone")), s)).toBe("none");
+    const s = site({ ownerId: null });
+    expect(await resolveRole(resolveViewer(req(), session("usr_anyone")), s)).toBe(null);
   });
 
   it("grants an explicit collaborator content editing only", async () => {
@@ -127,23 +108,19 @@ describe("enforced mode", () => {
     await addCollaborator(siteId, collab.id, null);
 
     const s = site({ id: siteId, ownerId: "usr_a" });
-    const cap = await resolveCapability(resolveViewer(req(), session(collab.id)), s);
-    expect(cap).toBe("content");
-    expect(atLeast(cap, "owner")).toBe(false);
+    const cap = await resolveRole(resolveViewer(req(), session(collab.id)), s);
+    expect(cap).toBe("editor");
   });
 
   it("still honours the admin bearer", async () => {
     process.env.PUBLISH_API_TOKEN = "admin-tok";
     const s = site({ ownerId: "usr_a" });
     const viewer = resolveViewer(req({ authorization: "Bearer admin-tok" }));
-    expect(await resolveCapability(viewer, s)).toBe("owner");
+    expect(await resolveRole(viewer, s)).toBe("platform-admin");
   });
 });
 
-// Enforcement without a configured IdP demands an identity nobody can obtain: every site would
-// become permanently uneditable except from the browser that created it, with no recourse on an
-// open deployment. It must degrade to the old behaviour, not lock the door.
-describe("enforcement requires a configured IdP", () => {
+describe("authority without OIDC", () => {
   beforeEach(() => { process.env.ARTIFACT_ENFORCE_OWNERSHIP = "on"; });
   afterEach(() => {
     for (const k of ["ARTIFACT_OIDC_ISSUER", "ARTIFACT_OIDC_CLIENT_ID", "ARTIFACT_OIDC_CLIENT_SECRET"]) delete process.env[k];
@@ -152,7 +129,7 @@ describe("enforcement requires a configured IdP", () => {
   it("RBAC still rejects account-tenant tokens without OIDC", async () => {
     const s = site();
     const viewer = resolveViewer(req({ "x-edit-token": "legacy-token" }));
-    expect(await resolveCapability(viewer, s)).toBe("none");
+    expect(await resolveRole(viewer, s)).toBe(null);
   });
 
   it("takes effect once OIDC is configured", async () => {
@@ -161,6 +138,6 @@ describe("enforcement requires a configured IdP", () => {
     process.env.ARTIFACT_OIDC_CLIENT_SECRET = "secret";
     const s = site();
     const viewer = resolveViewer(req({ "x-edit-token": "legacy-token" }));
-    expect(await resolveCapability(viewer, s)).toBe("none");
+    expect(await resolveRole(viewer, s)).toBe(null);
   });
 });

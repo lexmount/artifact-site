@@ -46,6 +46,8 @@ describe("server-derived comment evidence", () => {
     const anchor = { schemaVersion: 1 as const, kind: "pdf" as const, filePath: "preview.pdf", page: 2, region: { kind: "rect" as const, rect: { x: 0, y: 0, width: 1, height: 1 } } };
     const result = await prepareCommentEvidence({ ...site, kind: "document" }, version, anchor);
     expect(result.excerpt).toContain("Page 2 of 2");
+    expect((await prepareCommentEvidence(site, version, {...anchor,quote:{exact:"Page 2"}})).excerpt).toBe("Page 2");
+    expect((await prepareCommentEvidence(site, version, {...anchor,quote:{exact:"invented text"}})).excerpt).toBe("Page 2 of 2");
     expect(result.originalFilePath).toBe("original/report.docx");
     expect(result.rendition?.sha256).toMatch(/^[a-f0-9]{64}$/);
     await expect(prepareCommentEvidence(site, version, { ...anchor, page: 3 })).rejects.toThrow("page does not exist");

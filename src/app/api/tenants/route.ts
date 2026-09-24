@@ -1,3 +1,4 @@
+import { putTenantAdmin } from "@/lib/role-bindings";
 import {
   rbacQuery,
   rbacTransaction,
@@ -17,7 +18,7 @@ export async function GET(request: Request) {
     const rows = admin
       ? await rbacQuery("SELECT id,name,disabled_at FROM tenants ORDER BY id")
       : await rbacQuery(
-          "SELECT t.id,t.name,t.disabled_at,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 ORDER BY t.id",
+          "SELECT t.id,t.name,t.disabled_at,m.role FROM tenants t JOIN authorization_tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 ORDER BY t.id",
           [session!.userId],
         );
     return json({
@@ -70,9 +71,10 @@ export async function POST(request: Request) {
         body.name.trim(),
       ]);
       await q(
-        "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'admin')",
+        "INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)",
         [body.id, user.id],
       );
+      await putTenantAdmin(q,body.id,user.id,true,actor.userId);
       await recordRbacAudit(
         q,
         body.id,

@@ -24,7 +24,7 @@ import {
   pruneSiteViews,
   listSitesByOwner,
   listSitesForCollaborator,
-  updateSiteSharing,
+  updateSiteVisibility,
   upsertUser,
 } from "@/lib/db";
 import { createSite, getSiteView, listSites } from "@/lib/sites";
@@ -51,7 +51,7 @@ async function makeSite(
   owner: { anonOwnerId?: string | null; ownerId?: string | null } = {},
 ): Promise<Site> {
   const { site } = await createSite({ mode: "paste", html: `<html><head><title>${title}</title></head><body>${title}</body></html>` }, owner);
-  if (visibility !== "public") await updateSiteSharing(site.id, visibility, "owner");
+  if (visibility !== "public") await updateSiteVisibility(site.id, visibility);
   return site;
 }
 
@@ -90,7 +90,7 @@ describe("the public listing excludes unlisted sites", () => {
     const site = await makeSite("Toggle", "unlisted");
     expect(await slugs()).not.toContain(site.slug);
 
-    await updateSiteSharing(site.id, "public", "owner");
+    await updateSiteVisibility(site.id, "public");
     expect(await slugs()).toContain(site.slug);
   });
 });

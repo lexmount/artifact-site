@@ -1,11 +1,21 @@
 "use client";
-import { commentAnchorLabel } from "@/lib/comments/presentation";
+import { MentionPicker } from "./mention-picker";
+import { normalizedMentions,rebaseMentions,type CommentMention } from "@/lib/comments/mention-types";
+import { createCommentCadence, startVisiblePolling } from "./comment-polling";
+import { browserRandomId } from "@/lib/browser-random-id";
+import { CommentBody } from "./comment-body";
+import { CommentUpload } from "./comment-images";
+import { Code, Eye as PreviewIcon } from "lucide-react";
+import { CommentResult } from "./comment-result";
+import { CommentDestination } from "./comment-destination";
+import { commentAnchorLabel, commentAnchorSource } from "@/lib/comments/presentation";
 
 import {
   useCallback,
   useEffect,
   useEffectEvent,
   useRef,
+  useMemo,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -36,6 +46,7 @@ import { commentRailPreference } from "./comment-preferences";
 import { useT, useLocale } from "@/components/locale-provider";
 import { useAuth } from "@/lib/use-auth";
 import type {
+  CommentAttachment,
   CommentEmoji,
   CommentReaction,
   CommentAnchor,
@@ -75,6 +86,8 @@ export interface CommentWorkspaceProps {
   canDownload?: boolean;
   editToken?: string | null;
   onStartSelection?: () => void;
+  onTextSelectionChange?: (enabled: boolean, label: string) => void;
+  selectionPosition?: {x:number;y:number} | null;
   selectedAnchor?: CommentAnchor | null;
   selectionActive?: boolean;
   onCancelSelection?: () => void;
@@ -95,6 +108,13 @@ export interface CommentWorkspaceProps {
   onDismissInitialThread?: () => void;
   onDraftChange?: (dirty: boolean) => void;
 }
+function consumeDraftRecovery(expected: string | null) {
+  const url = new URL(window.location.href);
+  if (!expected || url.searchParams.get("draft") !== expected) return;
+  url.searchParams.delete("draft");
+  window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+}
+
 type Access = CommentPermissions & {
   userId: string | null;
   isAuthenticated: boolean;
@@ -102,7 +122,7 @@ type Access = CommentPermissions & {
   canReadVersions: boolean;
 };
 type Composer =
-  | { kind: "create"; anchor: CommentAnchor }
+  | { kind: "create"; anchor: CommentAnchor; targetScope?: CommentScope }
   | { kind: "reply"; detail: CommentThreadDetail }
   | { kind: "edit"; detail: CommentThreadDetail; message: CommentMessage };
 
@@ -145,13 +165,14 @@ function CommentWorkspaceSession(
   const { viewerUserId, onIdentityChange } = props;
   const [access, setAccess] = useState<Access | null>(null);
   const [discoveryDenied, setDiscoveryDenied] = useState(false);
+  const composerElement = useRef<HTMLElement>(null);
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedRef = useRef<string | null>(null);
   const [selectedSnapshot, setSelectedSnapshot] = useState<CommentThreadDetail | null>(null);
   const [options, setOptions] = useState<{
-    versions: { id: string; entry: string; createdAt: number }[];
-    shares: { id: string; label: string | null; source?: string }[];
+    versions: { id: string; entry: string; createdAt: number; number: number }[];
+    shares: { id: string; label: string | null; createdAt?: number; source?: string; mode?: string; versionIds?: string[]; active?: boolean }[];
     authors: { id: string; label: string | null }[];
   }>({ versions: [], shares: [], authors: [] });
   const [versionFilter, setVersionFilter] = useState("current");
@@ -159,6 +180,10 @@ function CommentWorkspaceSession(
   const [authorFilter, setAuthorFilter] = useState("");
   const [sort, setSort] = useState<"activity" | "newest" | "oldest">("activity");
   const [unreadOnly, setUnreadOnly] = useState(false);
+  const [participatedOnly, setParticipatedOnly] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  useEffect(() => { const timer = setTimeout(() => setSearch(searchInput.trim()), 250); return () => clearTimeout(timer); }, [searchInput]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [updates, setUpdates] = useState(0);
   const [undo, setUndo] = useState<CommentThreadDetail | null>(null);
@@ -212,6 +237,14 @@ function CommentWorkspaceSession(
   const [internalSelecting, setSelecting] = useState(false);
   const selecting = props.selectionActive ?? internalSelecting;
   const [body, setBody] = useState("");
+  const mentionsRef=useRef<CommentMention[]>([]);
+  const [attachments, setAttachments] = useState<CommentAttachment[]>([]);
+  const attachmentsRef = useRef<CommentAttachment[]>([]);
+  const [attachmentPending, setAttachmentPending] = useState(false);
+  const [bodyFormat, setBodyFormat] = useState<"plain" | "lightweight">("lightweight");
+  const [previewBody, setPreviewBody] = useState(false);
+  function restoreAttachments(items: CommentAttachment[] = []) { attachmentsRef.current = items; setAttachments(items); }
+
   const [busy, setBusy] = useState(false);
   const [likes, setLikes] = useState({ count: 0, liked: false });
   const [likeBusy, setLikeBusy] = useState(false);
@@ -240,6 +273,9 @@ function CommentWorkspaceSession(
   });
   const displacedChecks = useRef(new Map<string, number>());
   const polling = useRef({ failures: 0, nextAt: 0 });
+  const cadence = useRef(createCommentCadence());
+  const idleDelay = useRef(10000);
+  const interacted = useRef(false);
   const lifecycle = useRef({ active: true });
   useEffect(() => {
     const instance = lifecycle.current;
@@ -252,7 +288,7 @@ function CommentWorkspaceSession(
   const query = new URLSearchParams({ versionId: scope.versionId });
   if (scope.entry.kind === "share") query.set("shareId", scope.entry.shareId);
   const scopeQuery = query.toString();
-  const viewKey = `${unreadOnly}:${scopeQuery}:${status}:${source}:${versionFilter}:${shareFilter}:${authorFilter}:${sort}`;
+  const viewKey = `${search}:${participatedOnly}:${unreadOnly}:${scopeQuery}:${status}:${source}:${versionFilter}:${shareFilter}:${authorFilter}:${sort}`;
   const overviewAllowed = shouldAggregateComments(
     scope,
     Boolean(access?.canAggregate),
@@ -260,6 +296,7 @@ function CommentWorkspaceSession(
     Boolean(props.focusedThreadOnly),
   );
   const aggregate = overviewAllowed;
+  const resultVersions = useMemo(() => overviewAllowed && options.versions.length ? options.versions : undefined, [overviewAllowed, options.versions]);
   const unread = useCommentUnread({endpoint,versionId:scope.versionId,shareId:scope.entry.kind === "share" ? scope.entry.shareId : undefined,aggregate,userId:access?.userId,token:shareToken,enabled:Boolean(access?.canRead) && !discoveryDenied,open,workspace:workspaceRef});
   const accessKnown = access !== null;
   const previewQuery = new URLSearchParams({ v: props.previewVersionId || scope.versionId });
@@ -272,27 +309,40 @@ function CommentWorkspaceSession(
     rowsRef.current = rows;
     selectedRef.current = selectedId;
   });
+  const unreadRef = useRef(unread.unreadThreadIds);
+  useEffect(() => { unreadRef.current = unread.unreadThreadIds; }, [unread.unreadThreadIds]);
   useEffect(() => {
     onPanelChange?.(open);
     return () => onPanelChange?.(false);
   }, [open, onPanelChange]);
+  const composing = Boolean(composer);
   useEffect(() => {
     if (!overviewAllowed) return;
     let active = true;
-    void commentRequest<typeof options>(`${endpoint}/options`)
-      .then((value) => {
-        if (active) setOptions(value);
-      })
-      .catch(() => {});
+    let sequence = 0;
+    const refresh = () => {
+      const request = ++sequence;
+      void commentRequest<typeof options>(`${endpoint}/options`)
+        .then(value => { if (active && request === sequence) setOptions(value); })
+        .catch(() => {});
+    };
+    const sharesChanged = (event: Event) => {
+      if (event instanceof CustomEvent && event.detail?.slug === slug) refresh();
+    };
+    refresh();
+    window.addEventListener("artifact:shares-changed", sharesChanged);
+    window.addEventListener("focus", refresh);
     return () => {
       active = false;
+      window.removeEventListener("artifact:shares-changed", sharesChanged);
+      window.removeEventListener("focus", refresh);
     };
-  }, [overviewAllowed, endpoint]);
+  }, [overviewAllowed, endpoint, slug, open, composing]);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("comments") === "all")
+    if (params.has("comments"))
       queueMicrotask(() => {
-        setVersionFilter("all");
+        if (params.get("comments") === "all") setVersionFilter("all");
         setOpen(true);
       });
   }, []);
@@ -305,7 +355,7 @@ function CommentWorkspaceSession(
         ? t("Main discussion")
         : (() => { const share = options.shares.find(s => s.id === entry.shareId); return share ? shareLabel(share) : t("Shared discussion"); })();
     const index = options.versions.findIndex((v) => v.id === detail.space.versionId);
-    return `${index < 0 ? t("Selected version") : `v${options.versions.length - index}`} · ${label}`;
+    return `${index < 0 ? t("Selected version") : `v${options.versions[index].number}`} · ${label}`;
   };
   const bucket = viewerUserId ? draftBucket(viewerUserId, scope.siteId) : null;
   const storedDrafts = useCallback(() => {
@@ -317,12 +367,15 @@ function CommentWorkspaceSession(
   const visibleDraft = useCallback((draft: CommentDraft) =>
     !discoveryDenied && canRecoverCommentDraft(draft, scope, overviewAllowed, Boolean(access?.canReadVersions)),
   [scope, overviewAllowed, access?.canReadVersions, discoveryDenied]);
-  function currentDraft(next = composer, value = body): CommentDraft | null {
+  function currentDraft(next = composer, value = body, images = attachmentsRef.current, format = bodyFormat, mentions = mentionsRef.current): CommentDraft | null {
     if (!next) return null;
-    const targetScope = next.kind === "create" ? scope : next.detail.space;
+    const targetScope = next.kind === "create" ? next.targetScope ?? scope : next.detail.space;
     return {
       kind: next.kind,
       body: value,
+      attachments: images,
+      bodyFormat: format,
+      mentions: mentions.filter(m=>value.slice(m.start,m.end) === "@"+m.label),
       requestId: requestId.current,
       scope: { siteId: targetScope.siteId, versionId: targetScope.versionId, entry: targetScope.entry },
       ...(next.kind === "create" ? { anchor: next.anchor } : { threadId: next.detail.thread.id }),
@@ -340,28 +393,33 @@ function CommentWorkspaceSession(
       storageFailed.current = false;
       return true;
     } catch {
-      storageFailed.current = Object.values(drafts).some(d => d.body.trim());
+      storageFailed.current = Object.values(drafts).some(d => d.body.trim() || d.attachments?.length);
       if (!storageFailed.current) return true;
       setNotice(t("Draft could not be saved on this device. Keep this page open."));
       return false;
     }
   }
-  function stash(next = composer, value = body, deferred = false) {
-    const draft = currentDraft(next, value);
+  function stash(next = composer, value = body, deferred = false, images = attachmentsRef.current, format = bodyFormat, mentions = mentionsRef.current) {
+    const draft = currentDraft(next, value, images, format, mentions);
     if (!draft || !bucket) return flushDrafts();
     const drafts = storedDrafts();
     const id = draftIdentity(draft);
-    if (value.trim()) drafts[id] = stampDraft(draft);
+    if (value.trim() || draft.attachments?.length) {
+      const active = stampDraft(draft);
+      // Switching twice in one millisecond must still restore the active draft first.
+      for (const other of Object.values(drafts)) other.updatedAt = Math.min(other.updatedAt, active.updatedAt - 1);
+      drafts[id] = active;
+    }
     else delete drafts[id];
     if (deferred) {
       setHasDrafts(Object.values(drafts).some(visibleDraft));
       setDraftSaved(false);
       clearTimeout(persistTimer.current);
-      persistTimer.current = setTimeout(() => setDraftSaved(flushDrafts() && Boolean(value.trim())), 250);
+      persistTimer.current = setTimeout(() => setDraftSaved(flushDrafts() && Boolean(value.trim() || draft.attachments?.length)), 250);
       return true;
     }
     const saved = flushDrafts();
-    setDraftSaved(saved && Boolean(value.trim()));
+    setDraftSaved(saved && Boolean(value.trim() || draft.attachments?.length));
     return saved;
   }
   function removeDraft(draft: CommentDraft | null) {
@@ -380,10 +438,10 @@ function CommentWorkspaceSession(
     });
   }
   function choose(detail: CommentThreadDetail) {
-    if (requestBusy.current || busy) return;
+    if (requestBusy.current || busy || attachmentPending) return;
     stash();
     setComposer(null);
-    setBody("");
+    mentionsRef.current=[]; setBody(""); restoreAttachments(); setPreviewBody(false);
     setConflict(null);
     setDeleting(null);
     setUndo(null);
@@ -404,10 +462,11 @@ function CommentWorkspaceSession(
   useEffect(() => { chooseRef.current = choose; });
   const chooseSummary = useCallback((detail: CommentThreadDetail) => chooseRef.current(detail), []);
   function backToList() {
-    if (requestBusy.current || busy) return;
+    if (requestBusy.current || busy || attachmentPending) return;
+    const returnThread = selectedRef.current;
     stash();
     setComposer(null);
-    setBody("");
+    mentionsRef.current=[]; setBody(""); restoreAttachments(); setPreviewBody(false);
     selectedRef.current = null;
     setSelectedId(null);
     setSelectedSnapshot(null);
@@ -419,14 +478,15 @@ function CommentWorkspaceSession(
     url.searchParams.delete("thread");
     window.history.replaceState(null, "", url);
     requestAnimationFrame(() => {
-      if (listRef.current) { listRef.current.scrollTop = listScroll.current; listRef.current.focus(); }
+      if (listRef.current) { listRef.current.scrollTop = listScroll.current; (returnThread ? listRef.current.querySelector<HTMLButtonElement>(`[data-thread-id="${CSS.escape(returnThread)}"]`) ?? listRef.current : listRef.current).focus({preventScroll:true}); }
     });
   }
   const acceptExternalSelection = useEffectEvent((detail: CommentThreadDetail) => {
+    if (attachmentPending) return;
     if (composer && (composer.kind === "create" || composer.detail.thread.id !== detail.thread.id)) {
       stash();
       setComposer(null);
-      setBody("");
+      mentionsRef.current=[]; setBody(""); restoreAttachments(); setPreviewBody(false);
       setConflict(null);
     }
     props.onCancelSelection?.();
@@ -438,34 +498,51 @@ function CommentWorkspaceSession(
     setOpen(true);
   });
   const canCreate = Boolean(access?.canCreate);
+  const textSelectionChanged = props.onTextSelectionChange;
+  useEffect(() => {
+    textSelectionChanged?.(canCreate && !composer && !busy && !props.historical, t("Add comment"));
+    return () => textSelectionChanged?.(false, t("Add comment"));
+  }, [canCreate, composer, busy, props.historical, textSelectionChanged, t]);
+  const eligibleShares = options.shares.filter(item => item.active && (item.mode === "comment" || item.mode === "edit") && item.versionIds?.includes(scope.versionId));
+  const defaultCreateScope = (): CommentScope => scope.entry.kind === "main" && shareFilter && eligibleShares.some(item => item.id === shareFilter)
+    ? {...scope, entry:{kind:"share", shareId:shareFilter}} : scope;
+  const pendingCreationScope = useRef<CommentScope | null>(null);
   const restored = useRef<string | null | undefined>(undefined);
   const [restoringDraft, setRestoringDraft] = useState(true);
   const restoreAttempt = useRef(0);
+  const persistRestoration = useEffectEvent((next: Composer, draft: CommentDraft) => {
+    requestId.current = draft.requestId;
+    return stash(next, draft.body, false, draft.attachments ?? [], draft.bodyFormat ?? "plain", draft.mentions ?? []);
+  });
   useEffect(() => {
     if (!accessKnown) return;
     if (restored.current === bucket) { queueMicrotask(() => setRestoringDraft(false)); return; }
     // Record completion for guests too: null is a settled identity, not pending recovery.
-    restored.current = bucket;
     // Storage recovery synchronizes external tab state after authorization resolves.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (!bucket) { setHasDrafts(false); setRestoringDraft(false); return; }
+    if (!bucket) { restored.current = bucket; setHasDrafts(false); setRestoringDraft(false); return; }
     const anyDrafts = Object.values(storedDrafts()).some(visibleDraft);
     setHasDrafts(anyDrafts);
     if (anyDrafts) setOpen(true);
     const requested = new URLSearchParams(window.location.hash.slice(1)).get("comment") || new URLSearchParams(window.location.search).get("thread");
+    const requestedDraft = new URLSearchParams(window.location.search).get("draft");
     const draft = Object.values(storedDrafts())
+      .filter(d => !requestedDraft || draftIdentity(d) === requestedDraft)
       .filter(d => !requested || (d.kind !== "create" && d.threadId === requested))
       .filter((d) => canShowCommentScope(d.scope, scope, false) ||
-        (overviewAllowed && d.kind !== "create" && d.scope.siteId === scope.siteId))
+        (overviewAllowed && d.scope.siteId === scope.siteId && (d.kind !== "create" || d.scope.versionId === scope.versionId)))
       .sort((a, b) => b.updatedAt - a.updatedAt)[0];
-    if (!draft) { setRestoringDraft(false); return; }
+    if (!draft) { restored.current = bucket; setRestoringDraft(false); return; }
     let active = true;
     const attempt = ++restoreAttempt.current;
     const restore = async () => {
       let next: Composer;
       if (draft.kind === "create" && draft.anchor) {
-        if (!canCreate) return;
-        next = { kind: "create", anchor: draft.anchor };
+        const target = new URLSearchParams({versionId: draft.scope.versionId});
+        if (draft.scope.entry.kind === "share") target.set("shareId", draft.scope.entry.shareId);
+        const permission = await commentRequest<Access>(`${endpoint}/permissions?${target}`, shareToken);
+        if (!active || attempt !== restoreAttempt.current || !permission.canCreate || permission.userId !== viewerUserId) return;
+        next = { kind: "create", anchor: draft.anchor, targetScope: draft.scope };
       } else {
         if (!draft.threadId) return;
         const detail = await commentRequest<CommentThreadDetail>(`${endpoint}/${draft.threadId}`, shareToken);
@@ -490,22 +567,26 @@ function CommentWorkspaceSession(
         locateRef.current?.(detail);
       }
       if (active) {
+        // Recovery links select a draft once; subsequent reloads follow the active draft.
+        // Consume only after successful authorization/restoration and preserve route state.
+        const saved = persistRestoration(next, draft);
+        if (saved) consumeDraftRecovery(requestedDraft);
         setComposer(next);
-        setBody(draft.body);
-        requestId.current = draft.requestId;
+        mentionsRef.current=draft.mentions ?? []; setBody(draft.body); restoreAttachments(draft.attachments); setBodyFormat(draft.bodyFormat ?? "plain");
         setOpen(true);
-        setDraftSaved(true);
+        setDraftSaved(saved);
       }
     };
-    void restore().catch(() => {}).finally(() => { if (active) setRestoringDraft(false); });
+    void restore().catch(() => {}).finally(() => { if (active) { restored.current = bucket; setRestoringDraft(false); } });
     return () => {
       active = false;
     };
-  }, [bucket, accessKnown, canCreate, endpoint, scope, shareToken, storedDrafts, overviewAllowed, visibleDraft]);
+  }, [bucket, accessKnown, endpoint, scope, shareToken, storedDrafts, overviewAllowed, visibleDraft, viewerUserId]);
 
   const explain = useCallback(
     (cause: unknown) => {
       if (cause instanceof CommentRequestError) {
+        if (cause.reason === "image_unavailable") return t("An attached image is unavailable. Remove it and upload it again. Your draft is preserved.");
         if (cause.status === 409)
           return t("This discussion changed. Refresh it before trying again. Your draft is preserved.");
         if (cause.status === 401) return t("Sign in to comment. Your draft is preserved.");
@@ -528,10 +609,13 @@ function CommentWorkspaceSession(
     setDiscoveryDenied(false);
     setAccess(value);
   }, [bucket]);
+  const mutationRefreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const load = useCallback(
     async (next?: string, quiet = false): Promise<void> => {
       if (quiet && inFlight.current) { refreshRequested.current = true; return; }
       inFlight.current = true;
+      refreshRequested.current = false;
+      clearTimeout(mutationRefreshTimer.current);
       const initialThreadId = selectedRef.current;
       const sequence = ++generation.current;
       if (!quiet) setLoading(true);
@@ -576,6 +660,8 @@ function CommentWorkspaceSession(
           if (authorFilter) filters.set("authorUserId", authorFilter);
           filters.set("sort", sort);
         }
+        if (search) filters.set("q", search);
+        if (participatedOnly && permission.userId) filters.set("participated", "true");
         if (status) filters.set("status", status);
         if (unreadOnly && permission.userId) filters.set("unread", "true");
         const windowKey = `${viewKey}:${aggregate}`;
@@ -594,17 +680,21 @@ function CommentWorkspaceSession(
           return commentRequest<CommentPage<CommentThreadDetail>>(`${listEndpoint}?${filters}`, shareToken);
         };
         const page = await refreshCommentWindow(depth, readPage);
+        if (unreadOnly && !permission.userId) page.items = page.items.filter(row => unreadRef.current.has(row.thread.id));
         // A full window may displace still-readable rows. Revalidate missing displayed IDs
         // individually rather than treating cursor displacement as deletion or fetching all history.
         const retained: CommentThreadDetail[] = [];
         const cachedRows = new Set<string>();
         const revalidated = new Map<string, CommentThreadDetail>();
-        if (quiet && !unreadOnly) {
+        if (quiet) {
           const seen = new Set(page.items.map(row => row.thread.id));
           for (const id of displacedChecks.current.keys()) if (seen.has(id) || !rowsRef.current.some(row => row.thread.id === id)) displacedChecks.current.delete(id);
           for (const old of rowsRef.current) {
             if (!lifecycle.current.active || sequence !== generation.current) return;
             if (seen.has(old.thread.id)) continue;
+            // Detail responses cannot validate a search over all paginated replies. Only
+            // the filtered list is authoritative; keep an open reader separately below.
+            if (search) continue;
             if (old.thread.id !== selectedRef.current && Date.now() - (displacedChecks.current.get(old.thread.id) || 0) < 60_000) { retained.push(old); cachedRows.add(old.thread.id); continue; }
             try {
               const fresh = await commentRequest<CommentThreadDetail>(`${endpoint}/${old.thread.id}`, shareToken);
@@ -621,15 +711,18 @@ function CommentWorkspaceSession(
           }
         }
         let detachedSelection: CommentThreadDetail | undefined;
-        const initialKey = `${scopeQuery}:${initialThreadId}`;
+        // A reader can switch discussions while search refreshes. Preserve the current
+        // selection separately from search results; otherwise keep the recovery snapshot.
+        const detachedId = search ? selectedRef.current : initialThreadId;
+        const initialKey = `${scopeQuery}:${detachedId}`;
         if (
-          initialThreadId &&
+          detachedId &&
           unavailableInitial.current !== initialKey &&
-          ![...page.items, ...retained].some((row) => row.thread.id === initialThreadId)
+          ![...page.items, ...retained].some((row) => row.thread.id === detachedId)
         ) {
           try {
-            const selected = revalidated.get(initialThreadId) ?? await commentRequest<CommentThreadDetail>(
-              `${endpoint}/${encodeURIComponent(initialThreadId)}`,
+            const selected = revalidated.get(detachedId) ?? await commentRequest<CommentThreadDetail>(
+              `${endpoint}/${encodeURIComponent(detachedId)}`,
               shareToken,
             );
             if (!lifecycle.current.active || sequence !== generation.current) return;
@@ -689,6 +782,8 @@ function CommentWorkspaceSession(
         setCursor(page.nextCursor);
         if (page.total !== undefined) setTotal(page.total);
         polling.current = { failures: 0, nextAt: 0 };
+        idleDelay.current = cadence.current.accept(JSON.stringify([viewKey, permission, page, retained, detachedSelection]), !quiet || interacted.current);
+        interacted.current = false;
         if (!quiet) setError("");
       } catch (cause) {
         if (lifecycle.current.active && sequence === generation.current) {
@@ -735,12 +830,37 @@ function CommentWorkspaceSession(
       authorFilter,
       unreadOnly,
       sort,
+      search,
+      participatedOnly,
       setNotice,
       viewerUserId,
       acceptIdentityChange,
       acceptAccess,
     ],
   );
+
+  const recoverMutation = useEffectEvent(() => { void load(undefined, true); });
+  useEffect(() => {
+    const changed = (event: Event) => {
+      const detail = (event as CustomEvent<{endpoint:string;phase:string}>).detail;
+      if (detail?.endpoint !== endpoint) return;
+      clearTimeout(mutationRefreshTimer.current);
+      if (detail.phase === "start") {
+        // Failed writes also restore the fast cadence even when the snapshot is unchanged.
+        interacted.current = true;
+        idleDelay.current = 10000;
+        ++generation.current;
+        inFlight.current = false;
+        setLoading(false);
+      } else {
+        // A successful caller's immediate load consumes this fallback. Failed writes
+        // still recover a refresh that their start event superseded.
+        mutationRefreshTimer.current=setTimeout(()=>recoverMutation(),0);
+      }
+    };
+    window.addEventListener("artifact:comment-mutation", changed);
+    return () => { clearTimeout(mutationRefreshTimer.current); window.removeEventListener("artifact:comment-mutation", changed); };
+  }, [endpoint]);
 
   const settleDeniedDiscovery = useEffectEvent(() => {
     // Inaccessible stored drafts remain intact, but cannot block artifact refresh.
@@ -820,26 +940,14 @@ function CommentWorkspaceSession(
     overviewAllowed,
     versionFilter,
   ]);
+  const pollingEnabled = open || Boolean(composer) || markers;
   useEffect(() => {
-    if (!open && !composer && !markers) return;
-    const initial = window.setTimeout(() => void load(), 0);
-    const refresh = () => {
-      if (document.visibilityState === "visible" && Date.now() >= polling.current.nextAt)
-        void load(undefined, true);
-    };
-    const timer = window.setInterval(refresh, 10_000);
-    const focused = () => {
-      if (document.visibilityState === "visible") void load(undefined, true);
-    };
-    window.addEventListener("focus", focused);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      clearTimeout(initial);
-      clearInterval(timer);
-      window.removeEventListener("focus", focused);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [open, composer, markers, load]);
+    if (!pollingEnabled) return;
+    return startVisiblePolling(
+      async (initial) => { await load(undefined, !initial); },
+      (wake) => Math.max(wake ? 0 : idleDelay.current, polling.current.nextAt - Date.now()),
+    );
+  }, [pollingEnabled, load]);
   useEffect(() => {
     onMarkersChange?.(
       rows.map((row) => ({
@@ -851,28 +959,55 @@ function CommentWorkspaceSession(
     );
   }, [rows, markers, onMarkersChange]);
   const acceptAnchor = useEffectEvent((anchor: CommentAnchor) => {
-      stash();
+      const savedPrevious = stash();
+      if (composer && !savedPrevious) return;
       // A validated iframe selection is an external event, opening the host composer.
-      setComposer({ kind: "create", anchor });
+      if (!canCreate || props.historical || busy || attachmentPending) return;
+      const targetScope = pendingCreationScope.current ?? defaultCreateScope();
+      pendingCreationScope.current = null;
+      setComposer({ kind: "create", anchor, targetScope });
       const saved = Object.values(storedDrafts()).find(
-        (d) => d.kind === "create" && canShowCommentScope(d.scope, scope, false),
+        (d) => d.kind === "create" && canShowCommentScope(d.scope, targetScope, false),
       );
-      setBody(saved?.body || "");
+      mentionsRef.current=saved?.mentions ?? []; setBody(saved?.body || ""); restoreAttachments(saved?.attachments); setBodyFormat(saved?.bodyFormat ?? "lightweight");
       requestId.current = null;
-      setOpen(true);
       setSelecting(false);
   });
   useEffect(() => {
     // A validated iframe selection is an external event.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (selectedAnchor) acceptAnchor(selectedAnchor);
   }, [selectedAnchor]);
   useEffect(() => {
     if (composer) editor.current?.focus();
-  }, [composer]);
+  }, [composer, open]);
+  useEffect(() => {
+    const input = editor.current;
+    if (!input || !composer) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(240, Math.max(104, input.scrollHeight))}px`;
+  }, [body, composer, open]);
+  useEffect(() => {
+    const element = composerElement.current;
+    if (!element || open || composer?.kind !== "create") return;
+    const place = () => {
+      if (window.innerWidth < 900 || !props.selectionPosition) {
+        element.style.removeProperty("left"); element.style.removeProperty("top");
+        element.style.removeProperty("bottom"); return;
+      }
+      const {x,y} = props.selectionPosition;
+      const {width,height} = element.getBoundingClientRect();
+      element.style.left = `${Math.max(12,Math.min(x,window.innerWidth-width-64))}px`;
+      element.style.top = `${Math.max(64,Math.min(y+12+height < window.innerHeight ? y+12 : y-height-44,window.innerHeight-height-12))}px`;
+      element.style.bottom = "auto";
+    };
+    const observer = new ResizeObserver(place); observer.observe(element);
+    window.addEventListener("resize",place); place();
+    return () => { observer.disconnect(); window.removeEventListener("resize",place); };
+  }, [composer, open, props.selectionPosition]);
   const protectScope = useEffectEvent((event: Event) => {
     const automatic = event instanceof CustomEvent && event.detail?.automatic === true;
     if (automatic && (hasDrafts !== false || Object.values(storedDrafts()).some(visibleDraft) || props.historical)) { event.preventDefault(); return; }
+    if (attachmentPending) { event.preventDefault(); return; }
     if (!automatic && !stash()) { event.preventDefault(); setOpen(true); }
   });
   useEffect(() => {
@@ -888,7 +1023,7 @@ function CommentWorkspaceSession(
     };
     const unload = (event: BeforeUnloadEvent) => {
       persist();
-      if (storageFailed.current && Object.values(storedDrafts()).some(d => d.body.trim())) { event.preventDefault(); event.returnValue = ""; }
+      if (storageFailed.current && Object.values(storedDrafts()).some(d => d.body.trim() || d.attachments?.length)) { event.preventDefault(); event.returnValue = ""; }
     };
     window.addEventListener("artifact:before-comment-scope-change", before);
     window.addEventListener("beforeunload", unload);
@@ -896,10 +1031,11 @@ function CommentWorkspaceSession(
     return () => { persist(); window.removeEventListener("artifact:before-comment-scope-change", before); window.removeEventListener("beforeunload", unload); window.removeEventListener("pagehide", persist); };
   }, [storedDrafts, bucket]);
   function cancel() {
-    if (requestBusy.current || busy) return;
+    if (requestBusy.current || busy || attachmentPending) return;
+    pendingCreationScope.current = null;
     stash();
     dismissInitial();
-    setBody("");
+    mentionsRef.current=[]; setBody(""); restoreAttachments(); setPreviewBody(false);
     setComposer(null);
     setConflict(null);
     setSelecting(false);
@@ -907,9 +1043,13 @@ function CommentWorkspaceSession(
     (trigger.current?.offsetParent ? trigger.current : workspaceRef.current)?.focus();
   }
   function discard() {
+    pendingCreationScope.current = null;
     setRestoringDraft(false);
+    for (const attachment of attachmentsRef.current) {
+      void commentRequest(`${endpoint}/attachments/${attachment.id}`, shareToken, {method:"DELETE"}).catch(()=>{});
+    }
     removeDraft(currentDraft());
-    setBody("");
+    mentionsRef.current=[]; setBody(""); restoreAttachments(); setPreviewBody(false);
     setComposer(null);
     setConflict(null);
     setDraftSaved(false);
@@ -917,25 +1057,29 @@ function CommentWorkspaceSession(
     props.onCancelSelection?.();
   }
   function begin(next?: Composer) {
-    if (requestBusy.current || busy) return;
-    stash();
+    if (requestBusy.current || busy || attachmentPending) return;
+    const savedPrevious = stash();
+    if (composer && !savedPrevious) return;
     dismissInitial();
     setError("");
     setConflict(null);
     requestId.current = null;
     setDraftSaved(false);
     if (next) {
+      if (next.kind === "create") next = {...next, targetScope:next.targetScope ?? pendingCreationScope.current ?? defaultCreateScope()};
+      pendingCreationScope.current = null;
       setOpen(true);
       const seed =
         next.kind === "edit" && next.message.content.state === "visible" ? next.message.content.body : "";
       const key = currentDraft(next, seed);
       const draft = bucket && key ? storedDrafts()[draftIdentity(key)] : undefined;
       setComposer(next.kind === "edit" && draft?.revision ? { ...next, message: { ...next.message, revision: draft.revision } } : next);
-      setBody(draft?.body ?? seed);
+      mentionsRef.current=draft?.mentions ?? (next.kind === "edit" && next.message.content.state === "visible" ? next.message.content.mentions ?? [] : []); setBody(draft?.body ?? seed); restoreAttachments(draft?.attachments ?? (next.kind === "edit" ? next.message.attachments : [])); setBodyFormat(draft?.bodyFormat ?? (next.kind === "edit" && next.message.content.state === "visible" ? next.message.content.format ?? "plain" : "lightweight"));
       requestId.current = draft?.requestId ?? null;
       setDraftSaved(Boolean(draft));
     } else if (props.onStartSelection) {
-      setBody("");
+      pendingCreationScope.current = defaultCreateScope();
+      mentionsRef.current=[]; setBody(""); restoreAttachments(); setPreviewBody(false);
       setComposer(null);
       setSelecting(true);
       if (window.matchMedia("(max-width: 899px)").matches) setOpen(false);
@@ -946,28 +1090,28 @@ function CommentWorkspaceSession(
   }
 
   async function submit() {
-    if (!composer || !body.trim() || requestBusy.current || busy) return;
+    if (!composer || (!body.trim() && !attachments.length) || requestBusy.current || busy || attachmentPending) return;
     requestBusy.current = true;
     setBusy(true);
     setError("");
     try {
-      if (!requestId.current) requestId.current = crypto.randomUUID();
+      if (!requestId.current) requestId.current = browserRandomId();
       stash();
       let createdDetail: CommentThreadDetail | null = null;
       if (composer.kind === "create")
         createdDetail = await commentRequest<CommentThreadDetail>(endpoint, shareToken, {
           method: "POST",
           body: JSON.stringify({
-            scope,
+            scope: composer.targetScope ?? scope,
             anchor: composer.anchor,
-            body,
+            body, bodyFormat, mentions:normalizedMentions(body,mentionsRef.current), attachmentIds: attachments.map(item=>item.id),
             clientRequestId: requestId.current,
           }),
         });
       else if (composer.kind === "reply")
         await commentRequest(`${endpoint}/${composer.detail.thread.id}/messages`, shareToken, {
           method: "POST",
-          body: JSON.stringify({ body, clientRequestId: requestId.current }),
+          body: JSON.stringify({ body, bodyFormat, mentions:normalizedMentions(body,mentionsRef.current), attachmentIds: attachments.map(item=>item.id), clientRequestId: requestId.current }),
         });
       else
         await commentRequest(
@@ -976,7 +1120,7 @@ function CommentWorkspaceSession(
           {
             method: "PATCH",
             body: JSON.stringify({
-              body,
+              body, bodyFormat, mentions:normalizedMentions(body,mentionsRef.current), attachmentIds: attachments.map(item=>item.id),
               expectedRevision: composer.message.revision,
             }),
           },
@@ -985,7 +1129,7 @@ function CommentWorkspaceSession(
       setRestoringDraft(false);
       removeDraft(currentDraft());
       setComposer(null);
-      setBody("");
+      mentionsRef.current=[]; setBody(""); restoreAttachments(); setPreviewBody(false);
       requestId.current = null;
       props.onCancelSelection?.();
       setOpen(true);
@@ -999,7 +1143,7 @@ function CommentWorkspaceSession(
     } catch (cause) {
       setError(explain(cause));
       if (cause instanceof CommentRequestError && cause.status === 401) setNeedsReauthentication(true);
-      if (cause instanceof CommentRequestError && cause.status === 409 && composer.kind === "edit") {
+      if (cause instanceof CommentRequestError && cause.status === 409 && !cause.reason && composer.kind === "edit") {
         try {
           const fresh = await commentRequest<CommentThreadDetail>(
             `${endpoint}/${composer.detail.thread.id}`,
@@ -1017,7 +1161,7 @@ function CommentWorkspaceSession(
     }
   }
   async function mutate(detail: CommentThreadDetail, message?: CommentMessage) {
-    if (requestBusy.current || busy) return;
+    if (requestBusy.current || busy || attachmentPending) return;
     requestBusy.current = true;
     setBusy(true);
     setError("");
@@ -1056,6 +1200,9 @@ function CommentWorkspaceSession(
     if (!detail.messages.nextCursor || requestBusy.current || busy) return;
     requestBusy.current = true;
     setBusy(true);
+    const sequence = ++generation.current;
+    inFlight.current = false;
+    setLoading(false);
     try {
       const page = await commentRequest<
         CommentPage<CommentMessage> & {
@@ -1067,6 +1214,7 @@ function CommentWorkspaceSession(
       );
       // Refresh authoritative affordances after pagination; never infer edit rights from author IDs.
       const fresh = await commentRequest<CommentThreadDetail>(`${endpoint}/${detail.thread.id}`, shareToken);
+      if (!lifecycle.current.active || sequence !== generation.current) return;
       expanded.current.messages.set(
         detail.thread.id,
         (expanded.current.messages.get(detail.thread.id) ?? 1) + 1,
@@ -1119,7 +1267,8 @@ function CommentWorkspaceSession(
       role="dialog"
       aria-modal="false"
       aria-labelledby="comment-compose-title"
-      className={`comment-composer ${composer.kind === "create" ? "comment-composer-floating" : "comment-composer-inline"}`}
+      className={`comment-composer ${composer.kind === "create" && !open ? "comment-composer-floating" : "comment-composer-inline"}`}
+      ref={composerElement}
     >
       <div className="comment-panel-heading">
         <h2 id="comment-compose-title">
@@ -1129,30 +1278,32 @@ function CommentWorkspaceSession(
               ? t("Reply")
               : t("Add comment")}
         </h2>
-        <button aria-label={t("Close composer")} disabled={busy} onClick={cancel}>
+        <button aria-label={t("Close composer")} disabled={busy || attachmentPending} onClick={cancel}>
           <X size={18} />
         </button>
       </div>
-      <p className="comment-scope">
-        {composer.kind === "create"
-          ? t("New comment on the selected position")
-          : sourceLabel(composer.detail)}
-      </p>
+      {composer.kind !== "create" && <p className="comment-scope">{sourceLabel(composer.detail)}</p>}
       {composer.kind === "create" && (
-        <p className="comment-selection-summary">
+        <div className="comment-selection-summary">
+          <span className="comment-quote-text">
           {commentAnchorLabel(composer.anchor, "quote" in composer.anchor ? composer.anchor.quote?.exact : null, t)}
+          </span>
+          <div className="comment-quote-source"><span>{commentAnchorSource(composer.anchor, t)}</span>
           <button
             type="button"
+            aria-label={t("Choose another position")}
+            disabled={busy || attachmentPending}
             onClick={() => {
-              stash();
+              if (!stash()) return;
+              pendingCreationScope.current = composer.targetScope ?? scope;
               setComposer(null);
               setSelecting(true);
               props.onStartSelection?.();
             }}
           >
-            {t("Choose another position")}
-          </button>
-        </p>
+            {t("Reselect")}
+          </button></div>
+        </div>
       )}
       <form
         onSubmit={(event) => {
@@ -1161,6 +1312,7 @@ function CommentWorkspaceSession(
         }}
       >
         <textarea
+          hidden={previewBody}
           ref={editor}
           aria-label={t("Comment")}
           placeholder={t("Write your feedback…")}
@@ -1168,6 +1320,7 @@ function CommentWorkspaceSession(
           value={body}
           disabled={busy}
           onChange={(event) => {
+            mentionsRef.current=rebaseMentions(body,event.target.value,mentionsRef.current);
             setBody(event.target.value);
             requestId.current = null;
             stash(composer, event.target.value, true);
@@ -1179,7 +1332,31 @@ function CommentWorkspaceSession(
             }
           }}
         />
-        <small className="comment-character-count">{body.length} / {COMMENT_LIMITS.body}</small>
+        {previewBody && <div className="comment-body comment-body-preview"><CommentBody body={body || t("Write your feedback…")} mentions={mentionsRef.current} format={bodyFormat}/></div>}
+        <div className="comment-format-tools">
+          <MentionPicker key={JSON.stringify(composer.kind === "create" ? composer.targetScope ?? scope : composer.detail.space)} endpoint={endpoint} shareToken={shareToken} textarea={editor} disabled={busy || previewBody} scope={composer.kind === "create" ? composer.targetScope ?? scope : composer.detail.space} onInsert={(person,start,end)=>{
+            const text="@"+person.label,next=body.slice(0,start)+text+" "+body.slice(end);
+            if(next.length>COMMENT_LIMITS.body)return;
+            mentionsRef.current=[...rebaseMentions(body,next,mentionsRef.current),{...person,start,end:start+text.length}];
+            setBody(next);requestId.current=null;stash(composer,next,true);
+            requestAnimationFrame(()=>{editor.current?.focus();editor.current?.setSelectionRange(start+text.length+1,start+text.length+1);});
+          }}/>
+
+          <button type="button" disabled={busy || previewBody} title={t("Code format: for field names, filenames or code snippets.")} aria-label={t("Code format")} onClick={()=>{
+            const input=editor.current; if(!input) return;
+            const start=input.selectionStart,end=input.selectionEnd;
+            if(body.length+2>COMMENT_LIMITS.body) return;
+            const next=body.slice(0,start)+"`"+body.slice(start,end)+"`"+body.slice(end);
+            mentionsRef.current=rebaseMentions(body,next,mentionsRef.current);setBodyFormat("lightweight");setBody(next);requestId.current=null;stash(composer,next,true,attachmentsRef.current,"lightweight");
+            requestAnimationFrame(()=>{input.focus();input.setSelectionRange(start+1,end+1);});
+          }}><Code size={16}/></button>
+          <button type="button" disabled={busy} aria-pressed={previewBody} onClick={()=>setPreviewBody(value=>!value)}><PreviewIcon size={16}/>{previewBody ? t("Back to editing") : t("Preview comment style")}</button>
+        </div>
+        <CommentUpload key={JSON.stringify([composer.kind,composer.kind === "create" ? composer.targetScope ?? scope : composer.detail.space, composer.kind === "edit" ? composer.message.id : ""])}
+          textarea={editor} attachments={attachments} endpoint={endpoint} shareToken={shareToken}
+          scope={composer.kind === "create" ? composer.targetScope ?? scope : composer.detail.space}
+          disabled={busy} onPending={setAttachmentPending} onChange={next=>{restoreAttachments(next);requestId.current=null;stash();}}/>
+        {body.length >= COMMENT_LIMITS.body * .9 && <small className="comment-character-count">{body.length} / {COMMENT_LIMITS.body}</small>}
         {error && (
           <p className="comment-error" role="alert">
             {error}
@@ -1209,19 +1386,47 @@ function CommentWorkspaceSession(
             )}
           </div>
         )}
+      {composer.kind === "create" && overviewAllowed && scope.entry.kind === "main" && (eligibleShares.length > 0 || composer.targetScope?.entry.kind === "share") && (
+        <CommentDestination disabled={busy || attachmentPending} value={(composer.targetScope ?? scope).entry.kind === "share" ? ((composer.targetScope ?? scope).entry as {kind:"share";shareId:string}).shareId : "main"}
+          options={[{id:"main",label:t("Main discussion")},
+            ...eligibleShares.map(item=>({id:item.id,label:item.label || (item.source === "publish" ? t("Publication link") : t("Shared discussion")),createdAt:item.createdAt})),
+            ...(composer.targetScope?.entry.kind === "share" && !eligibleShares.some(item=>item.id === (composer.targetScope!.entry as {shareId:string}).shareId) ? [{id:composer.targetScope.entry.shareId,label:t("Unavailable discussion"),disabled:true}] : [])]}
+          onChange={value=>{
+              if (!stash()) return;
+              const targetScope: CommentScope = {...scope, entry:value === "main" ? {kind:"main"} : {kind:"share",shareId:value}};
+              let next: Composer = {...composer, targetScope};
+              const draft = currentDraft(next);
+              const saved = draft ? storedDrafts()[draftIdentity(draft)] : undefined;
+              // An empty composer represents the position the user just chose. Keep that
+              // position when loading a destination's body; nonempty drafts restore in full.
+              const keepSelection = !body.trim() && !attachments.length;
+              if (!keepSelection && saved?.kind === "create" && saved.anchor) next = {...next, anchor: saved.anchor};
+              const nextBody = saved?.body ?? "";
+              const previousRequestId = requestId.current;
+              requestId.current = keepSelection && JSON.stringify(saved?.anchor) !== JSON.stringify(next.anchor)
+                ? null : saved?.requestId ?? null;
+              if (!stash(next, nextBody, false, saved?.attachments ?? [], saved?.bodyFormat ?? "lightweight", saved?.mentions ?? [])) { requestId.current = previousRequestId; return; }
+              // A successful switch also supersedes a recovery link retained after a storage failure.
+              consumeDraftRecovery(new URLSearchParams(window.location.search).get("draft"));
+              restoreAttachments(saved?.attachments); setBodyFormat(saved?.bodyFormat ?? "lightweight");
+              mentionsRef.current=saved?.mentions ?? []; setComposer(next); setBody(nextBody);
+              setError("");
+          }}/>
+
+      )}
         <div className="comment-compose-footer">
-          <button type="button" disabled={busy} onClick={discard}>
+          {(body.trim() || attachments.length > 0) && <button type="button" disabled={busy || attachmentPending} onClick={discard}>
             {t("Discard draft")}
-          </button>
-          <span>{draftSaved ? t("Draft saved in this tab") : t("Ctrl / ⌘ Enter to send")}</span>
-          <button className="btn solid" disabled={busy || !body.trim() || Boolean(conflict)} type="submit">
+          </button>}
+          <span title={t("Draft saved in this tab")}>{draftSaved && t("Draft saved")}</span>
+          <button className="btn solid" disabled={busy || attachmentPending || (!body.trim() && !attachments.length) || Boolean(conflict)} type="submit">
             {busy ? t("Saving…") : t("Send")}
           </button>
         </div>
       </form>
     </section>
   );
-  const visibleRows = unreadOnly && !viewerUserId ? rows.filter(detail => unread.unreadThreadIds.has(detail.thread.id)) : rows;
+  const visibleRows = rows;
   const canOfferComments =
     access?.canRead || access?.canCreate || (access?.needsLogin && !viewerUserId && auth.oidcEnabled);
   return (
@@ -1257,6 +1462,7 @@ function CommentWorkspaceSession(
                 aria-label={t("Comments")}
                 aria-expanded={open}
                 aria-controls="artifact-comments"
+                disabled={attachmentPending}
                 onClick={() => { if (open) dismissInitial(); setOpen(!open); }}
               >
                 <MessageCircle size={20} />
@@ -1376,7 +1582,7 @@ function CommentWorkspaceSession(
         </div>
       )}
       {open && (
-        <aside id="artifact-comments" className="comment-panel" aria-label={t("Comments")}>
+        <aside id="artifact-comments" className="comment-panel" data-composing={composer?.kind === "create" || undefined} aria-label={t("Comments")}>
           <div className="comment-panel-header">
             <div className="comment-panel-heading">
               {selected ? (
@@ -1406,6 +1612,7 @@ function CommentWorkspaceSession(
                   type="button"
                   data-tooltip
                   aria-label={t("Close comments")}
+                  disabled={attachmentPending}
                   onClick={() => {
                     stash();
                     dismissInitial();
@@ -1437,9 +1644,9 @@ function CommentWorkspaceSession(
                       >
                         <option value="current">{t("Current version")}</option>
                         <option value="all">{t("All versions")}</option>
-                        {options.versions.map((v, i) => (
+                        {options.versions.map((v) => (
                           <option key={v.id} value={v.id}>
-                            v{options.versions.length - i} · {new Date(v.createdAt).toLocaleDateString(locale)}
+                            v{v.number} · {new Date(v.createdAt).toLocaleDateString(locale)}
                           </option>
                         ))}
                       </select>
@@ -1520,7 +1727,7 @@ function CommentWorkspaceSession(
                           value={mainPolicy}
                           disabled={busy}
                           onChange={(e) => {
-                            if (requestBusy.current || busy) return;
+                            if (requestBusy.current || busy || attachmentPending) return;
                             requestBusy.current = true;
                             const policy = e.target.value as typeof mainPolicy;
                             setBusy(true);
@@ -1546,9 +1753,17 @@ function CommentWorkspaceSession(
                         </select>
                       </label></details>
                     )}
+                <div className="comment-search-field"><input className="comment-search" type="search" aria-label={t("Search comments and replies")} placeholder={t("Search comments and replies")} maxLength={200} value={searchInput} onChange={event => setSearchInput(event.target.value)} />
+                  {searchInput && <button type="button" aria-label={t("Clear search")} onClick={event => {setSearchInput("");setSearch("");event.currentTarget.parentElement?.querySelector("input")?.focus();}}><X size={16}/></button>}
+                </div>
+                {(search || status || authorFilter || shareFilter || source !== "all" || sort !== "activity" || versionFilter !== "current" || participatedOnly || unreadOnly) && <div className="comment-filter-summary">
+                  <span>{[search && t("Search: {query}", {query:search}), status && (status === "open" ? t("In progress") : t("Ended")), authorFilter && (options.authors.find(a=>a.id===authorFilter)?.label || t("Participant")), shareFilter && (options.shares.find(a=>a.id===shareFilter)?.label || t("Shared discussion")), versionFilter !== "current" && (versionFilter === "all" ? t("All versions") : t("Version {n}",{n:options.versions.find(v=>v.id===versionFilter)?.number??"?"})), source === "main" && t("Main discussion"), sort !== "activity" && (sort === "newest" ? t("Newest first") : t("Oldest first")), participatedOnly && t("I participated"), unreadOnly && t("Unread")].filter(Boolean).join(" · ")}</span>
+                  <button type="button" onClick={event=>{event.currentTarget.closest(".comment-panel-header")?.querySelector<HTMLInputElement>(".comment-search")?.focus();setSearchInput("");setSearch("");setStatus("");setAuthorFilter("");setShareFilter("");setVersionFilter("current");setSource("all");setSort("activity");setParticipatedOnly(false);setUnreadOnly(false);}}>{t("Clear filters")}</button>
+                </div>}
                 <div className="comment-tabs" role="group" aria-label={t("Comments")}>
-                  <button aria-pressed={!unreadOnly} onClick={() => setUnreadOnly(false)}>{t("All")}</button>
-                  <button aria-pressed={unreadOnly} onClick={() => setUnreadOnly(true)}>{t("Unread")} {unread.hasUnread && <span className="comment-unread-dot" />}</button>
+                  <button aria-pressed={!unreadOnly && !participatedOnly} onClick={() => { setUnreadOnly(false); setParticipatedOnly(false); }}>{t("All")}</button>
+                  <button aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); setParticipatedOnly(false); }}>{t("Unread")} {unread.hasUnread && <span className="comment-unread-dot" />}</button>
+                  {access?.userId && <button aria-pressed={participatedOnly} onClick={() => { setParticipatedOnly(true); setUnreadOnly(false); }}>{t("I participated")}</button>}
                   {unread.hasUnread && <button onClick={() => void unread.markAllRead().catch(cause => setError(explain(cause)))}>{t("Mark all read")}</button>}
                 </div>
 
@@ -1566,16 +1781,16 @@ function CommentWorkspaceSession(
               <summary>{t("Saved drafts")}</summary>
               {Object.values(storedDrafts()).filter(visibleDraft).map(d => (
                 <a key={draftIdentity(d)} href={scope.entry.kind === "main"
-                  ? `/s/${encodeURIComponent(slug)}?version=${encodeURIComponent(d.scope.versionId)}&comments=all${d.threadId ? `#comment=${encodeURIComponent(d.threadId)}` : ""}`
+                  ? `/s/${encodeURIComponent(slug)}?version=${encodeURIComponent(d.scope.versionId)}&comments=all&draft=${encodeURIComponent(draftIdentity(d))}${d.threadId ? `#comment=${encodeURIComponent(d.threadId)}` : ""}`
                   : `${window.location.pathname}${window.location.search}${d.threadId ? `#comment=${encodeURIComponent(d.threadId)}` : ""}`}
                   onClick={event => {
-                    if (scope.entry.kind === "share" && d.kind === "create" && d.anchor && canShowCommentScope(d.scope, scope, false)) {
+                    if (d.kind === "create" && d.anchor && d.scope.versionId === scope.versionId) {
                       event.preventDefault();
-                      if (canCreate) begin({ kind: "create", anchor: d.anchor });
+                      if (canCreate && (canShowCommentScope(d.scope, scope, false) || (overviewAllowed && d.scope.entry.kind === "share" && eligibleShares.some(item => item.id === (d.scope.entry as {shareId:string}).shareId)))) begin({ kind: "create", anchor: d.anchor, targetScope: d.scope });
                       else setNotice(t("This discussion is no longer available with your current access. Your draft is preserved."));
                     } else if (!stash()) event.preventDefault();
                   }}>
-                  {t("Resume saved draft")}: {d.body.slice(0, 80)}
+                  {t("Resume saved draft")}: {d.body.slice(0, 80) || t("Image attachment")}
                 </a>
               ))}
             </details>
@@ -1584,6 +1799,7 @@ function CommentWorkspaceSession(
             {error && (
               <p className="comment-error" role="alert">
                 {error}
+                {!selected && <button type="button" disabled={loading} onClick={()=>void load(loadedKey === viewKey ? cursor || undefined : undefined)}>{t("Retry")}</button>}
               </p>
             )}
             {updates > 0 && !selected && (
@@ -1599,6 +1815,7 @@ function CommentWorkspaceSession(
             {selected ? (
               <>
                 <CommentConversation
+                  endpoint={endpoint} shareToken={shareToken} query={search}
                   detail={selected}
                   source={sourceLabel(selected)}
                   userId={viewerUserId || undefined}
@@ -1629,6 +1846,7 @@ function CommentWorkspaceSession(
                   actions={props.renderThreadActions?.(selected, Boolean(access?.canAggregate))}
                   context={props.renderThreadContext?.(selected)}
                 />
+                <CommentResult key={selected.thread.id} detail={selected} endpoint={endpoint} token={shareToken} busy={busy} versions={resultVersions} onChange={() => void load(undefined, true)} onError={cause => setError(explain(cause))} />
                 {props.locationNotice}
                 {deleting && (
                   <div className="comment-delete-confirm">
@@ -1654,6 +1872,7 @@ function CommentWorkspaceSession(
                 {visibleRows.map((detail) => (
                   <CommentSummary
                     key={detail.thread.id}
+                    query={search}
                     detail={detail}
                     source={sourceLabel(detail)}
                     userId={viewerUserId || undefined}
@@ -1661,27 +1880,27 @@ function CommentWorkspaceSession(
                     onChoose={chooseSummary}
                   />
                 ))}
-                {(!loading || loadedKey === viewKey) && access?.canRead && visibleRows.length === 0 && (
+                {!error && (!loading || loadedKey === viewKey) && access?.canRead && visibleRows.length === 0 && (
                   <div className="comment-empty">
                     <MessageCircle size={28} />
                     <h3>
-                      {unreadOnly ? t("No unread comments") : status || shareFilter || authorFilter
+                      {unreadOnly ? t("No unread comments") : search || participatedOnly || status || shareFilter || authorFilter || versionFilter !== "current" || source !== "all"
                         ? t("No discussions match these filters.")
                         : t("Start a conversation")}
                     </h3>
-                    <p>{t("Keep feedback with this version of the artifact.")}</p>
+                    <p>{search || participatedOnly || unreadOnly || status || shareFilter || authorFilter || versionFilter !== "current" || source !== "all" ? t("Try another keyword or clear the filters.") : t("Keep feedback with this version of the artifact.")}</p>
                   </div>
                 )}
                 {cursor && (
                   <button className="btn comment-more" disabled={loading} onClick={() => void load(cursor)}>
-                    {t("Load more comments")}
+                    {loading ? t("Loading comments…") : t("Load more comments")}
                   </button>
                 )}
               </div>
             )}
             {access && !access.canRead && viewerUserId && <p>{t("Comments are not available with your current access.")}</p>}
           </div>
-          {composer && composer.kind !== "create"
+          {composer
             ? composerView
             : !selected && (
                 <div className="comment-panel-footer">
@@ -1698,7 +1917,7 @@ function CommentWorkspaceSession(
               )}
         </aside>
       )}
-      {composer?.kind === "create" && composerView}
+      {composer?.kind === "create" && !open && composerView}
       <CommentToast notice={notice} noticeSuccess={noticeSuccess} setNotice={setNotice} />
     </div>
   );

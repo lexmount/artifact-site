@@ -104,7 +104,6 @@ describe("server-side capability resolution (requestFromHeaders + describePermis
     const req = requestFromHeaders(bag({ cookie: await loginCookie(user.id), "x-forwarded-proto": "https" }), `/s/${site.slug}/edit`);
     const perms = await describePermissions(req, fresh!);
     expect(perms.canEditContent).toBe(true);
-    expect(perms.enforced).toBe(true);
   });
 
   it("same for a collaborator: authorised by session, likewise holding no token", async () => {

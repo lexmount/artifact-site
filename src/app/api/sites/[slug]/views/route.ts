@@ -9,7 +9,7 @@
 // detail rows below it stay unfiltered: an audit list that silently dropped the owner's own opens
 // would be lying about what was recorded.
 import type { NextResponse } from "next/server";
-import { getSiteViewStats, getUser, listCollaborators, listSiteOpens } from "@/lib/db";
+import { getSiteViewStats, getUser, listAudienceExcludedUserIds, listSiteOpens } from "@/lib/db";
 import { getSiteView } from "@/lib/sites";
 import { requirePermission } from "@/lib/authz";
 import type { User } from "@/lib/types";
@@ -29,12 +29,12 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const raw = Number(new URL(request.url).searchParams.get("limit"));
     const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), MAX_LIMIT) : DEFAULT_LIMIT;
 
-    // Everyone with standing write access is "not an audience": the owner plus collaborators —
+    // Exclude the owner and explicitly named editors/admins, not broad tenant/everyone grants —
     // and an ANONYMOUS owner too, by their browser id, or the agent-publish flow (anonymous
     // creation is the hero path) would count its own author forever.
-    const collaborators = await listCollaborators(view.site.id);
+    const collaborators = await listAudienceExcludedUserIds(view.site.id);
     const summary = await getSiteViewStats(view.site.id, Date.now() - SUMMARY_WINDOW_MS, {
-      userIds: [view.site.ownerId, ...collaborators.map((c) => c.userId)].filter((id): id is string => id != null),
+      userIds: [view.site.ownerId, ...collaborators].filter((id): id is string => id != null),
       anonIds: view.site.anonOwnerId ? [view.site.anonOwnerId] : [],
     });
 

@@ -32,7 +32,7 @@
 
 **artifact-site 是个人/团队自托管的作品空间，类似 Claude Artifacts 或 OpenAI Sites。** 你的各种 Agent 负责创作，artifact-site 负责集中管理：把网页和文档变成链接，方便分享、评论反馈、控制访问和保留版本；你原有的Agent 也能通过 CLI 或 MCP 继续编辑、发布、检索和更新作品。
 
-> **[在线体验](https://artifact-site.app.lexmount.com/)，无需安装。** 拖入文件即可发布并获取分享链接，无需登录。
+> **[在线体验](https://artifact-site.app.lexmount.com/)，无需安装。** 拖入文件即可发布并获取分享链接。你可以匿名体验，也可以**使用 Google 或 GitHub 登录**，长期保留作品、用文件夹整理，并控制谁能打开每个链接。
 >
 > 匿名发布的内容会在几天后过期。演示站为公共体验环境，请勿上传敏感信息。
 

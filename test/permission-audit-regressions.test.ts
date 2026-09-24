@@ -1,6 +1,6 @@
 import { afterAll, expect, it, vi } from 'vitest';
 import { createSite } from '@/lib/sites';
-import { closeDbForTests, createId, upsertUser, getSite, rbacQuery, updateSiteSharing, createShare, getShare } from '@/lib/db';
+import { closeDbForTests, createId, upsertUser, getSite, rbacQuery, updateSiteVisibility, createShare, getShare } from '@/lib/db';
 import { mintSession } from '@/lib/session';
 import { authorizePreview } from '@/lib/preview-access';
 import { canReadVersion, hashToken } from '@/lib/share';
@@ -11,7 +11,7 @@ async function fixture() {
  const user=await upsertUser({authProvider:'audit',providerSubject:createId('u'),email:createId('e')+'@test.com',emailVerified:true});
  const {cookie}=await mintSession(new Request(origin),user.id);
  const {site}=await createSite({mode:'paste',html:'<html><head></head><body>old secret</body></html>'},{ownerId:user.id});
- await updateSiteSharing(site.id,'private','owner');
+ await updateSiteVisibility(site.id,'private');
  return {site:(await getSite(site.id))!,user,cookie:cookie.split(';')[0]};
 }
 async function advance(site: Awaited<ReturnType<typeof fixture>>['site']) {
@@ -30,7 +30,7 @@ it('follow-share preview must stop serving a version that is no longer latest or
  expect(await authorizePreview(new Request(origin),fresh,grant!.key)).toBeNull();
 });
 it('public official version preview grant must work for subresources',async()=>{
- const {site}=await fixture();await updateSiteSharing(site.id,'public','owner');
+ const {site}=await fixture();await updateSiteVisibility(site.id,'public');
  await advance(site);await rbacQuery('UPDATE sites SET official_version_id=$1 WHERE id=$2',[site.currentVersionId,site.id]);
  const fresh=(await getSite(site.id))!;
  const grant=await authorizePreview(new Request(origin+'/?v='+site.currentVersionId),fresh,null);
@@ -75,10 +75,9 @@ it('database rejects tenant and version references outside the report',async()=>
  await expect(rbacQuery('UPDATE sites SET official_version_id=$1 WHERE id=$2',[other.currentVersionId,site.id])).rejects.toThrow();
  await expect(createShare({id:createId('shr'),siteId:site.id,tokenHash:hashToken(createId('link')),policy:'public',passcodeHash:null,label:null,createdBy:null,createdAnonId:null,expiresAt:null,mode:'view',versionId:other.currentVersionId})).rejects.toThrow();
 });
-it('retired edit policies, collaborator rows and owned edit tokens cannot grant access',async()=>{
- const {site,user}=await fixture(), stranger=await fixture();
- await rbacQuery("UPDATE sites SET edit_policy='login',edit_token='retired-token',claim_token='retired-claim' WHERE id=$1",[site.id]);
- await rbacQuery('INSERT INTO site_collaborators(site_id,user_id,granted_by,granted_at) VALUES($1,$2,$3,1)',[site.id,stranger.user.id,user.id]);
+it('owned edit tokens cannot grant access',async()=>{
+ const {site}=await fixture(), stranger=await fixture();
+ await rbacQuery("UPDATE sites SET edit_token='retired-token' WHERE id=$1",[site.id]);
  const {describePermissions}=await import('@/lib/authz');
  const request=new Request(origin,{headers:{cookie:stranger.cookie,'x-edit-token':'retired-token'}});
  const permissions=await describePermissions(request,(await getSite(site.id))!);

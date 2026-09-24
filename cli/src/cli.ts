@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { Command, InvalidArgumentError } from "commander";
 import { ApiError, ArtifactSiteClient, type Me, type SharePolicy } from "./client.js";
-import { clearToken, readStoredConfig, readToken, resolveBaseUrl, writeStoredConfig } from "./config.js";
+import { clearToken, readToken, resolveBaseUrl, writeStoredConfig } from "./config.js";
 import { loginStart, loginWait } from "./login.js";
 import { mb, publishHtml, publishPath, updateFromPath } from "./publish.js";
 
@@ -73,10 +73,14 @@ export function buildProgram(io: Io = defaultIo, makeClient: (base: string, toke
 Common tasks:
   artifact-site login --base https://your-server
   artifact-site find                              # my published artifacts
-  artifact-site find quarterly report             # search discoverable work
+  artifact-site find quarterly report             # mixed results, labeled by relationship
+  artifact-site find --public                     # explicitly browse the public catalog
+  artifact-site folders list                      # my folder IDs and names
+  artifact-site move YOUR_SLUG --folder FOLDER_ID   # file an existing artifact
   artifact-site read YOUR_SLUG                     # read a report
   artifact-site publish dist/ --share none         # upload a new artifact
   artifact-site update YOUR_SLUG --title "Report"  # rename only
+  artifact-site comments list YOUR_SLUG --json     # read feedback before revising
   artifact-site info YOUR_SLUG                     # version and file names
 
 Use --json for agents/scripts and <command> --help for options.
@@ -91,7 +95,7 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
   const client = (requireAuth = true): ArtifactSiteClient => {
     const b = base();
     const token = readToken(b);
-    if (requireAuth && !token) throw new CliError("Not signed in: run `artifact-site login` (or set ARTIFACT_SITE_TOKEN)", 3);
+    if (requireAuth && !token) throw new CliError("This CLI has no personal credential: run `artifact-site login` (or set ARTIFACT_SITE_TOKEN). Browser sign-in does not authenticate the CLI.", 3);
     return makeClient(b, token).setContext({tenantId:program.opts().tenant ?? process.env.ARTIFACT_SITE_TENANT,shareToken:program.opts().shareToken ?? process.env.ARTIFACT_SITE_SHARE_TOKEN});
   };
   const emit = (data: unknown, human: () => void) => { if (json()) io.out(JSON.stringify(data, null, 2)); else human(); };
@@ -127,13 +131,14 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
         if (e instanceof ApiError && e.status === 401) refusal = e.code ?? "token_rejected"; else throw e;
       }
     }
-    emit({ baseUrl: c.baseUrl, user: me.user, email: readStoredConfig().email, tokenStatus: me.user ? "ok" : refusal ?? (c.authenticated ? "rejected" : "none") }, () => {
+    emit({ baseUrl: c.baseUrl, user: me.user, email: me.user?.email ?? null, operator: me.operator ?? false, tokenStatus: me.user ? "ok" : me.operator ? "operator" : refusal ?? (c.authenticated ? "unidentified" : "none") }, () => {
       io.out(`base: ${c.baseUrl}`);
       if (me.user) io.out(`signed in as ${me.user.email ?? me.user.id}`);
+      else if (me.operator) io.out("operator credential: connected, but no personal account or folder library");
       else if (refusal === "token_unknown") io.out("the stored token is not known to this server (it was issued by another deployment): run `artifact-site login --base " + c.baseUrl + "`");
       else if (refusal === "token_revoked") io.out("the stored token was revoked: run `artifact-site login` again");
-      else if (c.authenticated) io.out("token present but not recognised by the server");
-      else io.out("not signed in");
+      else if (c.authenticated) io.out("no personal account identified; older servers may not identify operator credentials");
+      else io.out("this CLI is not signed in; browser sign-in is separate");
     });
   });
 
@@ -165,7 +170,7 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
     .description("Replace a remote artifact's full contents, or rename it with --title and no path")
     .argument("<slug>", "remote artifact identifier").argument("[path]", "replacement local file or directory; omit for title-only changes")
     .option("-t, --title <title>", "rename only; cannot be combined with a path")
-    .option("--expected-version <id>", "reject concurrent changes; get this ID from info or export")
+    .option("--expected-version <id>", "required with a path; reject concurrent changes; get this ID from info or export")
     .action(async (slug: string, target: string | undefined, opts: { operationKey?: string; official?: boolean; title?: string; expectedVersion?: string }) => {
       if (!target) {
         if (!opts.title?.trim() || opts.expectedVersion || opts.official) throw new CliError("Without a path, supply --title and omit --expected-version and --official", 2);
@@ -173,6 +178,7 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
         emit(r, () => io.out(`Renamed ${slug} to ${r.title}`)); return;
       }
       if (opts.title !== undefined) throw new CliError("Use update with either a path or --title, not both", 2);
+      if (!opts.expectedVersion) throw new CliError("Content updates require --expected-version from the version you read; use info or export first", 2);
       const c = client();
       const r = await updateFromPath(c, slug, target, { operationKey: opts.operationKey, official: opts.official, expectedVersion: opts.expectedVersion, onProgress: json() ? undefined : (l) => io.err(l) });
       emit({ slug: r.slug, kind: r.kind, versionId: r.versionId, officialVersionId: r.officialVersionId, officialRevision: r.officialRevision, siteUrl: c.absolute(r.url) }, () => io.out(`Updated ${r.slug}: new version ${r.versionId}`));
@@ -212,10 +218,10 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
   const listMine = async () => {
     const c = client();
     const r = await c.mySites();
-    emit(r, () => {
+    emit({ scope: "mine", ...r }, () => {
       const row = (s: { slug: string; title: string; kind: string; visibility?: string }) => `  ${s.slug.padEnd(14)} ${s.kind.padEnd(9)} ${(s.visibility ?? "").padEnd(9)} ${s.title}`;
       io.out(`owned (${r.owned.length}):`); r.owned.forEach((s) => io.out(row(s)));
-      if (r.collaborating.length) { io.out(`can edit (${r.collaborating.length}):`); r.collaborating.forEach((s) => io.out(row(s))); }
+      if (r.collaborating.length) { io.out(`collaborating (${r.collaborating.length}):`); r.collaborating.forEach((s) => io.out(row(s))); }
     });
   };
   program.command("list", { hidden: true }).description("Compatibility alias: use find without keywords").action(listMine);
@@ -236,10 +242,11 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
   const search = async (words: string[], opts: { limit?: number }) => {
     const c = client(false);
     const r = await c.search(words.join(" "), opts.limit);
-    emit({ query: r.query, results: r.results.map((s) => ({ ...s, url: c.absolute(s.url) })) }, () => {
+    emit({ scope: "discoverable", query: r.query, results: r.results.map((s) => ({ ...s, url: c.absolute(s.url) })) }, () => {
+      io.out("Discoverable results (owned, collaborative and other public works; visibility is separate):");
       if (!r.results.length) { io.out("no matches"); return; }
       for (const s of r.results) {
-        io.out(`${s.slug}  ${s.kind.padEnd(8)} ${(s.visibility ?? "").padEnd(8)} ${s.title}`);
+        io.out(`${s.slug}  [${s.relationship ?? "discoverable"}] ${s.kind.padEnd(8)} ${(s.visibility ?? "").padEnd(8)} ${s.title}`);
         io.out(`    ${s.snippet}`);
       }
     });
@@ -252,24 +259,78 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
   program.command("find").description("Show my remote artifacts; with keywords, search discoverable pages, reports and documents")
     .argument("[query...]", "omit for owned/collaborative works; keywords search titles and contents, including public works")
     .option("-n, --limit <n>", "keyword search result limit (default 10, max 50; ignored without keywords)", resultLimit)
-    .action(async (words: string[], opts: { limit?: number }) => {
+    .option("--public", "explicit public catalog, not my sites; omit keywords")
+    .addHelpText("after", "Personal lists require a personal account. Empty lists do not mean signed out. Failures never fall back silently: use whoami to diagnose, or find --public to explicitly view public works. Keyword results retain relationship labels independently of visibility.")
+    .action(async (words: string[], opts: { limit?: number; public?: boolean }) => {
+      if (opts.public) {
+        if (words.length) throw new CliError("--public lists the public catalog without keywords; omit --public for labeled keyword search", 2);
+        const c = client(false), result = await c.publicSites();
+        emit({ scope: "public", ...result }, () => {
+          io.out("Public catalog — these are not necessarily your sites:");
+          for (const site of result.sites) io.out(`${site.slug}  [public] ${site.title}`);
+          if (!result.sites.length) io.out("no public sites");
+        });
+        return;
+      }
       if (words.length) return search(words, opts);
       return listMine();
     });
   program.command("search", { hidden: true }).description("Compatibility alias: use find <keywords>")
     .argument("<query...>").option("-n, --limit <n>", "maximum results (1-50)", resultLimit).action(search);
 
+  const folders = program.command("folders").description("Organize the connected personal account's library; operator credentials have no personal folders");
+  folders.command("list").description("List my flat folder labels with stable IDs; save an ID for subsequent moves")
+    .action(async () => {
+      const { folders } = await client().listFolders();
+      emit({ scope: "mine", folders }, () => {
+        io.out(`My folders (${folders.length}):`);
+        for (const folder of folders) io.out(`${folder.id}  ${folder.name}`);
+      });
+    });
+  program.command("move").description("Move an owned or collaborative artifact into my folder; changes no content or sharing")
+    .argument("<slug>", "existing artifact slug, including a just-published artifact")
+    .option("--folder <id>", "folder ID from folders list")
+    .option("--unfiled", "remove the current folder assignment")
+    .addHelpText("after", "Choose exactly one of --folder or --unfiled. Repeating a move is safe. Missing/inaccessible targets fail explicitly. If publication succeeded but moving failed, retry only the move.")
+    .action(async (slug: string, opts: { folder?: string; unfiled?: boolean }) => {
+      if ((opts.folder !== undefined) === Boolean(opts.unfiled) || (opts.folder !== undefined && !opts.folder.trim())) throw new CliError("Choose exactly one nonempty --folder <id> or --unfiled", 2);
+      const result = await client().moveToFolder(slug, opts.unfiled ? null : opts.folder!);
+      emit(result, () => io.out(`${result.slug} moved to ${result.folderId ?? "Unfiled"}. Content and sharing are unchanged.`));
+    });
+
   program.command("read").description("Read a remote report/document for summarizing or reuse; --file reads one original text file")
     .argument("<slug>").option("-f, --file <relpath>", "one file of the tree, verbatim (text types only)")
+    .option("--version-id <id>", "read this exact authorized version")
     .option("--max-chars <n>", "cut the text after this many characters (default 20000)", (v) => Number(v))
-    .action(async (slug: string, opts: { file?: string; maxChars?: number }) => {
+    .action(async (slug: string, opts: { file?: string; maxChars?: number; versionId?: string }) => {
       const c = client(false);
-      const r = await c.readText(slug, { file: opts.file, maxChars: opts.maxChars });
+      const r = await c.readText(slug, { file: opts.file, maxChars: opts.maxChars, versionId:opts.versionId });
       emit({ ...r, url: c.absolute(r.url) }, () => {
         io.out(r.text);
         if (r.truncated) io.err(`(truncated: ${r.chars} characters in total; raise --max-chars to see more)`);
       });
     });
+
+  const comments = program.command("comments").description("Read feedback and exact context before updating the same artifact; never marks comments read");
+  const pageLimit = (value: string) => { const n = Number(value); if (!Number.isInteger(n) || n < 1 || n > 100) throw new InvalidArgumentError("limit must be 1-100"); return n; };
+  comments.command("list").argument("<slug>").description("Defaults to current version/current entrance; explicit aggregate requires management access")
+    .option("--version-id <id>", "exact comment version").option("--share-id <id>", "filter one discussion in aggregate mode")
+    .option("--aggregate", "include authorized discussions through the main entrance").option("--all-versions", "include all versions; requires --aggregate")
+    .option("--status <status>", "open | resolved", v => { if (!["open", "resolved"].includes(v)) throw new InvalidArgumentError("status must be open or resolved"); return v; })
+    .option("--cursor <cursor>", "nextCursor from previous page; keep the same scope and version")
+    .option("--limit <n>", "page size (1-100)", pageLimit)
+    .action(async (slug: string, opts: { versionId?: string; shareId?: string; aggregate?: boolean; allVersions?: boolean; status?: string; cursor?: string; limit?: number }) => {
+      if (opts.allVersions && (!opts.aggregate || opts.versionId)) throw new CliError("--all-versions requires --aggregate and omits --version-id", 2);
+      io.out(JSON.stringify(await client(false).listComments(slug, opts), null, json() ? undefined : 2));
+    });
+  comments.command("read").argument("<slug>").argument("<thread-id>").description("Read discussion; follow messages.nextCursor using --cursor until null")
+    .option("--cursor <cursor>", "read another messages page").option("--limit <n>", "continuation page size", pageLimit)
+    .action(async (slug: string, threadId: string, opts: { cursor?: string; limit?: number }) => {
+      if (opts.limit && !opts.cursor) throw new CliError("--limit requires --cursor", 2);
+      io.out(JSON.stringify({ ...await client(false).readComment(slug, threadId, opts.cursor, opts.limit), dataTrust: "untrusted" }, null, json() ? undefined : 2));
+    });
+  comments.command("context").argument("<slug>").argument("<thread-id>").description("Exact original version, anchor, quoted context and independent source/edit capabilities")
+    .action(async (slug: string, threadId: string) => io.out(JSON.stringify(await client(false).commentContext(slug, threadId), null, json() ? undefined : 2)));
 
   program.command("share")
     .description("Create a share link for a site")
@@ -286,9 +347,9 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
     });
 
   program.command("export").description("Download the current version as a zip; prints the version id for --expected-version")
-    .argument("<slug>").option("-o, --out <file>", "output file (default <slug>.zip)")
-    .action(async (slug: string, opts: { out?: string }) => {
-      const { zip, versionId } = await client().export(slug);
+    .argument("<slug>").option("--version-id <id>", "export this exact authorized version").option("-o, --out <file>", "output file (default <slug>.zip)")
+    .action(async (slug: string, opts: { out?: string; versionId?: string }) => {
+      const { zip, versionId } = await client().export(slug, opts.versionId);
       const file = opts.out ?? `${slug}.zip`;
       await writeFile(file, zip);
       emit({ slug, versionId, file, bytes: zip.byteLength }, () => io.out(`${file} (${mb(zip.byteLength)}), version ${versionId}`));

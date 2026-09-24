@@ -6,12 +6,12 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  EMAIL_EXACT_NOTICE, EDIT_POLICY_LOCK_NOTICE, EXPIRY_CHOICES, NO_NOTIFY_NOTICE, POLICY_HINT,
+  EMAIL_EXACT_NOTICE, EXPIRY_CHOICES, NO_NOTIFY_NOTICE, POLICY_HINT,
   POLICY_LABEL, POLICY_SHORT, SHARE_POLICY_MENU, LINK_REUSE_NOTICE, VISIBILITY_LABEL,
   shareSettingsPatch, addPerson, errorText, expiresAtFor, expiryChoiceOf, expiryDaysFor, expiryText, isEmailLike,
   isPendingPerson, needsPrivateNudge, personKey, personLabel, privateNudgeText, readFreshPasscode,
   readGrantResult, readGrants, readListedGrants, readMinted, readShares, readViews,
-  reconcileSharing, removePerson, searchShouldRun, shareState, shareStateOf, shareUrl, viaLabel,
+  removePerson, reusableQuickShare, searchShouldRun, shareState, shareStateOf, shareUrl, viaLabel,
   viewerLabel, type PickedPerson, type ShareListItem, type ShareViewRow,
 } from "@/components/share-model";
 import { isLive } from "@/lib/share";
@@ -30,6 +30,14 @@ const links = read("src/components/share-links.tsx");
 const picker = read("src/components/people-picker.tsx");
 const views = read("src/components/share-views.tsx");
 const css = read("src/app/globals.css");
+function declarations(selector: string, from = 0) {
+  const start = css.indexOf(selector, from);
+  const body = start < 0 ? "" : css.slice(css.indexOf("{", start) + 1, css.indexOf("}", start));
+  return new Map(body.split(";").map(part => part.trim()).filter(Boolean).map(part => {
+    const colon = part.indexOf(":");
+    return [part.slice(0, colon).trim(), part.slice(colon + 1).trim()];
+  }));
+}
 
 const DAY = 86_400_000;
 const NOW = 1_800_000_000_000;
@@ -74,22 +82,6 @@ describe("a restricted share on a site that is still open is decoration", () => 
   });
 });
 
-describe("private × login is a deadlock; the UI resolves it itself", () => {
-  it("choosing private pulls the edit policy back to owner and says so — the server answers 400 for this combination", () => {
-    const out = reconcileSharing({ visibility: "private", editPolicy: "login" });
-    expect(out).toEqual({ visibility: "private", editPolicy: "owner", adjusted: true });
-  });
-
-  it("every other combination passes through unchanged; the user's choice is not overridden", () => {
-    for (const v of ["public", "unlisted", "private"] as const) {
-      for (const p of ["owner", "login"] as const) {
-        if (v === "private" && p === "login") continue;
-        expect(reconcileSharing({ visibility: v, editPolicy: p })).toEqual({ visibility: v, editPolicy: p, adjusted: false });
-      }
-    }
-  });
-});
-
 // ── Expiry ───────────────────────────────────────────────────────────────────
 
 describe("expiry choice → expiry instant → echo", () => {
@@ -118,6 +110,56 @@ describe("expiry choice → expiry instant → echo", () => {
     expect(expiryText(NOW - 1, NOW, t)).toBe("Expired");
     expect(expiryText(NOW + 10 * 3600_000, NOW, t)).toBe("Expires in less than 1 day");
     expect(expiryText(NOW + 3 * DAY, NOW, t)).toBe("Expires in 3 days");
+  });
+});
+
+describe("quick sharing is idempotent", () => {
+  it("reuses the newest live link with the same audience, mode and latest-version scope", () => {
+    const older = share({ id: "old", policy: "public", mode: "view", url: "https://x/v/old", createdAt: NOW - DAY, expiresAt: NOW + 29 * DAY });
+    const newest = share({ id: "new", policy: "public", mode: "view", url: "https://x/v/new", createdAt: NOW, expiresAt: NOW + 30 * DAY });
+    expect(reusableQuickShare([older, newest], "public", NOW)?.id).toBe("new");
+  });
+
+  it("does not reuse revoked, expired, pinned-version or wrong-mode links", () => {
+    const invalid = [
+      share({ id: "revoked", policy: "public", mode: "view", url: "x", revokedAt: NOW - 1 }),
+      share({ id: "expired", policy: "public", mode: "view", url: "x", expiresAt: NOW }),
+      share({ id: "pinned", policy: "public", mode: "view", url: "x", versionId: "v1" }),
+      share({ id: "comment", policy: "public", mode: "comment", url: "x" }),
+    ];
+    expect(reusableQuickShare(invalid, "public", NOW)).toBeNull();
+  });
+
+  it("does not reuse advanced or non-standard links created for another purpose", () => {
+    const unsafe = [
+      share({ id: "labelled", policy: "public", mode: "view", url: "x", label: "Customer A" }),
+      share({ id: "ai", policy: "public", mode: "view", url: "x", allowAi: true }),
+      share({ id: "passcode", policy: "public", mode: "view", url: "x", hasPasscode: true }),
+      share({ id: "short", policy: "public", mode: "view", url: "x", expiresAt: NOW + DAY }),
+      share({ id: "forever", policy: "public", mode: "view", url: "x", expiresAt: null }),
+    ];
+    expect(reusableQuickShare(unsafe, "public", NOW)).toBeNull();
+  });
+
+  it("allows server timestamp drift within one second, but not a different lifetime", () => {
+    const rounded = share({
+      id: "rounded", policy: "public", mode: "view", url: "x",
+      createdAt: NOW, expiresAt: NOW + 30 * DAY - 1000,
+    });
+    const different = share({
+      id: "different", policy: "public", mode: "view", url: "x",
+      createdAt: NOW, expiresAt: NOW + 30 * DAY - 1001,
+    });
+    expect(reusableQuickShare([rounded], "public", NOW)?.id).toBe("rounded");
+    expect(reusableQuickShare([different], "public", NOW)).toBeNull();
+  });
+
+  it("lists before minting, gives newly minted quick links an expiry, and treats copy failure separately", () => {
+    expect(panel).toContain('fetch(`/api/sites/${slug}/shares`, { cache: "no-store" })');
+    expect(panel).toContain("reusableQuickShare(readShares(listBody), policy, Date.now())");
+    expect(panel).toContain("expiresInDays: 30");
+    expect(panel.indexOf("recordShareLinkCreated();")).toBeLessThan(panel.indexOf("navigator.clipboard.writeText(url)"));
+    expect(panel).toContain("setQuickManualUrl(url)");
   });
 });
 
@@ -427,7 +469,6 @@ describe("private is now a real option", () => {
 
   it("with private selected, 'anyone signed in can edit' is disabled — the server answers 400 for this combination", () => {
     expect(panel).not.toContain('<option value="login"');
-    expect(EDIT_POLICY_LOCK_NOTICE).toContain("deadlock");
   });
 });
 
@@ -453,6 +494,26 @@ describe("the two hard-constraint notices must actually render", () => {
 });
 
 describe("defaults and options for a new share link", () => {
+  it("opens the new-link editor first and keeps it before the existing-link list", () => {
+    expect(links).toContain("useState(true)");
+    expect(links.indexOf('className="share-new is-active"')).toBeLessThan(links.indexOf('className="share-links"'));
+    expect(links).toContain('onClick={openCreate}');
+    expect(links).toContain('firstCreateField.current?.focus()');
+    expect(links).toContain('className="btn sm ghost" disabled={busy} onClick={cancelCreate}');
+    expect(declarations(".share-new-trigger").get("width")).toBe("100%");
+    const warning = declarations(".share-new .share-warn");
+    expect(warning.get("padding")).toBe(".75rem 0 0");
+    expect(warning.get("border")).toBe("0");
+    expect(warning.get("border-top")).toBeTruthy();
+  });
+
+  it("keeps all three sharing tabs on one line on mobile", () => {
+    const mobile = css.indexOf("@media (max-width: 600px)", css.indexOf('.drawer-tabs button[aria-selected="true"]'));
+    const tabs = declarations(".drawer-tabs", mobile);
+    expect(tabs.get("overflow-x")).toBe("auto");
+    expect(tabs.get("white-space")).toBe("nowrap");
+  });
+
   it("the default is login — not public, and not the strictest policy either", () => {
     const decl = links.slice(links.indexOf("useState<SharePolicy>"));
     expect(decl.slice(0, 60)).toContain('"login"');
@@ -490,10 +551,26 @@ describe("the 'Copy link' in the list must not be fake", () => {
 });
 
 describe("view-log entry point", () => {
-  it("lives inside the share panel and fetches only when expanded", () => {
-    expect(links).toContain("<ShareViews");
+  it("is a peer share-panel tab and fetches when that tab mounts", () => {
+    expect(panel).toContain('tab === "views"');
+    expect(panel).toContain('{t("View history")}');
+    expect(panel).toContain("<ShareViews");
+    expect(links).not.toContain("<ShareViews");
     expect(views).toContain("/views");
-    expect(views).toContain('aria-expanded={open}');
+    expect(views).toContain("await load(controller.signal)");
+    expect(views).toContain("controller.abort()");
+  });
+
+  it("states that external visit data excludes owner and collaborator opens", () => {
+    expect(views).toContain("External visit data does not include opens by you and your collaborators");
+    expect(views).toContain('role="tooltip"');
+    expect(views).toContain('aria-expanded={showExclusion}');
+    expect(views).toContain('aria-describedby={showExclusion ? "share-views-exclusion" : undefined}');
+    expect(views).toContain('event.key === "Escape"');
+    expect(views).toContain('event.key === "Escape" && showExclusion');
+    expect(css).not.toContain(".share-views-info:focus-within .share-views-tooltip");
+    expect(css).not.toContain(".share-views-info:hover .share-views-tooltip");
+    expect(declarations(".share-views-info > button").get("cursor")).toBe("pointer");
   });
 
   it("newest first: the most recent visit is at the top", () => {

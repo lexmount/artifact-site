@@ -33,3 +33,13 @@ describe("S3Storage.readRange", () => {
     expect(slice.total).toBe(12345);
   });
 });
+
+it("writes normalized PNG and JPEG attachment MIME metadata",async()=>{
+  for(const mime of ["image/png","image/jpeg"] as const) {
+    let input: Record<string,unknown> | undefined;
+    const storage=withClient(async command=>{input=command.input;return {};});
+    const bytes=new Uint8Array([1,2,3]);
+    await storage.writeCommentAttachment("cat_image",bytes,mime);
+    expect(input).toMatchObject({Key:"comment-attachments/cat_image",ContentType:mime,Body:bytes});
+  }
+});

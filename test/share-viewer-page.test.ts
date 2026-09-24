@@ -171,6 +171,7 @@ describe("generateMetadata — the card for each of the four policies", () => {
     // og/twitter descriptions are left unset so Next derives them from the one above — they do not accept null.
     expect(m.openGraph?.description).toBeUndefined();
     expect(m.alternates?.canonical).toBe(`${ORIGIN}/v/${token}`);
+    expect(m.robots).toEqual({ index: false, follow: false });
   });
 
   it("public with an artifact that wrote no description: explicit null, never the platform tagline", async () => {

@@ -1,46 +1,51 @@
 "use client";
+import AuthorizationPanel from "@/components/authorization-panel";
 import { track } from "@/lib/analytics";
-// Sharing settings — a right-side drawer, same shape as Version history. Owner-only, and it only renders at all
-// when the server said so: the client decides nothing about permissions here, it just reflects the
-// flags from describePermissions. A button the viewer cannot actually use is worse than no button.
-//
-// The drawer has two halves, corresponding to two DIFFERENT objects:
-//
-//   Upper half, "the site itself" — who gets to open the /s/<slug> door, and who may change the
-//                                    content. Edits the sites row.
-//   Lower half, "share links" — independent objects; a site can have several, each with its own
-//                                policy, expiry, people list and view log, each revocable on its own.
-//                                Edits the shares table.
-//
-// The split is not a layout preference: the relationship between the two is exactly where things go
-// wrong — while the site is still public, no share link however strict stops anyone, because
-// /s/<slug> stands open right next to it. That warning is share-links' job to display.
-import { useCallback, useEffect, useRef, useState } from "react";
+// The drawer edits site visibility, role bindings and independent share links.
+// Server permission flags control the entry point; each API rechecks authority.
+// Private visibility does not revoke role grants or existing share links.
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
-import { Globe, Maximize2, Minimize2, Link2, Loader2, Lock, Pencil, Share2, Trash2, UserPlus, X } from "lucide-react";
+import { Globe, Maximize2, Minimize2, Link2, Loader2, Lock, Share2, X } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 import { drawerHost } from "@/components/version-history";
 import ShareSaveDialog from "@/components/share-save-dialog";
 import ShareLinks from "@/components/share-links";
-import { EDIT_POLICY_LABEL, EDIT_POLICY_LOCK_NOTICE, VISIBILITY_LABEL, reconcileSharing } from "@/components/share-model";
-import type { EditPolicy, Visibility } from "@/lib/types";
+import ShareViews from "@/components/share-views";
+import PrivateShareEducation from "@/components/private-share-education";
+import QuickShareOptions from "@/components/quick-share-options";
+import { errorText, readShares, reusableQuickShare, VISIBILITY_LABEL } from "@/components/share-model";
+import type { Visibility } from "@/lib/types";
+import { recordShareLinkCreated } from "@/lib/share-education";
 
-interface Collaborator { role?: "admin" | "editor"; userId: string; email: string | null; displayName: string | null }
+
 
 /** Writes are cookie-authenticated, so the server checks Origin exactly on each one. */
 const writeHeaders = () => ({ "content-type": "application/json", origin: window.location.origin });
 
-export default function SharePanel({ slug, onOpenChange, canManageAdmins = false }: {
+export default function SharePanel({ slug, visibility: initialVisibility, onOpenChange }: {
   slug: string;
+  visibility: Visibility;
   /** While the drawer is open the parent must stop auto-collapsing the action bar — see the drawerHost comment in version-history. */
   onOpenChange?: (open: boolean) => void;
-  canManageAdmins?: boolean;
 }) {
   const t = useT();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [educationOpen, setEducationOpen] = useState(false);
+  const [educationDismissed, setEducationDismissed] = useState(false);
+  const [quickBusy, setQuickBusy] = useState<"public" | "login" | null>(null);
+  const quickBusyRef = useRef(false);
+  const [quickCopied, setQuickCopied] = useState<"public" | "login" | null>(null);
+  const [quickError, setQuickError] = useState<string | null>(null);
+  const [quickManualUrl, setQuickManualUrl] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const dialogRef = useRef<HTMLElement>(null);
-  const [siteDraft, setSiteDraft] = useState<{visibility: Visibility; editPolicy: EditPolicy} | null>(null);
+  const quickDialogRef = useRef<HTMLDialogElement>(null);
+  const quickButtonRef = useRef<HTMLButtonElement>(null);
+  const [siteDraft, setSiteDraft] = useState<{visibility: Visibility} | null>(null);
   const siteDirtyRef = useRef(false);
   const [confirmSite, setConfirmSite] = useState(false);
   const [siteSaving, setSiteSaving] = useState(false);
@@ -52,18 +57,24 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
     siteDirtyRef.current = false; setSiteDraft(null); return true;
   }, [t]);
   const close = useCallback(() => { if (canLeave()) setOpen(false); }, [canLeave]);
-  // Two tabs, as the design draws them: share links first (the thing people come here to make),
-  // then the people and the site's own door.
-  const [tab, setTab] = useState<"links" | "site">("links");
+  // Links, site membership and external visit data are separate peer tasks.
+  const [tab, setTab] = useState<"links" | "site" | "views">("links");
   // Starts true: the drawer only mounts its body when open, and the first thing it does is fetch.
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [visibility, setVisibility] = useState<Visibility>("public");
-  const [editPolicy, setEditPolicy] = useState<EditPolicy>("owner");
-  const [people, setPeople] = useState<Collaborator[]>([]);
-  const [email, setEmail] = useState("");
-  const [memberRole, setMemberRole] = useState<"admin" | "editor">("editor");
+  const [visibility, setVisibility] = useState<Visibility>(initialVisibility);
+  const [siteId,setSiteId] = useState("");
+
+  const openAdvanced = useCallback((nextTab: "links" | "site" | "views") => {
+    setError(null);
+    setLoading(true);
+    setEducationDismissed(true);
+    setEducationOpen(false);
+    setQuickOpen(false);
+    setTab(nextTab);
+    setOpen(true);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -93,14 +104,12 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
     let alive = true;
     void (async () => {
       try {
-        const [s, c] = await Promise.all([
-          fetch(`/api/sites/${slug}/sharing`).then((r) => r.json()),
-          fetch(`/api/sites/${slug}/collaborators`).then((r) => r.json()),
-        ]);
+        const response = await fetch(`/api/sites/${slug}/sharing`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Sharing settings unavailable");
+        const s = await response.json();
         if (!alive) return;
         if (s.visibility) setVisibility(s.visibility);
-        if (s.editPolicy) setEditPolicy(s.editPolicy);
-        setPeople(c.collaborators ?? []);
+        setSiteId(s.siteId ?? "");
       } catch {
         if (alive) setError(t("Failed to load sharing settings"));
       } finally {
@@ -112,16 +121,78 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
 
   // Tell the parent the drawer is open. Report a close on unmount too, so the parent never keeps the "a drawer is open" lock forever.
   useEffect(() => {
-    onOpenChange?.(open);
+    onOpenChange?.(open || quickOpen || educationOpen);
     return () => onOpenChange?.(false);
-  }, [open, onOpenChange]);
+  }, [open, quickOpen, educationOpen, onOpenChange]);
 
-  function stageSite(want: {visibility: Visibility; editPolicy: EditPolicy}) {
-    const next = reconcileSharing(want);
-    const changed = next.visibility !== visibility || next.editPolicy !== editPolicy;
+  useLayoutEffect(() => {
+    if (!quickOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = quickDialogRef.current;
+    if (!dialog) return;
+    dialog.showModal();
+    const position = () => {
+      const anchor = quickButtonRef.current?.getBoundingClientRect();
+      const panel = quickDialogRef.current;
+      if (!anchor || !panel) return;
+      const margin = 12;
+      const width = Math.min(620, window.innerWidth - margin * 2);
+      panel.style.width = `${width}px`;
+      panel.style.left = `${Math.max(margin, Math.min(anchor.right - width, window.innerWidth - width - margin))}px`;
+      panel.style.top = `${Math.max(margin, Math.min(anchor.bottom + 8, window.innerHeight - panel.offsetHeight - margin))}px`;
+    };
+    position();
+    // Start at the primary task, with Close as a fallback while a copy request is pending.
+    const initialFocus = dialog.querySelector<HTMLElement>(".share-quick-options button:not(:disabled)")
+      ?? dialog.querySelector<HTMLElement>("button[aria-label]");
+    initialFocus?.focus();
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position, true);
+    return () => {
+      dialog.close();
+      window.removeEventListener("resize", position);
+      window.removeEventListener("scroll", position, true);
+      previous?.focus();
+    };
+  }, [quickOpen]);
+
+  async function createQuickLink(policy: "public" | "login"): Promise<void> {
+    if (quickBusyRef.current) return;
+    quickBusyRef.current = true;
+    setQuickBusy(policy); setQuickError(null); setQuickManualUrl(null);
+    try {
+      const listResponse = await fetch(`/api/sites/${slug}/shares`, { cache: "no-store" });
+      const listBody: unknown = await listResponse.json().catch(() => ({}));
+      if (!listResponse.ok) throw new Error(errorText(listBody, t("Failed to load share links")));
+      const reusable = reusableQuickShare(readShares(listBody), policy, Date.now());
+      let url = reusable?.url ?? null;
+      if (!url) {
+        const res = await fetch(`/api/sites/${slug}/shares`, {
+          method: "POST", headers: writeHeaders(),
+          body: JSON.stringify({ policy, mode: policy === "login" ? "comment" : "view", expiresInDays: 30 }),
+        });
+        const body = await res.json().catch(() => ({})) as { url?: string; error?: string };
+        if (!res.ok || !body.url) throw new Error(body.error ?? t("Failed to create"));
+        url = body.url;
+        recordShareLinkCreated();
+      }
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        setQuickManualUrl(url);
+        return;
+      }
+      setQuickCopied(policy);
+      window.setTimeout(() => setQuickCopied(current => current === policy ? null : current), 1800);
+    } catch (error) { setQuickError(error instanceof Error ? error.message : t("Failed to create")); }
+    finally { quickBusyRef.current = false; setQuickBusy(null); }
+  }
+
+  function stageSite(want: {visibility: Visibility}) {
+    const changed = want.visibility !== visibility;
     siteDirtyRef.current = changed;
-    setSiteDraft(changed ? {visibility: next.visibility, editPolicy: next.editPolicy} : null);
-    setNotice(next.adjusted ? t(EDIT_POLICY_LOCK_NOTICE) : null);
+    setSiteDraft(changed ? want : null);
+    setNotice(null);
   }
   async function saveSite() {
     if (!siteDraft || siteSaving) return;
@@ -129,15 +200,16 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
     try {
       const res = await fetch(`/api/sites/${slug}/sharing`, {method: "PUT", headers: writeHeaders(), body: JSON.stringify(siteDraft)});
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? t("Failed to save"));
-      setVisibility(siteDraft.visibility); setEditPolicy(siteDraft.editPolicy);
+      setVisibility(siteDraft.visibility);
       siteDirtyRef.current = false; setSiteDraft(null); setConfirmSite(false);
       setNotice(t("Sharing settings saved"));
+      router.refresh();
     } catch (e) { setError(e instanceof Error ? e.message : t("Failed to save")); }
     finally { setSiteSaving(false); }
   }
   function goPrivate() {
     if (!canLeave()) return;
-    setTab("site"); stageSite({visibility: "private", editPolicy});
+    setTab("site"); stageSite({visibility: "private"});
   }
   useEffect(() => {
     if (!open || !siteDraft) return;
@@ -145,31 +217,6 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [open, siteDraft]);
-
-  async function addPerson() {
-    const value = email.trim();
-    if (!value) return;
-    setError(null);
-    const res = await fetch(`/api/sites/${slug}/collaborators`, {
-      method: "POST", headers: writeHeaders(), body: JSON.stringify({ email: value, role: memberRole }),
-    });
-    const body = await res.json();
-    if (!res.ok) {
-      // The common case is a colleague who has simply never signed in here yet.
-      setError(body.code === "user_not_found" ? t("This email has not signed in here yet. Ask them to sign in once first.") : (body.error ?? t("Failed to add")));
-      return;
-    }
-    setPeople((p) => [...p.filter(x => x.userId !== body.userId), body]);
-    setEmail("");
-  }
-
-  async function removePerson(userId: string) {
-    const res = await fetch(`/api/sites/${slug}/collaborators?userId=${encodeURIComponent(userId)}`, {
-      method: "DELETE", headers: writeHeaders(),
-    });
-    if (!res.ok) { setError((await res.json()).error ?? t("Request failed")); return; }
-    setPeople((p) => p.filter((x) => x.userId !== userId));
-  }
 
   // Copy /s/<slug> — the canonical link, i.e. the one governed by the visibility scope directly above
   // this panel. Success or failure, the notice does the talking: the clipboard throws outright in an
@@ -192,13 +239,33 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
 
   return (
     <>
-      <button className="btn primary" data-analytics-button="share" onClick={() => setOpen(true)}><Share2 size={14} /> {t("Sharing")}</button>
+      <button ref={quickButtonRef} className="btn primary" data-analytics-button="share" aria-haspopup="dialog" aria-expanded={quickOpen || open} onClick={() => { setEducationDismissed(true); setEducationOpen(false); setQuickOpen(value => !value); }}><Share2 size={14} /> {t("Sharing")}</button>
+      {visibility === "private" && !educationDismissed && <PrivateShareEducation slug={slug} anchor={quickButtonRef} onCreate={() => openAdvanced("links")} onOpenChange={setEducationOpen} />}
+      {quickOpen && host && createPortal(
+          <dialog ref={quickDialogRef} className="share-quick" aria-label={t("Sharing")}
+            onCancel={(event) => { event.preventDefault(); setQuickOpen(false); }}
+            onMouseDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              const rect = event.currentTarget.getBoundingClientRect();
+              if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+                // Do not let the backdrop's default mousedown steal the restored trigger focus.
+                event.preventDefault();
+                setQuickOpen(false);
+              }
+            }}>
+            <header className="share-quick-head"><div><b>{t("Sharing")}</b><span>{t("Quick sharing")}</span></div><button type="button" className="btn sm ghost" aria-label={t("Close")} onClick={() => setQuickOpen(false)}><X size={14} /></button></header>
+            <QuickShareOptions busy={quickBusy} copied={quickCopied} onCopy={createQuickLink} />
+            {visibility === "private" && <p className="share-quick-private"><Lock size={13} /> {t("This private site stays private at its site address. A quick link grants separate access to whoever receives it.")}</p>}
+            {quickError && <p className="share-error" role="alert">{quickError}</p>}
+            {quickManualUrl && <div className="share-quick-manual" role="status"><span>{t("The link is ready, but automatic copy failed. Copy it manually:")}</span><input readOnly value={quickManualUrl} onFocus={(event) => event.currentTarget.select()} aria-label={t("Share link")} /></div>}
+            <footer className="share-quick-foot"><div><b>{t("Need more sharing settings?")}</b><span>{t("Create a custom link or adjust site permissions.")}</span></div><button type="button" className="btn primary sm" onClick={() => openAdvanced("links")}>{t("New share link")}</button><button type="button" className="btn sm" onClick={() => openAdvanced("site")}>{t("Permission settings")}</button></footer>
+          </dialog>, host,
+      )}
       {open && host && createPortal(
         <div className="drawer-scrim" data-expanded={expanded} role="presentation" onClick={close}>
           <aside ref={dialogRef} className="drawer share-drawer" role="dialog" aria-modal="true" aria-label={t("Sharing")} onClick={(e) => e.stopPropagation()}>
             {confirmSite && siteDraft && <ShareSaveDialog label={t("The site itself")} changes={[
               ...(siteDraft.visibility !== visibility ? [{label: t("Visibility"), before: t(VISIBILITY_LABEL[visibility]), after: t(VISIBILITY_LABEL[siteDraft.visibility])}] : []),
-              ...(siteDraft.editPolicy !== editPolicy ? [{label: t("Who can edit"), before: t(EDIT_POLICY_LABEL[editPolicy]), after: t(EDIT_POLICY_LABEL[siteDraft.editPolicy])}] : []),
             ]} expiryChanged={false} busy={siteSaving} error={error}
               note={t("This changes access through the site address for existing visitors. Separate share links keep their own access rules.")}
               onConfirm={() => void saveSite()} onClose={() => setConfirmSite(false)} />}
@@ -214,6 +281,7 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
             <div className="drawer-tabs" role="tablist" aria-label={t("Sharing")}>
               <button type="button" role="tab" aria-selected={tab === "links"} onClick={() => { if (tab !== "links" && canLeave()) {setTab("links"); setNotice(null); setError(null); } }}>{t("Share links")}</button>
               <button type="button" role="tab" aria-selected={tab === "site"} onClick={() => { if (tab !== "site" && canLeave()) {setTab("site"); setNotice(null); setError(null); } }}>{t("People and the site")}</button>
+              <button type="button" role="tab" aria-selected={tab === "views"} onClick={() => { if (tab !== "views" && canLeave()) {setTab("views"); setNotice(null); setError(null); } }}>{t("View history")}</button>
             </div>
             <div className="drawer-body share-body">
               {loading && <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}
@@ -222,35 +290,13 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
 
               {tab === "links" && <ShareLinks slug={slug} visibility={visibility} onRequestPrivate={goPrivate} onDirtyChange={onDirtyChange} />}
 
+              {tab === "views" && <ShareViews slug={slug} />}
+
               {tab === "site" && (
                 <>
-                  {/* Invite collaborators — one input row + one row of people, no longer a three-tier stacked form block. */}
-                  <section className="share-sec">
-                    <h3 className="share-sec-title">{t("Invite collaborators")}</h3>
-                    <div className="share-add">
-                      <input
-                        id="share-email" type="email" placeholder={t("A colleague's email")} value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") void addPerson(); }}
-                      />
-                      {canManageAdmins && <select aria-label={t("Site role")} value={memberRole} onChange={e=>setMemberRole(e.target.value as "admin" | "editor")}><option value="editor">{t("Collaborator")}</option><option value="admin">{t("Site administrator")}</option></select>}
-                      <button className="btn" onClick={() => void addPerson()} aria-label={t("Add collaborator")}><UserPlus size={14} /></button>
-                    </div>
-                    {people.length > 0 && (
-                      <ul className="share-people">
-                        {people.map((p) => (
-                          <li key={p.userId}>
-                            <span>{p.displayName || p.email || p.userId} · {t(p.role === "admin" ? "Site administrator" : "Collaborator")}</span>
-                            <button className="btn" disabled={p.role === "admin" && !canManageAdmins} aria-label={t("Remove")} onClick={() => void removePerson(p.userId)}>
-                              <Trash2 size={14} />
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </section>
+                  {siteId && <AuthorizationPanel resource={{type:"site",id:siteId}} />}
 
-                  {/* The site itself — two switches compressed into "icon · title/description · dropdown on the right" rows, readable at a glance. */}
+                  {/* Site visibility is separate from grants and share links. */}
                   <section className="share-sec">
                     <h3 className="share-sec-title">{t("The site itself")}</h3>
 
@@ -268,7 +314,7 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
                       </div>
                       <select
                         disabled={siteSaving || loading} id="share-visibility" value={siteDraft?.visibility ?? visibility}
-                        onChange={(e) => stageSite({ visibility: e.target.value as Visibility, editPolicy: siteDraft?.editPolicy ?? editPolicy })}
+                        onChange={(e) => stageSite({ visibility: e.target.value as Visibility })}
                       >
                         <option value="public">{t(VISIBILITY_LABEL.public)}</option>
                         <option value="unlisted">{t(VISIBILITY_LABEL.unlisted)}</option>
@@ -276,20 +322,6 @@ export default function SharePanel({ slug, onOpenChange, canManageAdmins = false
                       </select>
                     </div>
 
-                    <div className="share-row">
-                      <span className="share-row-icon" aria-hidden="true"><Pencil size={16} /></span>
-                      <div className="share-row-text">
-                        <label htmlFor="share-policy">{t("Who can edit")}</label>
-                        <p>{t("Members and editable share links grant editing. Signing in alone does not.")}</p>
-                      </div>
-                      <select
-                        disabled={siteSaving || loading} id="share-policy" value={siteDraft?.editPolicy ?? editPolicy}
-                        onChange={(e) => stageSite({ visibility: siteDraft?.visibility ?? visibility, editPolicy: e.target.value as EditPolicy })}
-                      >
-                        <option value="owner">{t(EDIT_POLICY_LABEL.owner)}</option>
-
-                      </select>
-                    </div>
                     <div className="share-settings-footer">
                       <span className="share-hint">{t(siteDraft ? "Unsaved changes" : "Takes effect after saving.")}</span>
                       <div className="share-link-actions">

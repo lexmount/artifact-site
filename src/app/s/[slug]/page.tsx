@@ -95,6 +95,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     openGraph: { type: "article", siteName: "artifact-site", title, url },
     twitter: { card: "summary", title },
     alternates: { canonical: url },
+    robots: { index: false, follow: false },
   };
 }
 

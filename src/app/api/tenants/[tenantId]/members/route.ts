@@ -9,7 +9,7 @@ export async function GET(request: Request, context: Context) {
     const { tenantId } = await context.params;
     await requireTenantManager(request, tenantId);
     const members = await rbacQuery(
-      "SELECT m.user_id,m.role,u.display_name,u.email FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 ORDER BY u.display_name,u.id",
+      "SELECT m.user_id,m.role,u.display_name,u.email FROM authorization_tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 ORDER BY u.display_name,u.id",
       [tenantId],
     );
     return json({ members });

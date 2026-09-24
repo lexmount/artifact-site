@@ -274,8 +274,10 @@ function AnchoredWorkspaceContent(props: AnchoredWorkspaceProps) {
         onRestoreCurrent={restoreCurrent}
         initialThreadId={initialThreadId}
         onDismissInitialThread={() => { setInitialThreadId(undefined); bridge.clearActiveThread(); }}
+        onTextSelectionChange={bridge.setTextSelection}
         onStartSelection={bridge.ready ? bridge.select : undefined}
         selectedAnchor={bridge.selectedAnchor}
+        selectionPosition={bridge.selectionPosition}
         selectionActive={bridge.isSelecting}
         onCancelSelection={bridge.cancel}
         onLocateThread={(detail) => void navigateToThread(detail)}

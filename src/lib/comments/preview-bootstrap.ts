@@ -8,6 +8,15 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
   let channelId = "";
   let scope: CommentScope | null = null;
   let selecting = false;
+  let textSelectionEnabled = false;
+  let textSelectionLabel = "";
+  let selectionCandidate: CommentAnchor | null = null;
+  let selectionCache: { start: Node; startOffset: number; end: Node; endOffset: number; anchor: CommentAnchor } | null = null;
+  const selectionButton = document.createElement("button");
+  selectionButton.type = "button";
+  selectionButton.dataset.commentSelection = "true";
+  selectionButton.style.cssText = "display:none;position:absolute;pointer-events:auto;padding:7px 12px;min-height:44px;border:0;border-radius:18px;background:#fff;color:#36502a;font:600 14px system-ui;box-shadow:0 2px 6px #0003;cursor:pointer;max-width:calc(100vw - 16px)";
+
   let markers: Marker[] = [];
   let temporary: Marker | null = null;
   let visible = false;
@@ -37,6 +46,7 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
   // DOM readiness is enough for element anchors; images and fonts may still be loading.
   document.addEventListener("DOMContentLoaded", () => emit({ type: "ready", filePath }), { once: true });
   function cancel(notify = false) {
+    selectionButton.remove(); selectionCandidate = null; selectionCache = null;
     selecting = false; down = null; hovered = null; focusedAnchor = null; clearTimeout(focusTimer);
     delete document.documentElement.dataset.artifactCommentSelect;
     highlight.style.display = "none";
@@ -91,10 +101,49 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
     }
     return `html>${parts.join(">")}`;
   }
-  function visibleText(el: Element) {
-    const clone = el.cloneNode(true) as Element;
-    clone.querySelectorAll("script,style,noscript,template,input,textarea,select,form,[hidden],[aria-hidden=\"true\"]").forEach(x => x.remove());
-    return /^(INPUT|TEXTAREA|SELECT|FORM|SCRIPT|STYLE)$/.test(el.tagName) ? "" : (clone.textContent || "").replace(/\s+/g, " ").trim().slice(0, 2000);
+  const excluded = "input,textarea,select,form,button,[contenteditable],[hidden],[aria-hidden='true'],script,style,noscript,template,[data-artifact-comment-overlay]";
+  type TextPoint = { node: Node; offset: number };
+  // One bounded text representation for excerpts, selection context and relocation.
+  // Keep DOM offsets so block/BR separators do not change the actual selected range.
+  function textIndex(el: Element, limit = 100000, legacy = false) {
+    let text = "", visited = 0;
+    // Read-only compatibility with element quotes saved before text selection existed.
+    const omissions = legacy ? "input,textarea,select,form,[hidden],[aria-hidden='true'],script,style,noscript,template,[data-artifact-comment-overlay]" : excluded;
+    const points: (TextPoint | null)[] = [];
+    const displays = new Map<Element, string>();
+    const display = (node: Element) => {
+      if (!displays.has(node)) displays.set(node,getComputedStyle(node).display);
+      return displays.get(node)!;
+    };
+    const blockBoundary = (node: Element) => node.tagName === "BR" ||
+      /^(block|flow-root|list-item|flex|grid|table(?:-.*)?)(?:\s|$)/.test(display(node));
+    const append = (char: string, point: TextPoint | null) => {
+      if (text.length >= limit || (char === " " && (!text || text.endsWith(" ")))) return;
+      text += char; points.push(point);
+    };
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode: node => node instanceof Element && (node.matches(omissions) || (!legacy && display(node) === "none")) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
+    if (el.closest(omissions)) return { text, points };
+    let node: Node | null, previousBlock: Element | null = null;
+    while ((node = walker.nextNode()) && text.length < limit && ++visited < 10000) {
+      if (node instanceof Element) {
+        if (!legacy && blockBoundary(node)) append(" ", null);
+        continue;
+      }
+      let block = node.parentElement;
+      while (!legacy && block && block !== el && !blockBoundary(block)) block = block.parentElement;
+      if (!legacy && previousBlock && block !== previousBlock) append(" ", null);
+      previousBlock = block;
+      const value = node.textContent || "";
+      for (let offset = 0; offset < value.length && text.length < limit; offset++) {
+        append(/\s/.test(value[offset]) ? " " : value[offset], { node, offset });
+      }
+    }
+    return { text, points };
+  }
+  function visibleText(el: Element, limit = 2000) {
+    return textIndex(el, limit).text.trim();
   }
   function candidate(el: Element, start: { x: number; y: number }, end: { x: number; y: number }): CommentAnchor | null {
     const page = Number((el as HTMLElement).dataset.commentPage);
@@ -121,10 +170,122 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
     return { schemaVersion: 1, kind: "html", filePath, selector: selector(el), ...(text ? { quote: { exact: text } } : {}),
       ...(rect.width > 0 && rect.height > 0 ? { rect } : {}), viewport: { width: innerWidth, height: innerHeight } };
   }
+  // Passive text selection never steals pointer events from the artifact. Only the explicit
+  // floating button sends an untrusted candidate; the host and API still authorize creation.
+  let selectionPointer: { x: number; y: number; range: Range } | null = null;
+  function selectedText() {
+    selectionCandidate = null; selectionButton.remove();
+    if (!textSelectionEnabled || selecting || !scope) return;
+    const selection = getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return;
+    const range = selection.getRangeAt(0);
+    const element = (node: Node) => node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+    const start = element(range.startContainer), end = element(range.endContainer);
+    if (!start || !end || layer.contains(start) || layer.contains(end) || start.closest(excluded) || end.closest(excluded)) return;
+    const exact = selection.toString().replace(/\s+/g," ").trim();
+    if (!exact || exact.length > 2000) return;
+    const rect = range.getBoundingClientRect();
+    if (!rect.width || !rect.height || rect.bottom < 0 || rect.top > innerHeight) return;
+    const pdfLayer = start.closest<HTMLElement>("[data-comment-text-page]");
+    const cached = selectionCache;
+    if (cached && cached.start === range.startContainer && cached.startOffset === range.startOffset &&
+        cached.end === range.endContainer && cached.endOffset === range.endOffset) {
+      selectionCandidate = cached.anchor;
+    } else if (pdfLayer) {
+      if (end.closest("[data-comment-text-page]") !== pdfLayer) return;
+      const canvas = pdfLayer.parentElement?.querySelector<HTMLCanvasElement>("canvas[data-comment-page]");
+      if (!canvas) return;
+      const b = bounds(canvas);
+      const anchor = candidate(canvas, {x:Math.max(b.left,rect.left),y:Math.max(b.top,rect.top)}, {x:Math.min(b.left+b.width,rect.right),y:Math.min(b.top+b.height,rect.bottom)});
+      if (anchor?.kind === "pdf") selectionCandidate = {...anchor, quote:{exact}};
+    } else {
+      if (documentMode) return;
+      const common = element(range.commonAncestorContainer);
+      if (!common || common === document.documentElement || common.closest(excluded)) return;
+      const anchor = candidate(common,{x:rect.left,y:rect.top},{x:rect.right,y:rect.bottom});
+      if (anchor?.kind === "html") {
+        const { text, points } = textIndex(common);
+        const indices = points.flatMap((point, i) => point ? [i] : []);
+        // DOM positions are ordered. Two binary searches avoid up to 100k comparePoint calls.
+        const boundary = (after: boolean) => {
+          let low = 0, high = indices.length;
+          while (low < high) {
+            const mid = (low + high) >>> 1, point = points[indices[mid]]!;
+            let relation = range.comparePoint(point.node, point.offset);
+            if (point.node === range.endContainer && point.offset === range.endOffset) relation = 1;
+            if (after ? relation <= 0 : relation < 0) low = mid + 1;
+            else high = mid;
+          }
+          return low;
+        };
+        const from = boundary(false), to = boundary(true);
+        if (from >= to) return;
+        const first = indices[from], last = indices[to - 1];
+        const selected = text.slice(first, last + 1).trim();
+        // Reject selections containing excluded content or beyond the bounded index.
+        if (selected !== exact) return;
+        selectionCandidate = {...anchor,quote:{exact:selected,prefix:text.slice(0,first).trimEnd().slice(-200),suffix:text.slice(last+1).trimStart().slice(0,200)}};
+      }
+    }
+    if (!selectionCandidate) return;
+    selectionCache = { start: range.startContainer, startOffset: range.startOffset,
+      end: range.endContainer, endOffset: range.endOffset, anchor: selectionCandidate };
+    selectionButton.textContent = textSelectionLabel;
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 24 24"); icon.setAttribute("width", "16"); icon.setAttribute("height", "16"); icon.setAttribute("aria-hidden", "true");
+    icon.style.cssText = "vertical-align:-3px;margin-right:6px";
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3h.5a8.5 8.5 0 0 1 8 8v.5Z");
+    path.setAttribute("fill", "none"); path.setAttribute("stroke", "currentColor"); path.setAttribute("stroke-width", "1.8"); path.setAttribute("stroke-linejoin", "round");
+    icon.append(path); selectionButton.prepend(icon);
+    selectionButton.setAttribute("aria-label", textSelectionLabel);
+    selectionButton.style.display = "block";
+    layer.append(selectionButton);
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft ?? 0, top = viewport?.offsetTop ?? 0;
+    const width = viewport?.width ?? innerWidth, height = viewport?.height ?? innerHeight;
+    const pointer = selectionPointer;
+    const atPointer = pointer && pointer.range.startContainer === range.startContainer && pointer.range.startOffset === range.startOffset && pointer.range.endContainer === range.endContainer && pointer.range.endOffset === range.endOffset;
+    selectionButton.style.left = Math.max(left+8,Math.min(atPointer ? pointer.x : rect.left,left+width-selectionButton.offsetWidth-8))+"px";
+    selectionButton.style.top = Math.max(top+8,Math.min((atPointer ? pointer.y : rect.bottom)+8,top+height-selectionButton.offsetHeight-8))+"px";
+  }
+  let selectionTimer: ReturnType<typeof setTimeout> | undefined;
+  const updateSelection = () => { clearTimeout(selectionTimer); selectionTimer=setTimeout(selectedText,80); };
+  document.addEventListener("selectionchange",updateSelection);
+  document.addEventListener("pointerdown", event => {
+    if (!selectionButton.contains(event.target as Node)) selectionPointer = null;
+  });
+  document.addEventListener("pointerup", event => {
+    if (selectionButton.contains(event.target as Node)) return;
+    const selection = getSelection();
+    selectionPointer = event.pointerType === "mouse" && selection?.rangeCount === 1 && !selection.isCollapsed
+      ? { x: event.clientX, y: event.clientY, range: selection.getRangeAt(0).cloneRange() } : null;
+    updateSelection();
+  });
+  document.addEventListener("keydown", event => {
+    if (!selectionButton.contains(event.target as Node)) selectionPointer = null;
+  });
+  const scrollSelection = () => { selectionPointer = null; updateSelection(); };
+  addEventListener("scroll",scrollSelection,true);
+  const resizeSelection = () => { selectionPointer = null; selectionCache = null; htmlLocations.clear(); textLocations.clear(); updateSelection(); };
+  addEventListener("resize",resizeSelection);
+  window.visualViewport?.addEventListener("resize",resizeSelection);
+  window.visualViewport?.addEventListener("scroll",scrollSelection);
+  selectionButton.addEventListener("pointerdown",event=>event.preventDefault());
+  selectionButton.addEventListener("click",event=>{
+    event.preventDefault(); event.stopPropagation();
+    if (!textSelectionEnabled || !selectionCandidate) return;
+    const anchor=selectionCandidate;
+    const rect = selectionButton.getBoundingClientRect();
+    cancel(); getSelection()?.removeAllRanges(); emit({type:"text-selected",anchor,position:{x:rect.left,y:rect.bottom}});
+  });
+  selectionButton.addEventListener("keydown",event=>{
+    if(event.key==="Escape"){event.preventDefault();cancel();}
+  });
   function target(event: PointerEvent) {
     const el = event.target instanceof Element ? event.target : null;
     if (!el || layer.contains(el) || el === document.documentElement) return null;
-    return el.closest("canvas[data-comment-page]") || el;
+    return el.closest("[data-comment-text-page]")?.parentElement?.querySelector("canvas[data-comment-page]") || el.closest("canvas[data-comment-page]") || el;
   }
   document.addEventListener("pointerdown", e => {
     if (!selecting || e.button !== 0) return;
@@ -148,7 +309,7 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
     if (!selecting || !down) return;
     e.preventDefault(); e.stopImmediatePropagation();
     const anchor = candidate(down.element, down, { x: e.clientX, y: e.clientY });
-    if (anchor) { cancel(); emit({ type: "selected", anchor }); }
+    if (anchor) { cancel(); emit({ type: "selected", anchor, position: {x:e.clientX,y:e.clientY} }); }
     down = null;
   }, true);
   // Keep the synthetic click after pointerup from navigating the selected link.
@@ -156,21 +317,48 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
   document.addEventListener("click", e => { if (selecting || suppressClick) { e.preventDefault(); e.stopImmediatePropagation(); suppressClick = false; } }, true);
   document.addEventListener("keydown", e => { if (selecting && e.key === "Escape") { e.preventDefault(); cancel(true); } }, true);
   const htmlLocations = new Map<string, Element | null>();
+  const textLocations = new Map<string, Range | null>();
+  function quoteRange(el:Element, quote:{exact:string;prefix?:string;suffix?:string}) {
+    const { text, points } = textIndex(el);
+    let at=text.indexOf(quote.exact);
+    while(at>=0) {
+      const end=at+quote.exact.length;
+      if((!quote.prefix || text.slice(0,at).trimEnd().endsWith(quote.prefix)) && (!quote.suffix || text.slice(end).trimStart().startsWith(quote.suffix))) {
+        const range=document.createRange(), first=points.slice(at,end).find(Boolean), last=points.slice(at,end).reverse().find(Boolean);
+        if (!first || !last) return null;
+        range.setStart(first.node,first.offset);range.setEnd(last.node,last.offset+1);return range;
+      }
+      at=text.indexOf(quote.exact,at+1);
+    }
+    return null;
+  }
   function locate(anchor: CommentAnchor) {
     if (anchor.kind === "document") return { rect: null, outcome: "missing" as const };
     let el: Element | null = null;
     if (anchor.kind === "html" && anchor.filePath === filePath) {
-      const key = JSON.stringify([anchor.selector, anchor.quote?.exact]);
+      const key = JSON.stringify([anchor.selector, anchor.quote]);
       const cacheable = /^html(?:>[a-z][a-z0-9-]*:nth-of-type\([1-9]\d*\))+$/.test(anchor.selector);
       if (cacheable && htmlLocations.has(key)) el = htmlLocations.get(key)!;
       else {
         try { el = document.querySelector(anchor.selector); } catch { /* Invalid selectors are never executable. */ }
         // Content is verified once between DOM changes; scroll/resize only measure geometry.
-        if (el && anchor.quote && !visibleText(el).includes(anchor.quote.exact)) el = null;
+        if (el && anchor.quote && !visibleText(el,100000).includes(anchor.quote.exact)) {
+          const legacy = anchor.quote.prefix === undefined && anchor.quote.suffix === undefined;
+          // Preserve the old concatenation semantics, not a whitespace-insensitive match.
+          if (!legacy || !textIndex(el,100000,true).text.trim().includes(anchor.quote.exact)) el = null;
+        }
         if (cacheable) htmlLocations.set(key, el);
         if (htmlLocations.size > 101) htmlLocations.delete(htmlLocations.keys().next().value!);
       }
-      if (el && !layer.contains(el)) return { rect: el.getBoundingClientRect(), outcome: "exact" as const };
+      if (el && !layer.contains(el)) {
+        if (anchor.quote && (anchor.quote.prefix !== undefined || anchor.quote.suffix !== undefined)) {
+          if (!textLocations.has(key)) textLocations.set(key,quoteRange(el,anchor.quote));
+          const range=textLocations.get(key);
+          if (textLocations.size>101) textLocations.delete(textLocations.keys().next().value!);
+          return {rect:range?.getBoundingClientRect() ?? null,outcome:range ? "exact" as const : "missing" as const};
+        }
+        return { rect: el.getBoundingClientRect(), outcome: "exact" as const };
+      }
       return { rect: null, outcome: "missing" as const };
     }
     if (anchor.kind === "html") return { rect: null, outcome: "missing" as const };
@@ -235,8 +423,9 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
   addEventListener("scroll", schedule, true); addEventListener("resize", schedule);
   new MutationObserver(records => {
     const changes = records.filter(record => !layer.contains(record.target));
+    if (changes.length) selectionCache = null;
     if (!changes.length) return;
-    if (changes.some(record => record.type !== "attributes" || ["id", "class", "hidden", "aria-hidden"].includes(record.attributeName || ""))) htmlLocations.clear();
+    if (changes.some(record => record.type !== "attributes" || ["id", "class", "style", "contenteditable", "hidden", "aria-hidden"].includes(record.attributeName || ""))) { htmlLocations.clear(); textLocations.clear(); }
     schedule();
   }).observe(document.documentElement, { childList: true, characterData: true, subtree: true, attributes: true });
   addEventListener("message", (event: MessageEvent<PreviewCommentCommand>) => {
@@ -248,7 +437,7 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
       // A host load event can rotate a provisional channel while late image resources finish.
       // Only a parent marker handshake may initialize a new channel; it clears all old state.
       if (msg.command.type !== "markers") return;
-      cancel(); temporary = null; markers = []; visible = false; channelId = ""; scope = null;
+      cancel(); textSelectionEnabled=false; temporary = null; markers = []; visible = false; channelId = ""; scope = null;
     }
     if (channelId && JSON.stringify(msg.scope) !== JSON.stringify(scope)) return;
     if (!channelId) {
@@ -258,6 +447,7 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
     }
     mount();
     switch (msg.command.type) {
+      case "text-selection": textSelectionEnabled = msg.command.enabled === true; textSelectionLabel = String(msg.command.label).slice(0,80); selectedText(); break;
       case "select": cancel(); selecting = true; temporary = null; document.documentElement.dataset.artifactCommentSelect = "true"; break;
       case "cancel": cancel(); temporary = null; layer.querySelector("[data-comment-cluster]")?.remove(); break;
       case "markers":

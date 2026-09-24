@@ -87,5 +87,16 @@ it("offers editors historical main drafts without exposing other share discussio
   const shared = { ...draft, scope: { ...draft.scope, entry: { kind: "share" as const, shareId: "link" } } };
   expect(canRecoverCommentDraft(shared, scope, false, true)).toBe(false);
   expect(canRecoverCommentDraft(shared, scope, true, true)).toBe(true);
-  expect(canRecoverCommentDraft({ ...shared, kind: "create" }, scope, true, true)).toBe(false);
+  expect(canRecoverCommentDraft({ ...shared, kind: "create" }, scope, true, true)).toBe(true);
+  expect(canRecoverCommentDraft({ ...shared, kind: "create" }, scope, false, true)).toBe(false);
+});
+
+it("retains image-only drafts and their format across reload, without credentials", () => {
+  const s=storage(), key=draftBucket("u","s");
+  const rich:CommentDraft={...draft,body:"",bodyFormat:"lightweight",attachments:[{id:"cat_image",name:"screen.png",mimeType:"image/png",byteSize:123,width:20,height:10}]};
+  saveDraft(s,key,rich);
+  expect(readDrafts(s,key)[draftIdentity(rich)]).toEqual(rich);
+  expect(canRecoverCommentDraft(rich,rich.scope,false,false)).toBe(true);
+  s.setItem(key,JSON.stringify({[draftIdentity(rich)]:{...rich,attachments:[{...rich.attachments![0],token:"secret"}]}}));
+  expect(readDrafts(s,key)).toEqual({});
 });

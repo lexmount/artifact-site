@@ -99,7 +99,8 @@ export async function PATCH(
         }
       }
       const grantedBy = session?.userId ?? null;
-      const rows = await q("UPDATE site_shares SET mode=$1,version_id=$2,policy=$3,passcode_hash=$4,expires_at=$5,allow_ai=CASE WHEN $6=1 THEN true ELSE false END,label=$8,revision=revision+1 WHERE id=$7 AND revoked_at IS NULL RETURNING id,revision", [authorization.mode,authorization.versionId,policy,passcodeHash,expiresAt,allowAi ? 1 : 0,share.id,label]);
+      const authorizationChanged = Boolean(grants) || authorization.mode !== current.mode || authorization.versionId !== current.versionId || policy !== current.policy || passcodeHash !== current.passcodeHash || expiresAt !== current.expiresAt || allowAi !== current.allowAi;
+      const rows = await q("UPDATE site_shares SET access_revision=access_revision+$9,mode=$1,version_id=$2,policy=$3,passcode_hash=$4,expires_at=$5,allow_ai=CASE WHEN $6=1 THEN true ELSE false END,label=$8,revision=revision+1 WHERE id=$7 AND revoked_at IS NULL RETURNING id,revision", [authorization.mode,authorization.versionId,policy,passcodeHash,expiresAt,allowAi ? 1 : 0,share.id,label,authorizationChanged ? 1 : 0]);
       if (rows.length && grants) {
         for (const old of existing) {
           if (grants.some(g => g.userId === old.user_id && g.email === old.email)) continue;
@@ -141,7 +142,7 @@ export async function DELETE(
     await assertMutationOrigin(request, site);
 
     const revokedAt = Date.now();
-    await withPermissionCommit(request,site.id,"site.sharing.manage", q => q("UPDATE site_shares SET revoked_at=$1,revision=revision+1 WHERE id=$2 AND revoked_at IS NULL",[revokedAt,share.id])); // idempotent: the UPDATE is guarded on revoked_at IS NULL
+    await withPermissionCommit(request,site.id,"site.sharing.manage", q => q("UPDATE site_shares SET revoked_at=$1,access_revision=access_revision+1,revision=revision+1 WHERE id=$2 AND revoked_at IS NULL",[revokedAt,share.id])); // idempotent: the UPDATE is guarded on revoked_at IS NULL
     await recordSiteAudit(site.id, "share", apiAuditContext(request, actor)); // best-effort, non-atomic
     return json({ ok: true, id: share.id, revokedAt: share.revokedAt ?? revokedAt }, 200);
   } catch (error) {

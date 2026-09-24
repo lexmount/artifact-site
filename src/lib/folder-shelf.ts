@@ -81,9 +81,9 @@ export function __resetShelfSyncForTests(): void {
   syncs.clear();
 }
 
-export function useShelf(userId: string | null): Shelf {
+export function useShelf(userId: string | null, initial?: FolderState): Shelf {
   const local = useLocalJson(FOLDERS_KEY, parseFolders, EMPTY_FOLDERS);
-  const [account, setAccount] = useState<{ userId: string; state: FolderState } | null>(null);
+  const [account, setAccount] = useState<{ userId: string; state: FolderState; source?: FolderState } | null>(null);
   // Loading is DERIVED (signed in, account shelf not yet here for this user) rather than a state
   // flag set inside the effect — no setState-in-effect, and no way for it to disagree with `account`.
 
@@ -92,23 +92,24 @@ export function useShelf(userId: string | null): Shelf {
     if (!userId) return;
     let alive = true;
     (async () => {
-      await syncLocalShelf(userId).catch(() => false);
+      const imported = await syncLocalShelf(userId).catch(() => false);
+      if(initial && !imported) return;
       const result = await call("/api/me/folders", { method: "GET" });
       if (!alive) return;
       // A failed load leaves the browser on its local shelf (still readable, still editable) rather
       // than on an empty account shelf that would look like everything vanished.
-      if (result.ok) setAccount({ userId, state: asState(result.body) });
+      if (result.ok) setAccount({ userId, state: asState(result.body), source: initial });
     })();
     return () => { alive = false; };
-  }, [userId]);
+  }, [userId, initial]);
 
   const reload = useCallback(async (): Promise<ShelfOutcome> => {
     if (!userId) return { outcome: "ok" };
     const r = await call("/api/me/folders", { method: "GET" });
     if (!r.ok) return { outcome: "server", error: r.error };
-    setAccount({ userId, state: asState(r.body) });
+    setAccount({ userId, state: asState(r.body), source: initial });
     return { outcome: "ok" };
-  }, [userId]);
+  }, [userId, initial]);
 
   /** Local mode: read-modify-write against fresh storage so another tab's change is never clobbered. */
   const mutateLocal = useCallback((fn: (s: FolderState) => FolderState): ShelfOutcome => {
@@ -118,7 +119,8 @@ export function useShelf(userId: string | null): Shelf {
     return writeLocal(FOLDERS_KEY, serializeFolders(next)) ? { outcome: "ok" } : { outcome: "storage" };
   }, []);
 
-  const onAccount = Boolean(userId) && account?.userId === userId;
+  const accountState = account?.userId === userId && account.source === initial ? account.state : initial;
+  const onAccount = Boolean(userId && accountState);
 
   const create = useCallback(async (name: string, slug?: string): Promise<ShelfOutcome> => {
     if (!onAccount) {
@@ -162,7 +164,7 @@ export function useShelf(userId: string | null): Shelf {
 
   return {
     mode: onAccount ? "account" : "local",
-    state: onAccount ? account!.state : local,
+    state: onAccount ? accountState! : local,
     loading: Boolean(userId) && !onAccount,
     create, rename, remove, assign,
   };

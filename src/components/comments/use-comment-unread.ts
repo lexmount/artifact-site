@@ -32,38 +32,44 @@ export function useCommentUnread({endpoint,versionId,shareId,aggregate,userId,to
       } catch { /* visit-only progress */ }
     }
     value = {...value,messages:value.messages.filter(message=>message.createdAt>local.current.since && !local.current.seen.includes(message.id))};
+    latest.current=value;
     setState({key,data:value});
   },[key,userId]);
   useEffect(() => {
     pending.current.clear();
     if (!enabled) return;
-    let stopped = false, inFlight=false, failures=0, timer:ReturnType<typeof setTimeout>;
+    let stopped = false, inFlight=false, failures=0, generation=0, queued=false, timer:ReturnType<typeof setTimeout>;
+    let lastStarted = -Infinity, retryAt = 0;
     const storage = `artifact-comment-read:${key}`;
     local.current = {version:1,since:0,seen:[]};
     if (!userId) {
       try {local.current=parseReadProgress(localStorage.getItem(storage)) ?? local.current;} catch { /* visit-only progress */ }
     }
     const poll = async () => {
-      if (stopped || inFlight) return;
+      if (stopped || document.hidden) return;
+      if (Date.now() < retryAt) { clearTimeout(timer); timer=setTimeout(()=>void poll(),retryAt-Date.now()); return; }
+      if (inFlight) { queued=true; return; }
+      const sequence=generation;
       clearTimeout(timer);
       inFlight=true;
-      if (!document.hidden) {
-        const query = new URLSearchParams({versionId,aggregate:String(aggregate)});
-        if (shareId) query.set("shareId",shareId);
-        if (!userId && local.current.since) query.set("since",String(local.current.since));
-        try {
-          let value = await commentRequest<Unread>(`${endpoint}/unread?${query}`,token);
-          if (!stopped && userId && value.initialized === false) value = await commentRequest<Unread>(`${endpoint}/unread`,token,{method:"POST",body:JSON.stringify({versionId,shareId,aggregate,through:value.snapshotAt})});
-          if (!stopped) {failures=0;accept(value);}
-        }
-        catch (error) { failures++; if (!stopped && error instanceof CommentRequestError && [401,403,404].includes(error.status)) setState({key,data:empty}); }
+      lastStarted=Date.now();
+      const query = new URLSearchParams({versionId,aggregate:String(aggregate)});
+      if (shareId) query.set("shareId",shareId);
+      if (!userId && local.current.since) query.set("since",String(local.current.since));
+      try {
+        let value = await commentRequest<Unread>(`${endpoint}/unread?${query}`,token);
+        if (!stopped && sequence===generation && userId && value.initialized === false) value = await commentRequest<Unread>(`${endpoint}/unread`,token,{method:"POST",body:JSON.stringify({versionId,shareId,aggregate,through:value.snapshotAt})});
+        if (!stopped && sequence===generation) {failures=0;retryAt=0;accept(value);}
       }
+      catch (error) { if (sequence===generation) { failures++; retryAt=Date.now()+commentPollDelay(failures); } if (!stopped && sequence===generation && error instanceof CommentRequestError && [401,403,404].includes(error.status)) setState({key,data:empty}); }
       inFlight=false;
-      if (!stopped) timer=setTimeout(poll,failures ? commentPollDelay(failures) : openRef.current ? 15000 : 60000);
+      if (!stopped && queued) { queued=false; queueMicrotask(()=>void poll()); return; }
+      if (!stopped && !document.hidden) timer=setTimeout(poll,failures ? commentPollDelay(failures) : openRef.current ? 15000 : 60000);
     };
     refresh.current=()=>void poll();
     void poll();
-    const wake = () => {clearTimeout(timer); void poll();};
+    const wake = () => {clearTimeout(timer); if (!document.hidden) timer=setTimeout(()=>void poll(),Math.max(0,retryAt-Date.now()));};
+    const focused = () => { if (!inFlight && Date.now()-lastStarted >= 10000) wake(); };
     const storageChanged = (event:StorageEvent) => {
       if (userId || event.key!==storage || !event.newValue) return;
       const saved=parseReadProgress(event.newValue);
@@ -72,9 +78,12 @@ export function useCommentUnread({endpoint,versionId,shareId,aggregate,userId,to
       accept(latest.current);
       wake();
     };
+    const mutation = (event: Event) => { const change=(event as CustomEvent<{endpoint:string;phase:string}>).detail; if(change?.endpoint!==endpoint)return; if(change.phase==="start")generation++; else wake(); };
+    window.addEventListener("artifact:comment-mutation",mutation);
     window.addEventListener("storage",storageChanged);
     document.addEventListener("visibilitychange",wake);
-    return () => {stopped=true;refresh.current=()=>{};clearTimeout(timer);document.removeEventListener("visibilitychange",wake);window.removeEventListener("storage",storageChanged);};
+    window.addEventListener("focus",focused);
+    return () => {stopped=true;window.removeEventListener("artifact:comment-mutation",mutation);refresh.current=()=>{};clearTimeout(timer);document.removeEventListener("visibilitychange",wake);window.removeEventListener("focus",focused);window.removeEventListener("storage",storageChanged);};
   },[key,endpoint,versionId,shareId,aggregate,userId,token,enabled,accept]);
   const acknowledge = useCallback(async (ids:string[],all=false) => {
     if (!enabled || current.current!==key) return;
