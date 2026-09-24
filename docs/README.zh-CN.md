@@ -117,7 +117,7 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 
 - **Skill**: `npx skills add lexmount/artifact-site` — 安装 [agent skill](../skills/artifact-site/SKILL.md)，并告诉 agent 你的服务器地址。
 - **CLI**: `npm install -g @artifact-site/cli` — 需要 Node 24+，示例命令见下方。
-- **MCP**: `https://your-server/mcp` — ChatGPT、Claude 等 MCP 客户端通过服务器的 OAuth 登录连接，无需安装 CLI。
+- **MCP**: `https://your-server/mcp` — ChatGPT、Claude 等 MCP 客户端通过服务器的 OAuth 登录连接，无需安装 CLI。只能启动本地 MCP 服务的客户端，可改用 CLI 的 `artifact-site mcp`。
 
 **CLI 和 MCP 发布默认创建公开分享。** 不分享时使用 `--share none`（CLI）或 `share: false`（MCP）。
 

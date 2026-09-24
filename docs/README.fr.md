@@ -117,7 +117,7 @@ Choisissez le point d’entrée adapté à votre agent :
 
 - **Skill**: `npx skills add lexmount/artifact-site` — installez le [skill pour agents](../skills/artifact-site/SKILL.md) et indiquez à votre agent l’URL de votre serveur.
 - **CLI**: `npm install -g @artifact-site/cli` — nécessite Node 24+ ; exemples de commandes ci-dessous.
-- **MCP**: `https://your-server/mcp` — connectez ChatGPT, Claude ou un autre client MCP via la connexion OAuth du serveur ; aucune installation de la CLI n’est nécessaire.
+- **MCP**: `https://your-server/mcp` — connectez ChatGPT, Claude ou un autre client MCP via la connexion OAuth du serveur ; aucune installation de la CLI n’est nécessaire. Un client qui ne lance que des serveurs MCP locaux peut utiliser `artifact-site mcp` de la CLI à la place.
 
 **La publication via CLI ou MCP crée par défaut un partage public.** Utilisez `--share none` (CLI) ou `share: false` (MCP) pour publier sans partager.
 

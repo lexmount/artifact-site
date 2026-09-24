@@ -1,3 +1,4 @@
+import { mcpTools } from "@/lib/mcp-tools";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import AgentConnectionGuide from "@/components/agent-connection-guide";
@@ -76,4 +77,14 @@ it("shows an editable plaintext token with a separate disabled-until-filled copy
   expect(html).toMatch(/<input[^>]*id="mcp-access-token"[^>]*type="text"/);
   expect(html).toContain('for="mcp-access-token"');
   expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Copy token"/);
+});
+
+it("mentions the CLI's local stdio relay in one sentence, with no second configuration block, and counts the tools", () => {
+  // The relay is an option for clients that cannot take a URL, not a second entry point: a sentence, no config with a token in it.
+  const tokenMode = renderToStaticMarkup(createElement(AgentConnectionGuide, { base: "https://sites.example", oidcEnabled: false }));
+  expect(tokenMode).toContain("can run artifact-site mcp from the CLI instead");
+  expect(tokenMode).not.toContain("npx");
+  expect(guideCommands("https://sites.example")).not.toHaveProperty("stdio");
+  const html = renderToStaticMarkup(createElement(AgentConnectionGuide, { base: "https://sites.example", oidcEnabled: true }));
+  expect(html).toContain(`check that ${mcpTools.length} tools are available`);
 });

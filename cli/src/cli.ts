@@ -84,7 +84,7 @@ Common tasks:
   artifact-site info YOUR_SLUG                     # version and file names
 
 Use --json for agents/scripts and <command> --help for options.
-For remote MCP, connect to https://your-server/mcp; no local MCP command is needed.`);
+For MCP, connect to https://your-server/mcp directly, or run "artifact-site mcp" for a local stdio server.`);
 
   const json = () => Boolean(program.opts().json);
   const base = (): string => {
@@ -363,6 +363,23 @@ For remote MCP, connect to https://your-server/mcp; no local MCP command is need
 
   program.command("delete").description("Delete a site you own").argument("<slug>")
     .action(async (slug: string) => { const r = await client().delete(slug); emit(r, () => io.out(`Deleted ${slug}`)); });
+
+  program.command("mcp")
+    .description("Run a local MCP server over stdio that forwards to this server's /mcp with this CLI's credential")
+    .action(async () => {
+      // From here on stdout carries JSON-RPC only: anything else that would print goes to stderr.
+      const { format } = await import("node:util");
+      console.log = console.info = console.debug = (...args: unknown[]) => { process.stderr.write(format(...args) + "\n"); };
+      // Signed out is a valid state here (the bundled tool list is still served), so neither a
+      // missing nor an invalid address may stop the server from starting.
+      let baseUrl: string | null = null, baseError: string | undefined;
+      try { baseUrl = resolveBaseUrl(program.opts().base); } catch (error) { baseError = (error as Error).message; }
+      const token = baseUrl ? readToken(baseUrl) : null;
+      const { serveMcp } = await import("./mcp.js");
+      const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+      const closed = new Promise<void>((resolve) => { process.stdin.once("end", resolve); process.stdin.once("close", resolve); });
+      await serveMcp({ baseUrl, token, baseError, version: packageVersion(), log: io.err }, new StdioServerTransport(), closed);
+    });
 
   program.command("skill").description("Print the platform's publishing guide for agents (/for-agents.md)")
     .action(async () => io.out(await client(false).skill()));

@@ -1,11 +1,13 @@
-# Remote MCP
+# MCP
 
-CLI and remote MCP offer the same artifact operations. Choose either; MCP never shells out to
+CLI and MCP offer the same artifact operations. Choose either; MCP never shells out to
 the CLI and never reads a path on the server's filesystem supplied by a caller.
 
-## Connect
+MCP is served by the deployment at `https://your-server/mcp`. A client that only starts local
+commands can run the CLI's `artifact-site mcp` instead: a relay to that same endpoint, not a second
+implementation; see [Local MCP (stdio)](#local-mcp-stdio).
 
-Two ways in; both end at the same 22 tools with the account's own permissions.
+## Connect
 
 ### Sign in from the client (OAuth)
 
@@ -66,6 +68,40 @@ no personal site list. Operator-created sites have no anonymous owner and are no
 to anonymous-browser quotas or expiry. Their internal upload ownership key is never a cookie
 or a site access credential. Default anonymous deployments issue no credentials: configure OIDC or
 an operator token before connecting MCP. No token is embedded in a URL.
+
+### Local MCP (stdio)
+
+`artifact-site mcp` (from `@artifact-site/cli`) serves MCP over stdio and forwards `tools/list`,
+`tools/call`, `resources/list` and `resources/read` to `<base>/mcp` with `Authorization: Bearer
+<token>`; tool names, schemas, results and the server instructions are passed through unchanged.
+Address: `--base` > `ARTIFACT_SITE_URL` > the CLI's saved config. Token: `ARTIFACT_SITE_TOKEN` >
+`~/.config/artifact-site/tokens/<host>`. Create a personal token at `/for-agents#mcp`.
+
+```json
+{
+  "mcpServers": {
+    "artifact-site": {
+      "command": "npx",
+      "args": ["-y", "@artifact-site/cli", "mcp"],
+      "env": {
+        "ARTIFACT_SITE_URL": "https://your-server",
+        "ARTIFACT_SITE_TOKEN": "ahp_..."
+      }
+    }
+  }
+}
+```
+
+With no address or token it still starts and lists the tools from a copy bundled in the package
+(generated from the server's registrations; CI fails when it drifts), and each call returns a tool
+error explaining how to sign in — which is what MCP directories need to inspect it. A rejected
+token (401/403) becomes a tool error asking to sign in again; `insufficient_scope` is passed
+through as the server words it; network failures and timeouts are tool errors too. When the
+server cannot be reached, `tools/list` falls back to the bundled copy with a warning on stderr.
+The process never writes anything but JSON-RPC to stdout.
+
+Files still travel as base64 chunks through `upload_write`, exactly as over remote MCP; the local
+server does not read paths on disk. For a whole local folder, the CLI's `publish` is simpler.
 
 ## OAuth
 
@@ -210,10 +246,10 @@ An inaccessible snapshot returns 404; do not silently substitute the latest vers
 
 ## Migration and verification
 
-Remove old stdio configuration (`command: artifact-site`, `args: [mcp]`, ARTIFACT_SITE_URL env).
-Replace it with the remote URL and Authorization header. The `artifact-site mcp` command has
-been removed; other CLI commands remain. Local saved CLI tokens are not automatically read
-by a remote client: supply a personal token explicitly.
+A stdio configuration (`command: artifact-site`, `args: [mcp]`) works again from the CLI release after 0.3.0:
+`artifact-site mcp` is now a relay to the remote `/mcp` (see [Local MCP](#local-mcp-stdio)), so it
+needs a token — `ARTIFACT_SITE_TOKEN` or a saved `artifact-site login` — besides the address.
+Local saved CLI tokens are not read by a remote (URL) client: supply a personal token explicitly.
 
 Clients must refresh tool discovery after upgrading from the 24-tool release. Old MCP tool
 names are removed rather than kept as advertised aliases. Migrate list/search to `find`, identity
@@ -221,7 +257,7 @@ and limits to `connection`, versions/shares to `get_site` includes, rename to ti
 and file download to `export`. Replace the old six-step upload protocol with the flow above.
 CLI `list`, `search` and `rename` remain callable compatibility commands, hidden from top-level help.
 
-Reload the client and confirm exactly 22 tools. In a new conversation, try these requests without
+Reload the client and confirm exactly 26 tools. In a new conversation, try these requests without
 mentioning MCP or a tool name: “What artifacts have I published?”, “Find last week's report”,
 “Read that report”, “Publish this page without sharing it”, and “Rename this artifact”.
 For Chinese hosts, also try “我有哪些作品”, “找一下之前的报告”, and “把这份报告发布成链接”.
