@@ -9,6 +9,10 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 - `ARTIFACT_GLAMA_CLAIM` serves Glama's HTTP ownership challenge at `/.well-known/glama.json`, so an
   operator can claim their deployment's MCP connector listing on glama.ai. Unset, nothing is served.
+- GA4 keeps **campaign attribution**: the landing page view carries `utm_source`, `utm_medium` and
+  `utm_campaign` when each is lowercase `[a-z0-9._-]` of at most 40 characters, so links shared in
+  chat apps or email no longer count as direct traffic. Later events and every other query
+  parameter stay redacted.
 
 ### Fixed
 

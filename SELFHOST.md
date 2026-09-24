@@ -248,6 +248,19 @@ between different root domains, configure cross-domain measurement in GA4's
 Google tag settings and verify linker parameters survive redirects. Sharing a
 measurement ID alone does not merge anonymous users across domains.
 
+Campaign links keep three tags. On the landing URL, `utm_source`, `utm_medium` and
+`utm_campaign` are trimmed and lowercased; each survives only if it then matches
+`[a-z0-9._-]` and is at most 40 characters long. Otherwise that tag alone is dropped
+and its part of the attribution is lost; only a link that loses every tag falls back
+to referrer-based attribution, which for chat apps and email means direct traffic.
+Separate words with `-`: link builders often encode spaces as `+` or `%20`
+(`utm_campaign=spring+sale`), and such values never survive, nor do non-ASCII ones.
+The surviving tags are appended to the first `page_view` of each full page load, so
+GA4 can attribute visits from sources that send no referrer, such as chat apps and
+email. Later page views, other events, the global page context and referrers never
+carry them. Every other query parameter, including `utm_term`, `utm_content` and ad
+click IDs, is still discarded.
+
 The browser sends `page_view`, `ui_click` (upload/login/share/download/update),
 `login`, `sign_up`, `artifact_publish_success`, `artifact_update_success`,
 `artifact_operation_failed`, and `share_link_copy`. `sign_up` means the first
@@ -298,7 +311,10 @@ with GA4 DebugView and the browser Network panel:
   page after engagement.
 - Check `page_view` and automatic `session_start`, `first_visit`, and
   `user_engagement` events when emitted. Their `page_location`, `page_referrer`,
-  and `page_title` must contain only the normalized values.
+  and `page_title` must contain only the normalized values. The one exception is
+  the landing `page_view` (and a `session_start` or `first_visit` derived from it),
+  whose `page_location` may also carry the allowlisted campaign tags: open one test
+  link with them and confirm that no later request repeats them.
 - Inspect the decoded `dl`, `dr`, and `dt` fields in every Google collect request
   (including unload requests). None may contain real slugs, share tokens, query
   credentials, or user-authored titles. Verify this separately from the app's
@@ -309,10 +325,10 @@ with GA4 DebugView and the browser Network panel:
 
 
 Only internal user IDs are sent, cleared on logout. URLs retain the current origin
-but replace artifact slugs/share tokens with fixed route labels. Query parameters,
+but replace artifact slugs/share tokens with fixed route labels. Query parameters
+(apart from the three campaign tags on the landing page view, described above),
 fragments, document titles, file names, content, email and raw error text are not
-sent. This also intentionally omits UTM/query-based attribution in this first version;
-external referrers retain only their origin. Individual artifacts cannot be
+sent. External referrers retain only their origin. Individual artifacts cannot be
 identified from the normalized page path. No preview CSP changes are needed.
 Keep Enhanced Measurement off to preserve these boundaries. Network or browser
 blocking can lose events; this is analytics, not an audit log. Operators should
