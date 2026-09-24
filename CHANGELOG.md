@@ -5,6 +5,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Describe the hosted service as the cloud version across all six README languages, retaining anonymous upload and expiration details.
+
 - Keep the account menu above transformed home-page artwork.
 - Keep new share-link creation at the top of sharing settings and move external visit data into its own tab.
 - Replace the account menu's inline language tiles with a compact checked submenu.

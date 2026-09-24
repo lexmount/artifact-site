@@ -32,9 +32,11 @@ Heute stehen unzählige KI-Agenten zur Auswahl, doch ihre Ergebnisse verteilen s
 
 **artifact-site ist ein selbst gehosteter Arbeitsbereich für Einzelpersonen und Teams, ähnlich wie Claude Artifacts oder OpenAI Sites.** Ihre verschiedenen Agenten erstellen die Inhalte; artifact-site verwaltet sie zentral: Seiten und Dokumente werden zu Links, mit Freigaben, Kommentaren und Feedback, Zugriffskontrolle und Versionsverlauf. Ihre bisherigen Agenten können die Arbeit über die CLI oder MCP weiter bearbeiten, veröffentlichen, durchsuchen und aktualisieren.
 
-> **[Live-Demo ausprobieren](https://artifact-site.app.lexmount.com/)** – keine Installation nötig. Ziehen Sie eine Datei hinein, um sie zu veröffentlichen und einen teilbaren Link zu erhalten. Testen Sie die Demo anonym oder **melden Sie sich mit Google oder GitHub an**, um Ihre Sites zu behalten, in Ordnern zu organisieren und festzulegen, wer jeden Link öffnen darf.
+Sie können artifact-site selbst hosten oder die von Lexmount gehostete Cloud-Version nutzen.
+
+> **[Cloud-Version nutzen](https://artifact-site.app.lexmount.com/)** – von Lexmount gehostet, ohne eigene Bereitstellung. Ziehen Sie eine Datei hinein, um sie zu veröffentlichen und einen teilbaren Link zu erhalten. Laden Sie Dateien ohne Anmeldung hoch oder **melden Sie sich mit Google oder GitHub an**, um Ihre Sites zu behalten, in Ordnern zu organisieren und festzulegen, wer jeden Link öffnen darf.
 >
-> Anonyme Uploads laufen nach einigen Tagen ab. Dies ist eine öffentliche Demo; bitte laden Sie keine vertraulichen Informationen hoch.
+> Anonyme Uploads laufen nach einigen Tagen ab.
 
 <p align="center"><img src="assets/demo.gif" alt="Ein HTML-Dashboard wird auf artifact-site gezogen: Innerhalb von Sekunden wird es zu einem Link, wird in einem Sandbox-Frame dargestellt, und das Freigabe-Panel kopiert den Link" width="820"></p>
 <p align="center"><sub><b>Datei ablegen, Link erhalten, teilen.</b> Sehen Sie Ihre veröffentlichte Arbeit online an und legen Sie in den Freigabeeinstellungen fest, wer sie öffnen darf.</sub></p>
@@ -86,7 +88,7 @@ Gehostete Seiten laufen in einer Sandbox und können die Anmeldesitzung der Plat
 
 ## Schnellstart (lokale Installation)
 
-Zum Ausprobieren nutzen Sie die [Live-Demo](https://artifact-site.app.lexmount.com/) ohne Installation. Für eine lokale Installation führen Sie die folgenden drei Befehle aus. Sie benötigen Git, Make, Bash, Docker 24+ und das Compose-Plugin 2.24+. Unter macOS nutzen Sie Docker Desktop; unter Windows führen Sie die Befehle in WSL2 mit aktivierter WSL-Integration von Docker Desktop aus. Node, eine Domain oder ein Identitätsanbieter sind nicht erforderlich.
+Sie können die [Cloud-Version](https://artifact-site.app.lexmount.com/) ohne Installation nutzen. Für eine lokale Installation führen Sie die folgenden drei Befehle aus. Sie benötigen Git, Make, Bash, Docker 24+ und das Compose-Plugin 2.24+. Unter macOS nutzen Sie Docker Desktop; unter Windows führen Sie die Befehle in WSL2 mit aktivierter WSL-Integration von Docker Desktop aus. Node, eine Domain oder ein Identitätsanbieter sind nicht erforderlich.
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site
