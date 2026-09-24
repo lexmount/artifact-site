@@ -340,6 +340,20 @@ an expired session or lost access can also remove a still-existing private site;
 owners can reopen it from My sites to record it again. Share-link login and passcode prompts keep
 history. No client-visible deletion/access-denial signal is added.
 
+## Claiming the MCP connector on Glama
+
+If your deployment's `/mcp` endpoint is listed on [Glama](https://glama.ai/mcp/connectors) (for
+example because it was published to the MCP Registry), you can claim the listing with Glama's HTTP
+challenge:
+
+1. Copy the `glama_claim_…` value from the claim dialog into `ARTIFACT_GLAMA_CLAIM` and restart the
+   app.
+2. Confirm `https://<your-host>/.well-known/glama.json` returns the JSON (responses are cached for
+   up to 5 minutes).
+3. Choose **Check HTTP challenge** in the dialog.
+
+Keep the variable set afterwards so the ownership stays verified. Empty (the default) serves
+nothing, and a malformed value logs one warning and serves nothing.
 
 ## Navigation performance
 

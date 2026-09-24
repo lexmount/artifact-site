@@ -5,6 +5,13 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+### Added
+
+- `ARTIFACT_GLAMA_CLAIM` serves Glama's HTTP ownership challenge at `/.well-known/glama.json`, so an
+  operator can claim their deployment's MCP connector listing on glama.ai. Unset, nothing is served.
+
+### Fixed
+
 - Fix the viewer pin icon shrinking and add localized mouse-hover/keyboard-focus help without sticky tooltips after touch taps.
 - Align work-list sorting beside search and keep Explore counts right-aligned, with a stacked mobile layout.
 

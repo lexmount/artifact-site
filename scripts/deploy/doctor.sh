@@ -172,6 +172,12 @@ if [ -n "${ARTIFACT_GA_MEASUREMENT_ID:-}" ]; then
   if [[ "${ARTIFACT_GA_HOSTS:-}" == *://* || "${ARTIFACT_GA_HOSTS:-}" == */* ]]; then err "ARTIFACT_GA_HOSTS accepts hostnames, not URLs or paths."; fi
 fi
 
+# Trimmed like src/lib/config.ts, so doctor and the app accept the same values.
+glama_claim="$(printf '%s' "${ARTIFACT_GLAMA_CLAIM:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+if [ -n "$glama_claim" ]; then
+  [[ "$glama_claim" =~ ^glama_claim_[A-Za-z0-9_-]+$ ]] || err "ARTIFACT_GLAMA_CLAIM must be the glama_claim_… value from Glama's claim dialog."
+fi
+
 # ---- optional services ---------------------------------------------------------------------
 if bundled_gotenberg; then ok "document conversion: bundled Gotenberg (${GOTENBERG_IMAGE:-gotenberg/gotenberg:8})";
 elif [ -n "${GOTENBERG_URL:-}" ]; then ok "document conversion: external ${GOTENBERG_URL}";
