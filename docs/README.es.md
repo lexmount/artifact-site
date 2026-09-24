@@ -32,9 +32,11 @@ Hoy hay muchísimos agentes de IA entre los que elegir, pero sus resultados qued
 
 **artifact-site es un espacio de trabajo autoalojado para personas y equipos, parecido a Claude Artifacts u OpenAI Sites.** Tus distintos agentes crean el contenido; artifact-site lo centraliza: convierte páginas y documentos en enlaces para compartirlos, recibir comentarios y sugerencias, controlar el acceso y conservar versiones. Los agentes que ya usas pueden seguir editando, publicando, buscando y actualizando ese trabajo mediante la CLI o MCP.
 
-> **[Prueba la demo en línea](https://artifact-site.app.lexmount.com/)** — sin instalar nada. Arrastra y suelta un archivo para publicarlo y obtener un enlace para compartir. Pruébala de forma anónima o **inicia sesión con Google o GitHub** para conservar tus sitios, organizarlos en carpetas y controlar quién puede abrir cada enlace.
+Puedes alojar artifact-site por tu cuenta o usar la versión en la nube alojada por Lexmount.
+
+> **[Usa la versión en la nube](https://artifact-site.app.lexmount.com/)** — alojada por Lexmount, sin necesidad de desplegarla por tu cuenta. Arrastra y suelta un archivo para publicarlo y obtener un enlace para compartir. Sube archivos sin iniciar sesión o **inicia sesión con Google o GitHub** para conservar tus sitios, organizarlos en carpetas y controlar quién puede abrir cada enlace.
 >
-> Las subidas anónimas caducan a los pocos días. Es una demo pública; por favor, no subas información sensible.
+> Las subidas anónimas caducan a los pocos días.
 
 <p align="center"><img src="assets/demo.gif" alt="Un panel HTML se suelta en artifact-site: en segundos se convierte en un enlace, se muestra en un marco aislado y el panel de compartir copia el enlace" width="820"></p>
 <p align="center"><sub><b>Suelta un archivo, obtén un enlace, compártelo.</b> Consulta tu trabajo publicado en línea y elige quién puede abrirlo en los ajustes de compartir.</sub></p>
@@ -86,7 +88,7 @@ Las páginas alojadas se ejecutan en un entorno aislado y no pueden usar la sesi
 
 ## Inicio rápido (despliegue local)
 
-Para probarlo, usa la [demo en línea](https://artifact-site.app.lexmount.com/) sin instalar nada. Para desplegarlo localmente, ejecuta los tres comandos siguientes. Necesitas Git, Make, Bash, Docker 24+ y el plugin de Compose 2.24+. En macOS, usa Docker Desktop; en Windows, ejecuta los comandos dentro de WSL2 con la integración WSL de Docker Desktop activada. No necesitas instalar Node ni configurar un dominio o proveedor de identidad.
+También puedes usar la [versión en la nube](https://artifact-site.app.lexmount.com/) sin instalar nada. Para desplegarlo localmente, ejecuta los tres comandos siguientes. Necesitas Git, Make, Bash, Docker 24+ y el plugin de Compose 2.24+. En macOS, usa Docker Desktop; en Windows, ejecuta los comandos dentro de WSL2 con la integración WSL de Docker Desktop activada. No necesitas instalar Node ni configurar un dominio o proveedor de identidad.
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site

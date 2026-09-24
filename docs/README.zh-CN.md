@@ -32,9 +32,11 @@
 
 **artifact-site 是个人/团队自托管的作品空间，类似 Claude Artifacts 或 OpenAI Sites。** 你的各种 Agent 负责创作，artifact-site 负责集中管理：把网页和文档变成链接，方便分享、评论反馈、控制访问和保留版本；你原有的Agent 也能通过 CLI 或 MCP 继续编辑、发布、检索和更新作品。
 
-> **[在线体验](https://artifact-site.app.lexmount.com/)，无需安装。** 拖入文件即可发布并获取分享链接。你可以匿名体验，也可以**使用 Google 或 GitHub 登录**，长期保留作品、用文件夹整理，并控制谁能打开每个链接。
+你可以自行部署 artifact-site，也可以直接使用由 Lexmount 托管的云端版。
+
+> **[使用云端版](https://artifact-site.app.lexmount.com/)** — 由 Lexmount 托管，无需自行部署。拖入文件即可发布并获取分享链接。你可以免登录上传，也可以**使用 Google 或 GitHub 登录**，长期保留作品、用文件夹整理，并控制谁能打开每个链接。
 >
-> 匿名发布的内容会在几天后过期。演示站为公共体验环境，请勿上传敏感信息。
+> 匿名发布的内容会在几天后过期。
 
 <p align="center"><img src="assets/demo.zh-CN.gif" alt="把一个 HTML 仪表盘拖进 artifact-site：几秒后变成链接，在沙箱里渲染，分享面板一键复制链接" width="820"></p>
 <p align="center"><sub><b>拖进来，拿链接，分享出去。</b>在线查看刚发布的作品，通过分享设置决定谁能打开。</sub></p>
@@ -86,7 +88,7 @@ Claude Artifacts 和 ChatGPT Sites 将创作与托管分享结合起来。artifa
 
 ## 快速开始（本地部署）
 
-只想试用？直接打开[在线演示](https://artifact-site.app.lexmount.com/)，无需安装。本地部署执行下面三条命令，需要 Git、Make、Bash、Docker 24+ 和 Compose 插件 2.24+。macOS 可使用 Docker Desktop；Windows 请在 WSL2 中执行，并启用 Docker Desktop 的 WSL 集成。无需安装 Node，也无需配置域名或登录服务。
+也可以直接使用[云端版](https://artifact-site.app.lexmount.com/)，无需安装。本地部署执行下面三条命令，需要 Git、Make、Bash、Docker 24+ 和 Compose 插件 2.24+。macOS 可使用 Docker Desktop；Windows 请在 WSL2 中执行，并启用 Docker Desktop 的 WSL 集成。无需安装 Node，也无需配置域名或登录服务。
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site

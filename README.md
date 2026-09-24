@@ -30,9 +30,11 @@ There are now so many AI agents to choose from, but their output is scattered ac
 
 **artifact-site is a self-hosted workspace for individuals and teams, similar to Claude Artifacts or OpenAI Sites.** Your various agents create the work; artifact-site brings it together, turning pages and documents into links for sharing, comments and feedback, access control and version history. The agents you already use can keep editing, publishing, searching and updating that work through the CLI or MCP.
 
-> **[Try the live demo](https://artifact-site.app.lexmount.com/)** — no installation needed. Drag and drop a file to publish it and get a shareable link. Try it anonymously, or **sign in with Google or GitHub** to keep your sites, organize them in folders and control who can open each link.
+You can self-host artifact-site or use the cloud version hosted by Lexmount.
+
+> **[Use the cloud version](https://artifact-site.app.lexmount.com/)** — hosted by Lexmount, with no deployment required. Drag and drop a file to publish it and get a shareable link. Upload without signing in, or **sign in with Google or GitHub** to keep your sites, organize them in folders and control who can open each link.
 >
-> Anonymous uploads expire after a few days. This is a public demo; please do not upload sensitive information.
+> Anonymous uploads expire after a few days.
 
 <p align="center"><img src="docs/assets/demo.gif" alt="Dropping an HTML dashboard onto artifact-site: it becomes a link within seconds, renders in a sandboxed frame, and the sharing panel copies the link" width="820"></p>
 <p align="center"><sub><b>Drop a file, get a link, share it.</b> View your published work online and choose who can open it in the sharing settings.</sub></p>
@@ -84,7 +86,7 @@ Hosted pages run in a sandbox and cannot use the platform's login session. Exter
 
 ## Quick start (local deployment)
 
-To try it, use the [live demo](https://artifact-site.app.lexmount.com/) without installing anything. To deploy locally, run the three commands below. You need Git, Make, Bash, Docker 24+ and the Compose plugin 2.24+. On macOS, use Docker Desktop; on Windows, run the commands inside WSL2 with Docker Desktop’s WSL integration enabled. No Node installation, domain or identity provider is needed.
+You can use the [cloud version](https://artifact-site.app.lexmount.com/) without installing anything. To deploy locally, run the three commands below. You need Git, Make, Bash, Docker 24+ and the Compose plugin 2.24+. On macOS, use Docker Desktop; on Windows, run the commands inside WSL2 with Docker Desktop’s WSL integration enabled. No Node installation, domain or identity provider is needed.
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site
