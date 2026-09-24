@@ -1,0 +1,40 @@
+# Tag `vX.Y.Z` → the hosted MCP endpoint listed in the official MCP Registry
+# (https://registry.modelcontextprotocol.io) as `io.github.lexmount/artifact-site`, version X.Y.Z.
+# server.json at the repository root is the listing; its version is taken from package.json at
+# publish time. Authentication is the GitHub Actions OIDC token of this repository, which the
+# registry maps to the io.github.lexmount/* namespace, so no token is stored here.
+# A version can be published once; to re-run for an existing tag, use "Run workflow" on that tag.
+name: MCP Registry
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish to the MCP Registry
+    # Tags are pushed in the public repository; a matching tag in the private one must not publish.
+    if: github.repository == 'lexmount/artifact-site'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # the registry verifies the OIDC token from this workflow
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set the listing version from package.json
+        run: |
+          version="$(jq -r .version package.json)"
+          jq --arg v "$version" '.version = $v' server.json > server.tmp && mv server.tmp server.json
+          echo "publishing version $version"
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar -xz mcp-publisher
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish
