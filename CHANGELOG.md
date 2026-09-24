@@ -5,7 +5,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
-Nothing yet.
+- Fix the viewer pin icon shrinking and add localized mouse-hover/keyboard-focus help without sticky tooltips after touch taps.
+- Align work-list sorting beside search and keep Explore counts right-aligned, with a stacked mobile layout.
 
 ## 0.3.0 — 2026-09-24
 
