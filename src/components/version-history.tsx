@@ -1,4 +1,5 @@
 "use client";
+import type { SitePermissions } from "@/lib/authz";
 import { useSitePermissions } from "@/lib/site-permissions";
 import { siteFetch as fetch } from "@/lib/share-context";
 
@@ -35,7 +36,9 @@ export function drawerHost(doc?: { body?: HTMLElement | null } | null): HTMLElem
   return doc?.body ?? null;
 }
 
-export default function VersionHistory({ slug, editToken, onBeforeRollback, onRolledBack, onOpenChange, canDownload = false, variant = "button" }: {
+export default function VersionHistory({ slug, editToken, onBeforeRollback, onRolledBack, onOpenChange, canDownload = false, onUpload, variant = "button", initialPermissions }: {
+  onUpload?: () => void;
+  initialPermissions?: SitePermissions;
   canDownload?: boolean;
   slug: string; editToken?: string | null; onRolledBack?: () => void; onBeforeRollback?: () => boolean;
   /** "menu-item" renders the trigger as a row of the viewer's More menu instead of a bar button. */
@@ -45,7 +48,7 @@ export default function VersionHistory({ slug, editToken, onBeforeRollback, onRo
 }) {
   const t = useT();
   const locale = useLocale();
-  const permissions = useSitePermissions(slug);
+  const permissions = useSitePermissions(slug, initialPermissions);
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<VersionInfo[] | null>(null);
   const [officialRevision, setOfficialRevision] = useState<number>();
@@ -152,6 +155,7 @@ export default function VersionHistory({ slug, editToken, onBeforeRollback, onRo
               </button>
             </header>
             <div className="drawer-body">
+              {onUpload && permissions?.canEditContent && <button className="btn" onClick={() => { setOpen(false); onUpload(); }}>{t("Upload new version")}</button>}
               {loading && <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}
               {error && <p className="drawer-error" role="alert">{error}</p>}
               {versions?.map((v, i) => (

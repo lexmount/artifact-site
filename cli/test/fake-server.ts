@@ -192,7 +192,7 @@ export async function startFakeServer(): Promise<FakeServer> {
       const site: Site = { slug: slugOf(), title: r.title ?? Object.keys(r.files)[0].replace(/\.[^.]+$/, ""), kind: kindOf(r.files), visibility: "private", owner: user?.id ?? null, versions: [{ id: id("ver"), createdAt: Date.now(), source: "upload", files: r.files }] };
       if (r.official) { site.officialVersionId = site.versions.at(-1)!.id; site.officialRevision = 1; }
       state.sites.set(site.slug, site);
-      return send(res, 200, { ...siteJson(site), editToken: "edit-" + site.slug, claimToken: user ? undefined : "claim-" + site.slug, notice: user ? undefined : "Anonymous publish: bind an identity next time" });
+      return send(res, 200, { ...siteJson(site), editToken: "edit-" + site.slug, notice: user ? undefined : "Anonymous publish: bind an identity next time" });
     }
 
     // chunked upload

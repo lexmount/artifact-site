@@ -1,3 +1,4 @@
+import { readableVersionFilter } from "@/lib/share";
 import { fail } from "@/lib/comments/store";
 import { listVersions, listShares, rbacQuery } from "@/lib/db";
 import { commentSite, getCommentPermissionsForSite } from "@/lib/comments/service";
@@ -21,16 +22,22 @@ export async function GET(request: Request, context: CommentRouteContext) {
         [site.id],
       ),
     ]);
+    const readableVersion = await readableVersionFilter(request, site);
     return {
-      versions: versions.map((v) => ({
+      versions: versions.map((v, index) => ({
         id: v.id,
         entry: v.entry,
         createdAt: v.createdAt,
-      })),
+        number: versions.length - index,
+      })).filter(v => readableVersion(v.id)),
       shares: shares.map((s) => ({
         id: s.id,
         label: s.label || null,
         source: s.source,
+        createdAt: s.createdAt,
+        mode: s.mode,
+        versionIds: (s.versionId ? [s.versionId] : [...new Set([site.currentVersionId, site.officialVersionId].filter((id): id is string => Boolean(id)))]).filter(readableVersion),
+        active: !site.takenDownAt && s.revokedAt === null && (s.expiresAt === null || s.expiresAt > Date.now()),
       })),
       authors: authors.map((u) => ({
         id: String(u.id),

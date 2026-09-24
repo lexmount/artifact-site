@@ -186,6 +186,17 @@ describe("Recently viewed — card projection", () => {
 
 
 describe("recent navigation and metadata", () => {
+  it.each([{shareToken:"share"}, {versionId:"old"}, {shareToken:"share",versionId:"old"}])("merges known takedown status without replacing pinned context: %j", context => {
+    const stored = entry("a", 7, {...context,title:"Pinned title"});
+    const live = {...toSummary(entry("a", 20)),title:"Latest title",takenDownAt:42};
+    const [item] = recentShelfItems([stored], [live]);
+    expect(item.summary).toEqual({...toSummary(stored),takenDownAt:42});
+    expect(item.href).toBe(recentHref(stored));
+    expect(item.preview).toBe(recentPreview(stored));
+    expect(item.visitedAt).toBe(7);
+    expect(recentShelfItems([stored], [{...live,takenDownAt:null}])[0].summary.takenDownAt).toBeNull();
+    expect(recentShelfItems([stored], [])[0].summary.title).toBe("Pinned title");
+  });
   it("retains document kind, share credentials and pinned versions through storage", () => {
     const value = { ...entry("doc", 123), kind: "document" as const, shareToken: "share_abc", versionId: "v_old" };
     const parsed = parseRecent(serializeRecent([value]))[0];

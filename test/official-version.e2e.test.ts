@@ -243,16 +243,19 @@ describe.skipIf(!base)("official version browser acceptance", () => {
       await page.goto(`${base}/s/${fixture.first.slug}?version=${fixture.first.versionId}`, { waitUntil: "networkidle2" });
       let expected = fixture.next.versionId;
       for (let i = 0; i < 2; i++) {
-        const input = await page.waitForSelector("input[type=file]");
-        await input!.uploadFile(filename);
+        await page.click('.fs-bar button[aria-label="More"]');
+        await clickText("Upload new version");
         await page.waitForSelector("dialog[open]");
+        const input = await page.waitForSelector("dialog input[type=file]");
+        await input!.uploadFile(filename);
+        await page.waitForSelector("dialog footer .solid:not(:disabled)");
         const replaced = page.waitForResponse(res => res.url().includes(`/api/sites/${fixture.first.slug}/versions`) && res.request().method() === "POST");
         await page.click("dialog .solid");
         const response = await replaced;
         expect(new URL(response.url()).searchParams.get("expected_version")).toBe(expected);
         expect(response.status()).toBe(200);
         expected = (await response.json()).versionId;
-        await page.waitForFunction(() => [...document.querySelectorAll("button")].some(b => b.textContent?.trim() === "Upload new version" && !b.disabled));
+        await clickText("Done");
       }
     } finally {
       page.off("request", intercept);

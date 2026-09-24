@@ -11,6 +11,7 @@ import { siteFetch as fetch, withShareContext } from "@/lib/share-context";
 // Every save POSTs to /api/sites/<slug>/edit and produces a new immutable version.
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ComponentType } from "react";
 import Link from "next/link";
+import ViewerBrand from "@/components/viewer-brand";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Save, ExternalLink, Loader2, FileCode2, Copy, Lock, Code2, MousePointerClick, History, Eye } from "lucide-react";
 import { useEditToken, rememberEditToken } from "@/lib/edit-token";
@@ -273,8 +274,7 @@ export default function Editor(props: {
         <header className="editor-bar">
           <div className="editor-bar-left">
             <Link className="brand" href={`/s/${slug}`} aria-label={t("Back to viewer")}>
-              <span aria-hidden="true"><ArrowLeft size={15} /></span>
-              <b>artifact-site</b>
+              <ViewerBrand />
             </Link>
             <div className="header-title" title={title}>{title}</div>
           </div>
@@ -301,8 +301,7 @@ export default function Editor(props: {
       <header className="editor-bar">
         <div className="editor-bar-left">
           <Link className="brand" href={`/s/${slug}`} aria-label={t("Back to viewer")} onClick={guardLeave}>
-            <span aria-hidden="true"><ArrowLeft size={15} /></span>
-            <b>artifact-site</b>
+            <ViewerBrand />
           </Link>
           <div className="header-title" title={title}>{title}</div>
           {/* Editing on top of an old version must stay visible at all times, otherwise users assume they are changing the live version. */}

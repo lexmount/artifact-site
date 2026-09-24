@@ -84,7 +84,7 @@ async function until<T>(probe: () => Promise<T>, ok: (value: T) => boolean, time
   return last;
 }
 
-describe.skipIf(!baseUrl)("home page — thumbnail iframes must not steal focus", () => {
+describe.skipIf(!baseUrl)("progressive thumbnails — hostile artifacts cannot focus or scroll the host", () => {
   let puppeteer: typeof import("puppeteer-core");
   let browser: Browser;
   let thiefSlug: string;
@@ -116,9 +116,9 @@ describe.skipIf(!baseUrl)("home page — thumbnail iframes must not steal focus"
     const page = await englishPage(browser);
     await page.setViewport({ width: 1280, height: 900 });
     await page.goto(`${baseUrl}/explore`, { waitUntil: "networkidle0", timeout: 30_000 });
-    const thumbnail = `iframe[src="/api/preview/${thiefSlug}?thumb=1"]`;
+    const thumbnail = `a[href="/s/${thiefSlug}"] .artifact-cover`;
     await page.waitForSelector(thumbnail);
-    expect(await page.$eval(thumbnail, (frame) => frame.getAttribute("sandbox"))).toBe("");
+
     await page.click('input[type="search"]');
     await page.type('input[type="search"]', "e2e");
     await new Promise((resolve) => setTimeout(resolve, 4_000));
@@ -128,6 +128,7 @@ describe.skipIf(!baseUrl)("home page — thumbnail iframes must not steal focus"
     }));
     expect(state).toEqual({ focused: true, value: "e2e" });
     expect(await page.$(thumbnail)).not.toBeNull(); // do not pass just because the fixture disappeared
+    await page.waitForSelector(`a[href="/s/${thiefSlug}"] [data-preview-state="ready"] iframe`);
     await page.close();
   }, 60_000);
 
@@ -135,16 +136,20 @@ describe.skipIf(!baseUrl)("home page — thumbnail iframes must not steal focus"
     const page = await englishPage(browser);
     await page.setViewport({ width: 1280, height: 900 });
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 30_000 });
-    const thumbnail = `iframe[src="/api/preview/${thiefSlug}?thumb=1"]`;
+    const thumbnail = `a[href="/s/${thiefSlug}"] .artifact-cover`;
     await page.waitForSelector(thumbnail);
-    const initialY = await page.evaluate(() => window.scrollY);
+
     await page.click('button[aria-label="More upload options"]');
     await page.keyboard.press("Escape");
+    await page.$eval(thumbnail, e => e.scrollIntoView({block:"center",behavior:"instant"}));
+    await page.$eval(`a[href="/s/${thiefSlug}"]`, e => (e as HTMLElement).focus({preventScroll:true}));
+    const initialY = await page.evaluate(() => window.scrollY);
+    await page.waitForSelector(`a[href="/s/${thiefSlug}"] [data-preview-state="ready"] iframe`);
     await new Promise((resolve) => setTimeout(resolve, 4_000));
     expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe("IFRAME");
     expect(await page.evaluate(() => window.scrollY)).toBe(initialY);
-    expect(await page.$eval(thumbnail, (frame) => ({ sandbox: frame.getAttribute("sandbox"), inert: frame.hasAttribute("inert") })))
-      .toEqual({ sandbox: "", inert: true });
+    expect(await page.$eval(thumbnail, cover => cover.getAttribute("aria-hidden"))).toBe("true");
+    expect(await page.$eval(`a[href="/s/${thiefSlug}"] iframe`, e => ({sandbox:e.getAttribute("sandbox"),inert:e.hasAttribute("inert"),tab:e.getAttribute("tabindex")}))).toEqual({sandbox:"",inert:true,tab:"-1"});
     await page.close();
   }, 60_000);
 });

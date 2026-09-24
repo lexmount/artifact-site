@@ -13,6 +13,7 @@ import { useT } from "@/components/locale-provider";
 export function useSiteActions(tokens: Readonly<Record<string, string | undefined>>, onMutated?: () => void) {
   const t = useT();
   const router = useRouter();
+  const [deleteRequest, setDeleteRequest] = useState<{ slug: string; title: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [forking, setForking] = useState<string | null>(null);
@@ -73,8 +74,11 @@ export function useSiteActions(tokens: Readonly<Record<string, string | undefine
     }
   }
 
-  async function remove(slug: string, title: string) {
-    if (!window.confirm(t("Delete \"{title}\"? This removes the site and every version of its files.", { title }))) return;
+  function remove(slug: string, title: string) { setDeleteRequest({ slug, title }); }
+
+  async function confirmDelete() {
+    if (!deleteRequest || pending) throw new Error(t("Failed to delete"));
+    const { slug } = deleteRequest;
     setPending(slug);
     try {
       const res = await fetch(`/api/sites/${slug}`, { method: "DELETE", headers: tokenHeader(slug) });
@@ -83,11 +87,11 @@ export function useSiteActions(tokens: Readonly<Record<string, string | undefine
       router.refresh();
       onMutated?.();
     } catch {
-      flash(t("Failed to delete"));
+      throw new Error(t("Failed to delete"));
     } finally {
       setPending(null);
     }
   }
 
-  return { toast, flash, pending, forking, copyLink, fork, rename, remove };
+  return { toast, flash, pending, forking, copyLink, fork, rename, remove, deleteRequest, confirmDelete, cancelDelete: () => setDeleteRequest(null) };
 }

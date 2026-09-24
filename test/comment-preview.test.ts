@@ -15,6 +15,13 @@ describe("preview host boundary", () => {
     expect(acceptPreviewCommentEvent({ source, data }, { ...expected, scope: { ...scope, versionId: "new" } })).toBeNull();
     expect(acceptPreviewCommentEvent({ source, data }, { ...expected, scope: { ...scope, entry: { kind: "share", shareId: "share" } } })).toBeNull();
   });
+  it("requires explicit text-selection capability independently of position picking", () => {
+    const payload = {...data, event:{...data.event,type:"text-selected"}};
+    expect(acceptPreviewCommentEvent({source,data:payload},expected)).toBeNull();
+    expect(acceptPreviewCommentEvent({source,data:payload},{...expected,selecting:false,canSelectText:true})).not.toBeNull();
+    expect(acceptPreviewCommentEvent({source:{} as Window,data:payload},{...expected,canSelectText:true})).toBeNull();
+    expect(acceptPreviewCommentEvent({source,data:payload},{...expected,canSelectText:true,scope:{...scope,versionId:"another"}})).toBeNull();
+  });
   it("rejects unknown keys, oversized/cyclic messages and unsolicited location responses", () => {
     expect(acceptPreviewCommentEvent({ source, data: { ...data, token: "untrusted" } }, expected)).toBeNull();
     expect(acceptPreviewCommentEvent({ source, data: { ...data, junk: "x".repeat(65537) } }, expected)).toBeNull();

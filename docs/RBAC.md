@@ -1,16 +1,25 @@
 # Tenants and artifact authorization
 
-This is the first phase of artifact annotations: authorization and tenant boundaries are implemented;
-comment storage, threads, anchors, notifications and comment UI are not implemented yet.
-`src/lib/rbac.ts` defines the fixed permission catalog. No custom-role engine is introduced.
+Runtime permissions come from the database catalog (`permissions`, `roles`, `role_permissions`)
+and scoped `role_bindings`. Built-in roles are seeded by migration; this release does not expose
+custom-role creation. `src/lib/rbac.ts` provides the typed vocabulary and a pure fixture catalog.
+Comments, reactions and private read progress use the same authorization boundaries.
 
 ## Resources and identities
 
 - Users are global identities. `users.tenant_id` is their default creation destination, not an access grant.
-- `tenants` are resource boundaries. `tenant_members` grants permanent membership (`admin` or `member`).
+- `tenants` are resource boundaries. `tenant_members` records membership only; it has no role column.
+  A `tenant-admin` binding supplies administrative authority.
 - Every site has a `tenant_id` and at most one `owner_id`. Versions, files, shares and audit records
   are scoped through their site. A version from another site is never a valid version selector.
-- `site_members` grants `admin` or `editor` to an existing member of the site's tenant.
+- A site binding grants `viewer`, `commenter`, `editor` or `site-admin`. Its subject is an active
+  user in that site's tenant, all members of that tenant, or global `everyone`. Other tenants
+  and their users cannot be named directly. `everyone` uses null subject IDs, never `*`.
+- `everyone` may receive viewer/commenter/editor, never administrator. Anonymous visitors receive
+  read access only. Logged-in outsiders receive the granted role. Public discovery still follows
+  visibility; global grants alone do not list private/unlisted sites in search or My sites.
+- A tenant binding grants `tenant-admin` to one existing active member. Whole-tenant site-admin
+  grants are allowed, but only someone with `site.admins.manage` can assign or revoke them.
 - Shares grant independent access to an exact site and either its latest version or one fixed version.
   A share does not add a tenant or site membership. External collaboration therefore needs no directory membership.
 - Anonymous browser identities remain cookie-bound. They have no user or tenant-member row.
@@ -23,8 +32,9 @@ comment storage, threads, anchors, notifications and comment UI are not implemen
 | Tenant administrator | Own tenant | Explicit site management access | Yes, in management mode | Tenant members and site roles | Yes, in management mode |
 | Tenant member | Own tenant | May create sites; no blanket access to existing sites | No | No | Only sites they own |
 | Site owner | One site | All versions and editing | Rename, rollback, shares, audit | Site administrators and editors | Transfer to an active member of the same tenant; delete |
-| Site administrator | One site | All versions and editing | Rename, rollback, shares, audit | Editors only | No |
+| Site administrator | One site | All versions and editing | Rename, rollback, shares, audit | Viewers, commenters and editors | No |
 | Site editor | One site | All versions and editing | No | No | No |
+| Site viewer / commenter | One site | Current and official versions; no source export or history | No | No | No |
 | Editable link visitor | One link | Latest version; editing requires sign-in | No | No | No |
 | Commentable link visitor | One link | Read its permitted version | No | No | No |
 | View-only visitor | One link or public main address | Read its permitted version | No | No | No |
@@ -63,9 +73,13 @@ The tenant management API requires a browser session with the tenant administrat
 administrator credential. Delegated publish/OAuth tokens do not inherit tenant or platform administration.
 For ordinary site endpoints, a tenant administrator must supply a nonempty `X-Management-Reason`
 (maximum 500 characters); that explicitly enables scoped management and writes an RBAC audit record.
+Explicit tenant management takes precedence over an ordinary site role, so the elevated action is
+audited. Owners keep their ownership authority even when supplying a reason: their access does not
+require an administrative override. Authorization reads record a management event; authorization
+mutations record one mutation event with the reason instead of duplicating that event.
 The existing platform moderation console retains its audited administrative read path.
 
-Removing tenant membership also removes the user's site membership rows in that tenant. It refuses
+Removing tenant membership deletes the user's individual site bindings in that tenant and tenant-admin binding. It refuses
 removal while the user owns a live site: transfer ownership first. Independent share grants remain
 independent and must be revoked separately if desired. Demotion/removal and account disablement cannot
 leave an active tenant without its last active administrator. Membership changes serialize across replicas.
@@ -87,8 +101,6 @@ platform administrators and explicitly claims this browser's anonymous artifacts
 | `PATCH /api/tenants/:id` | `{name}`; platform-only `{disabled: boolean}` |
 | `GET /api/tenants/:id/members` | Scoped member list |
 | `PUT /api/tenants/:id/members` | `{email, role}` or `{userId, role}`; `admin`, `member`, or `null` to remove |
-| `POST /api/sites/:slug/collaborators` | `{email, role: "admin" \| "editor"}`; owner required for either direction of an admin-role change |
-| `DELETE /api/sites/:slug/collaborators?userId=…` | Remove member; owner required to remove a site admin |
 | `POST/PATCH /api/sites/:slug/shares[/shareId]` | Existing policy fields plus `mode` and `versionId` |
 | `GET /api/me/adopt` | This browser's claimable anonymous sites |
 | `POST /api/me/adopt` | Explicit `{tenantId}`; browser cookie plus destination membership required |
@@ -100,41 +112,112 @@ on commit. MCP forwards explicit share and tenant headers to the same API gates.
 Cookie-authenticated writes retain the same-origin CSRF checks. Agent credentials retain their existing
 scope checks; knowing a tenant ID, site slug or version ID never creates authorization.
 
-## Reserved comment permissions
+## Comment permissions
 
 See [the comment contract](COMMENTS.md) for scope, provenance and adapter requirements.
 
-The catalog reserves read, create, reply, edit/delete/resolve-own, resolve, moderate and aggregate actions.
+The catalog includes read, create, reply, edit/delete/resolve-own, resolve, moderate and aggregate actions.
 Owners/site admins/tenant admins can moderate; no role may edit another author's message body.
 Commenters and editors may read/reply and operate on their own messages. Permanent editors may
 also resolve/reopen others' visible threads through `comment.resolve`; share-derived editors may
-only resolve their own. The permission catalog alone does not verify this provenance. View-only visitors cannot
-read comments. Moderation is separate from changing another author's text.
+only resolve their own. The permission catalog alone does not verify this provenance. View-only share visitors cannot
+read that share discussion. Moderation is separate from changing another author's text.
 
-The next phase must authorize the exact discussion scope before applying these points:
+Every comment operation authorizes the exact discussion scope:
 `site + version + (main scope OR share ID)`. The main address supports its own discussion. Different
 links on the same version never expose each other's threads. Aggregation is a management capability,
-not a separately assignable cross-link access role. No comment route is enabled in this PR.
+not a separately assignable cross-link access role. Main comments set to `off` override ordinary
+commenter grants; managers retain moderation access. A commenter grant qualifies for `members`.
+The existing `login` policy permits signed-in readers to participate, including view-only site readers.
 
-## Migration and rollout
+## Database schema and grant API
 
-1. Back up metadata before deployment. Run a coordinated rollout; do not mix old and new authorization
-   code behind the same service while changing the role model.
-2. The idempotent migration seeds `init` and `anonymous`. Existing accounts and owned sites move to
-   `init`; unowned sites move to `anonymous`. New authenticated accounts join `init` once. Removing a
-   member does not silently re-add them on their next login or process restart.
-3. Legacy collaborator rows become **editors**, losing management rights. Legacy `edit_policy=login`
-   no longer grants editing. Use explicit membership or editable links. Old share rows default to
-   view-only/latest, preserving their admission policy.
-4. Sign-in no longer claims artifacts. Explicit claim atomically changes tenant and owner while
-   preserving the site, versions and shares, attributes anonymous versions and records the move.
-   Legacy edit tokens cannot retain authority after a site has an account owner.
-5. A platform administrator can appoint the first `init` administrator through the members API.
-   No first-login race or automatically elevated account is introduced.
+| Table | Columns and invariants |
+| --- | --- |
+| `permissions` | `code` PK, `resource_type`, `description` |
+| `roles` | `id` PK, `code`, `resource_type`, nullable `tenant_id`, `is_builtin`, `description`, `created_at`; unique code globally for built-ins / within tenant for future custom roles |
+| `role_permissions` | `role_id` + `permission_code` composite PK and FKs |
+| `role_bindings` | `id` PK; `subject_type` + nullable `subject_user_id` / `subject_tenant_id`; `resource_type` + nullable `resource_tenant_id` / `resource_site_id`; `role_id`, `created_by`, `created_at`, `updated_at`, positive `revision` |
 
-SQLite unit and Postgres integration tests cover the same RBAC contract, including concurrent last-admin
-protection, cross-tenant rejection, site role boundaries, external editable links, revocation, fixed-version
-resource credentials and explicit anonymous claim. Existing publication, preview and CLI tests remain required.
+Foreign keys and checks reject ambiguous subject/resource shapes, wrong role scope and global admin
+grants. One direct role per subject/resource is unique. Multiple sources combine; the built-in site
+roles are nested, so the strongest applies. Membership, disablement, link restrictions and comment
+settings are additional gates. Custom roles would require relaxing the built-in binding whitelist and
+replacing the strongest-role projection with an arbitrary permission union; the four-table storage
+layout is already in place, but arbitrary roles are deliberately not exposed yet.
+
+`authorization_tenant_members` and `authorization_site_members` are read-only SQL projections,
+not additional storage tables. They keep authorization and list/search queries on the same bindings.
+No authorization cache is introduced: role catalog and grants are queried on every request, and
+mutations recheck inside the shared RBAC transaction. Revocation is visible to the next request,
+including previously minted preview credentials and in-progress upload commits.
+
+All list APIs accept numeric `cursor` and return up to 50 rows plus `nextCursor`; resource and subject
+pickers accept `q`. Roles and effective permissions are small unpaginated results.
+
+| Endpoint | Contract |
+| --- | --- |
+| `GET /api/authorization/resources?type=site\|tenant&q=…` | Resources caller can administer |
+| `GET /api/authorization/subjects?resourceType=…&resourceId=…&type=user\|tenant&q=…` | Active own-tenant candidates; only the resource tenant for `type=tenant` |
+| `GET /api/authorization/roles?resourceType=…&resourceId=…&subjectType=…` | Assignable role IDs and permission codes |
+| `GET /api/authorization/bindings?resourceType=…&resourceId=…` | Direct bindings, identity, revision and timestamps |
+| `POST /api/authorization/bindings` | `{resource:{type,id},subject:{type,id?},roleId}`; `everyone` omits `id` |
+| `PATCH /api/authorization/bindings/:id` | `{roleId,expectedRevision}` |
+| `DELETE /api/authorization/bindings/:id` | `{expectedRevision}` JSON body |
+| `GET /api/authorization/effective?resourceType=…&resourceId=…` | Current user's site action flags and binding sources, or tenant role |
+
+Stale revisions return 409. Duplicate POST of the same role is idempotent; changing an existing
+binding requires PATCH. Site-admin changes require `site.admins.manage` in both directions.
+Tenant-admin removal cannot remove the last active administrator. Mutations retain CSRF and token
+scope checks and record actor, resource, subject, role and management reason atomically in `rbac_audit`.
+
+Administration → Authorization provides a resource picker and audited management reason.
+Site Sharing → The site itself embeds the same grant editor for owners/site admins; Workspaces
+links to `/authorization`, the same resource picker scoped to the caller's manageable sites and tenants.
+Share-link editing remains separate. Grant management exclusively uses `/api/authorization/*`;
+the old `/api/sites/:slug/collaborators` endpoint is removed. Tenant membership APIs remain active:
+they manage membership and use bindings for the administrator role. `/api/sites/:slug/sharing` now
+accepts and returns visibility only (GET also returns `siteId`); retired `editPolicy` requests are rejected. Permission descriptions expose `canManageGrants`
+in place of `canManageCollaborators` and omit the constant `enforced`/`legacyGrandfathered` flags.
+CLI/MCP use the existing publication/share APIs and do not call the removed collaborator endpoint.
+Agent tokens remain
+credentials acting for their user within granted OAuth scopes; they are not independent principals
+or new resource types in this release.
+
+## Migration and deployment order
+
+The supported direct upgrade starts at 0.2.0 (`19f9c3b`), before the four-table RBAC change.
+There is no requirement to deploy PR1 separately: the next release includes import and cleanup.
+
+1. Back up metadata, drain requests and stop **all** older instances sharing the database,
+   including 0.2.0 instances and pre-release PR1 builds. Different domains do not create separate
+   databases or migration boundaries. A rolling upgrade across this boundary is unsupported.
+2. Start one cleanup-release instance. For 0.2.0 databases, migrations 0007–0008 first import
+   tenant administrators and eligible site roles into bindings. Migration 0009 then drops
+   `site_members`, `site_collaborators`, unused `site_invites`, and `rbac_migrations`, and removes
+   `tenant_members.role`, `sites.edit_policy`, and `sites.claim_token`. For databases that already
+   completed PR1, the import is skipped and existing bindings are preserved. The startup runs
+   inside the migration transaction and replica lock; failure rolls back the upgrade.
+3. Start the remaining new instances after the first starts successfully. Completed migrations
+   are skipped. Neither 0.2.0 nor PR1 binaries may run against the cleaned schema: they still
+   depend on retired columns and can recreate old storage on restart.
+4. Verify grant/revoke operations across domains, comments, shares, anonymous management and
+   CLI/MCP publishing. No manual permission switch is required. Do not roll back an old binary
+   against the cleaned database; recovery requires the pre-upgrade backup and matching version.
+5. Historical numbered migrations 0001–0008 remain immutable. A historical bootstrap runs only
+   before 0007 has been applied, allowing fresh installations and supported historical upgrades
+   to execute the same import before cleanup. Normal restarts never recreate retired storage.
+   `tenant_members` and the binding-backed authorization views remain: they are active data and
+   read projections, not obsolete compatibility tables.
+
+Pre-merge PR1 testing caveat: databases initialized with the intermediate `347d08d` still fail
+0007's checksum guard. Only disposable test databases may be recreated; retain backups and
+reconcile non-disposable data separately. Never remove tracking rows or overwrite checksums to
+rerun the legacy import: that could restore revoked grants.
+
+SQLite and Postgres tests cover migration/restart, scoped binding CRUD, optimistic conflicts, subject
+boundaries, permission union, comments-off precedence, preview downgrade, leaving/rejoining, last-admin
+protection and authorization API/CLI/MCP behavior. Browser acceptance covers the new grant editor.
 
 ### Preview credential confidentiality
 
@@ -221,9 +304,9 @@ again on opening an artifact; the creating-browser cookie remains the normal cre
 ### Authorization consolidation and upgrade compatibility
 
 Production report routes gate named permissions (`site.content.edit`, `site.rename`,
-`site.sharing.manage`, etc.). The old `requireActor` and `requireCapability` gates are removed. Capability ranks remain
-only as a compatibility projection for legacy tests, not an API authorization path. Retired `edit_policy`, `claim_token` and collaborator records
-remain for migration compatibility; they do not grant runtime permissions. Anonymous creator
+`site.sharing.manage`, etc.). The old `requireActor`, `requireCapability`, ranked capability projection, and constant
+enforcement flags are removed. Retired role storage, edit policy and claim receipt columns are
+removed by migration 0009. Anonymous creator
 proof still applies only to ownerless reports in the anonymous tenant. Personal tokens and
 OAuth/MCP connections keep their existing identities, revocation and scope checks.
 

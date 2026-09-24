@@ -25,7 +25,7 @@ const MARKS = {
   },
 } as const;
 
-export default function VisibilityChip({ visibility }: { visibility?: Visibility }) {
+export default function VisibilityChip({ visibility, contextualHint = false }: { visibility?: Visibility; contextualHint?: boolean }) {
   const t = useT();
   // Public needs no reminder; `undefined` means "unknown" (the Recently viewed list cannot
   // reconstruct visibility) and stays silent too — the cost of guessing wrong is letting someone
@@ -34,10 +34,11 @@ export default function VisibilityChip({ visibility }: { visibility?: Visibility
   const mark = MARKS[visibility];
   if (!mark) return null;
   const Icon = mark.icon;
+  const Tag = contextualHint ? "button" : "span";
   return (
-    <span className={`vis-chip vis-${visibility}`} title={t(mark.hint)}>
+    <Tag type={contextualHint ? "button" : undefined} className={`vis-chip vis-${visibility}`} title={contextualHint ? undefined : t(mark.hint)}>
       <Icon size={11} aria-hidden="true" />
       {t(mark.label)}
-    </span>
+    </Tag>
   );
 }

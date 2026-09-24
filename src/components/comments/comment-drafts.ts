@@ -1,15 +1,21 @@
+import { mentionsSchema, type CommentMention } from "@/lib/comments/mention-types";
 import { canShowCommentScope } from "./comment-view";
 import { z } from "zod";
 import {
   COMMENT_LIMITS,
   commentScopeSchema,
+  commentAttachmentSchema,
   commentAnchorSchema,
+  type CommentAttachment,
   type CommentAnchor,
   type CommentScope,
 } from "@/lib/comments/contracts";
 export interface CommentDraft {
   kind: "create" | "reply" | "edit";
   body: string;
+  mentions?: CommentMention[];
+  bodyFormat?: "plain" | "lightweight";
+  attachments?: CommentAttachment[];
   requestId: string | null;
   scope: CommentScope;
   anchor?: CommentAnchor;
@@ -32,7 +38,9 @@ export function draftIdentity(draft: Pick<CommentDraft, "kind" | "scope" | "thre
   ]);
 }
 const draftBase = {
-  body: z.string().max(COMMENT_LIMITS.body), requestId: z.uuid().nullable(),
+  mentions:mentionsSchema.optional(),
+  body: z.string().max(COMMENT_LIMITS.body), bodyFormat:z.enum(["plain","lightweight"]).optional(),
+  attachments:z.array(commentAttachmentSchema).max(4).optional(), requestId: z.uuid().nullable(),
   scope: commentScopeSchema, updatedAt: z.number().finite().nonnegative(),
 };
 const draftId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -54,7 +62,7 @@ export function readDrafts(storage: Storage, bucket: string): Record<string, Com
   } catch { return {}; }
 }
 export function writeDrafts(storage: Storage, bucket: string, drafts: Record<string, CommentDraft>) {
-  const recent = Object.entries(drafts).filter(([, draft]) => draft.body.trim())
+  const recent = Object.entries(drafts).filter(([, draft]) => (draft.body.trim() || draft.attachments?.length))
     .sort((a, b) => b[1].updatedAt - a[1].updatedAt).slice(0, 32)
     .map(([key, draft]) => [key, { ...draft, scope: {
       siteId: draft.scope.siteId, versionId: draft.scope.versionId, entry: draft.scope.entry,
@@ -66,7 +74,7 @@ export function stampDraft(draft: CommentDraft): CommentDraft { return { ...draf
 
 /** Discovery only: restoring or writing still checks the target discussion permissions. */
 export function canRecoverCommentDraft(draft: CommentDraft, scope: CommentScope, aggregate: boolean, readVersions: boolean): boolean {
-  return Boolean(draft.body.trim()) && (canShowCommentScope(draft.scope, scope, false) ||
+  return Boolean((draft.body.trim() || draft.attachments?.length)) && (canShowCommentScope(draft.scope, scope, false) ||
     (scope.entry.kind === "main" && draft.scope.siteId === scope.siteId &&
-      (draft.scope.entry.kind === "main" ? readVersions : aggregate && draft.kind !== "create")));
+      (draft.scope.entry.kind === "main" ? readVersions : aggregate)));
 }

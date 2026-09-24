@@ -1,3 +1,4 @@
+import type { CommentMention } from "./mention-types";
 import "server-only";
 import { createHmac, randomBytes } from "node:crypto";
 import { createId, rbacQuery, type Row } from "@/lib/db";
@@ -32,6 +33,7 @@ export function threadDTO(r: Row): CommentThread {
     id: String(r.id),
     spaceId: String(r.space_id),
     resultVersionId: r.result_version_id == null ? null : String(r.result_version_id),
+    resultAssociation: r.result_associated_by == null ? null : { userId: String(r.result_associated_by), at: Number(r.result_associated_at), actorKind: r.result_actor_kind === "agent" ? "agent" : "user" },
     createdBy: String(r.created_by),
     anchor: parse<CommentAnchor>(r.anchor),
     context: parse<CommentContext>(r.context_snapshot),
@@ -52,6 +54,7 @@ export function threadDTO(r: Row): CommentThread {
   };
 }
 export function messageDTO(r: Row): CommentMessage {
+  const rich = r.rich_content == null ? null : parse<{body:string;format:"plain"|"lightweight";mentions?:CommentMention[]}>(r.rich_content);
   return {
     id: String(r.id),
     threadId: String(r.thread_id),
@@ -67,7 +70,7 @@ export function messageDTO(r: Row): CommentMessage {
     isRoot: Number(r.is_root) === 1,
     content:
       r.deleted_at == null
-        ? { state: "visible", body: String(r.body) }
+        ? { state: "visible", body: rich?.body ?? String(r.body), ...(rich?.mentions?.length ? {mentions:rich.mentions} : {}), ...(rich?.format === "lightweight" ? {format:rich.format} : {}) }
         : {
             state: "deleted",
             deletedAt: Number(r.deleted_at),
@@ -174,4 +177,23 @@ export function cursorDecode(
   } catch {
     return fail(400, "Invalid cursor");
   }
+}
+
+/** Canonical user text; image-only rich bodies must not search the legacy DB sentinel. */
+export function commentSearchBodySql(alias: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(alias)) throw new Error("Invalid SQL alias");
+  // Both PostgreSQL JSONB and SQLite JSON support ->> text extraction.
+  return `COALESCE(${alias}.rich_content ->> 'body', ${alias}.body)`;
+}
+
+/** Match fingerprints persisted before rich fields existed, without accepting content changes. */
+export async function legacyCommentFingerprint(q: RbacQuery, value: Record<string, unknown>): Promise<string | undefined> {
+  if (value.mentions !== undefined && (!Array.isArray(value.mentions) || value.mentions.length)) return undefined;
+  if (value.bodyFormat !== undefined && value.bodyFormat !== "plain") return undefined;
+  if (value.attachmentIds !== undefined && (!Array.isArray(value.attachmentIds) || value.attachmentIds.length)) return undefined;
+  // Zod emits keys in schema order. Keep richFields after body so removing the
+  // additive keys preserves the JSON.stringify order used by persisted legacy digests.
+  const legacy = {...value};
+  delete legacy.bodyFormat; delete legacy.attachmentIds; delete legacy.mentions;
+  return fingerprint(q, legacy);
 }

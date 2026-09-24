@@ -126,6 +126,12 @@ and gated; a deployment that wants them out of the serving process entirely need
 (`ARTIFACT_TEXT_INDEX=off` in the web process), a worklist claim (`SKIP LOCKED`) so several
 workers do not repeat each other, and a policy for reads of un-indexed sites. About 200 lines.
 
+### Notification inbox pagination
+
+The inbox already supports cursor-based Load more. Follow-up work should validate long inboxes,
+filter changes, and concurrent arrivals, and refine the loading/retry experience without moving
+the reader's current position. A numbered pagination UI is not part of the current UX changes.
+
 ## Done
 
 See [CHANGELOG.md](CHANGELOG.md).

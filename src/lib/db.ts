@@ -13,7 +13,6 @@ import type {
   AuditEntry,
   EditMethod,
   EditorKind,
-  EditPolicy,
   InsertShareInput,
   Share,
   ShareGrant,
@@ -22,7 +21,6 @@ import type {
   ShareView,
   Session,
   Site,
-  SiteCollaborator,
   SiteKind,
   SiteOpen,
   SiteSummary,
@@ -79,12 +77,10 @@ export function toSite(row: Row): Site {
     takenDownAt: row.taken_down_at == null ? null : Number(row.taken_down_at),
     takenDownReason: (row.taken_down_reason as string | null) ?? null,
     editToken: (row.edit_token as string | null) ?? "",
-    claimToken: (row.claim_token as string | null) ?? "",
     ownerId: (row.owner_id as string | null) ?? null,
     anonOwnerId: (row.anon_owner_id as string | null) ?? null,
     // Defaults mirror the DDL so a row read before the migration lands still maps cleanly.
     visibility: ((row.visibility as string | null) ?? "public") as Visibility,
-    editPolicy: ((row.edit_policy as string | null) ?? "owner") as EditPolicy,
   };
 }
 
@@ -214,16 +210,6 @@ export function toDeviceGrant(row: Row): DeviceGrant {
   };
 }
 
-export function toCollaborator(row: Row): SiteCollaborator {
-  return {
-    siteId: row.site_id as string,
-    userId: row.user_id as string,
-    role: row.role as "editor" | "admin",
-    grantedBy: (row.granted_by as string | null) ?? null,
-    grantedAt: Number(row.granted_at),
-  };
-}
-
 export function toVersion(row: Row): Version {
   return {
     id: row.id as string,
@@ -292,7 +278,7 @@ export function toSummary(row: Row): SiteSummary {
 
 // --- backend interface + selection -------------------------------------------
 
-export interface InsertSiteInput { tenantId?: string; id: string; slug: string; title: string; kind: SiteKind; editToken: string; claimToken?: string; anonOwnerId?: string | null; ownerId?: string | null; visibility: Visibility }
+export interface InsertSiteInput { tenantId?: string; id: string; slug: string; title: string; kind: SiteKind; editToken: string; anonOwnerId?: string | null; ownerId?: string | null; visibility: Visibility }
 
 /**
  * Who is asking for the site directory — the two ways someone can own a site, mirroring the anon/
@@ -310,6 +296,8 @@ export interface UpsertUserInput {
   authProvider: string; providerSubject: string;
   email?: string | null; emailVerified?: boolean;
   displayName?: string | null; avatarUrl?: string | null;
+  /** Temporary OIDC-cutover bridge; remove after all active accounts have migrated. */
+  migrateVerifiedEmail?: boolean;
 }
 /** `id` is the sha256 of the cookie secret — never the secret itself (see lib/session.ts). */
 export interface CreateSessionInput {
@@ -418,8 +406,8 @@ export interface MetadataStore {
   getVersion(id: string): Promise<Version | null>;
   listVersions(siteId: string): Promise<Version[]>;
   backfillEditTokens(): Promise<number>;
-  /** Create-or-refresh an account, keyed ONLY on (authProvider, providerSubject) — never email,
-   *  which an attacker could pre-register to inherit someone else's grants. Returns the row. */
+  /** Create-or-refresh an account by provider subject, with an explicitly enabled, verified-email
+   *  migration bridge for the OIDC cutover. Returns the row. */
   upsertUser(input: UpsertUserInput): Promise<User & { created: boolean }>;
   getUser(id: string): Promise<User | null>;
   /** Look up by VERIFIED email only — an unverified address is attacker-controllable. */
@@ -436,9 +424,8 @@ export interface MetadataStore {
    * address on their own account and be picked out of this list in that colleague's place.
    */
   searchUsers(q: string, viewerId: string, limit: number): Promise<User[]>;
-  removeCollaborator(siteId: string, userId: string): Promise<void>;
-  updateSiteSharing(siteId: string, visibility: Visibility, editPolicy: EditPolicy): Promise<void>;
-  listCollaborators(siteId: string): Promise<SiteCollaborator[]>;
+  updateSiteVisibility(siteId: string, visibility: Visibility): Promise<void>;
+  listAudienceExcludedUserIds(siteId: string): Promise<string[]>;
 
   // --- share links ---------------------------------------------------------
   createShare(input: InsertShareInput): Promise<Share>;
@@ -667,7 +654,8 @@ export interface SiteTextRow { siteId: string; versionId: string; title: string;
 /** One query token; `prefix` matches every indexed token that starts with it (a lone CJK character against bigrams). */
 export interface SearchToken { text: string; prefix: boolean }
 /** A search hit: the summary columns plus the opening of the body, from which the caller cuts the snippet. */
-export interface SearchHit { slug: string; title: string; kind: SiteKind; visibility: Visibility; takenDownAt: number | null; updatedAt: number; body: string }
+export type SiteRelationship = "owned" | "collaborating" | "anonymous" | "public";
+export interface SearchHit { relationship: SiteRelationship; slug: string; title: string; kind: SiteKind; visibility: Visibility; takenDownAt: number | null; updatedAt: number; body: string }
 
 let storePromise: Promise<MetadataStore> | null = null;
 
@@ -805,14 +793,11 @@ export async function searchUsers(q: string, viewerId: string, limit = 10): Prom
   return (await getStore()).searchUsers(q, viewerId, limit);
 }
 
-export async function removeCollaborator(siteId: string, userId: string): Promise<void> {
-  return (await getStore()).removeCollaborator(siteId, userId);
+export async function updateSiteVisibility(siteId: string, visibility: Visibility): Promise<void> {
+  return (await getStore()).updateSiteVisibility(siteId, visibility);
 }
-export async function updateSiteSharing(siteId: string, visibility: Visibility, editPolicy: EditPolicy): Promise<void> {
-  return (await getStore()).updateSiteSharing(siteId, visibility, editPolicy);
-}
-export async function listCollaborators(siteId: string): Promise<SiteCollaborator[]> {
-  return (await getStore()).listCollaborators(siteId);
+export async function listAudienceExcludedUserIds(siteId: string): Promise<string[]> {
+  return (await getStore()).listAudienceExcludedUserIds(siteId);
 }
 
 // --- share links -------------------------------------------------------------
@@ -1231,7 +1216,7 @@ export function toSiteText(r: Row): SiteTextRow {
   return { siteId: String(r.site_id), versionId: String(r.version_id), title: String(r.title), body: String(r.body), chars: Number(r.chars), extractedAt: Number(r.extracted_at), extractorVersion: Number(r.extractor_version ?? 0) };
 }
 export function toSearchHit(r: Row): SearchHit {
-  return { slug: String(r.slug), title: String(r.title), kind: r.kind as SiteKind, visibility: ((r.visibility as string | null) ?? "public") as Visibility, takenDownAt: r.taken_down_at == null ? null : Number(r.taken_down_at), updatedAt: Number(r.updated_at), body: String(r.body) };
+  return { relationship: r.relationship as SiteRelationship, slug: String(r.slug), title: String(r.title), kind: r.kind as SiteKind, visibility: ((r.visibility as string | null) ?? "public") as Visibility, takenDownAt: r.taken_down_at == null ? null : Number(r.taken_down_at), updatedAt: Number(r.updated_at), body: String(r.body) };
 }
 export function toSettingRow(row: Row): SettingRow {
   return { scope: row.scope as string, key: row.key as string, value: row.value as string, updatedAt: Number(row.updated_at), updatedBy: (row.updated_by as string | null) ?? null };

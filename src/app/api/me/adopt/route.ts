@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       await assertSessionCurrent(q, session);
       if (!await tenantActive("anonymous")) throw new EditForbiddenError("The anonymous tenant is disabled");
       const [member] = await q(
-        "SELECT m.user_id FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.tenant_id=$2 AND t.disabled_at IS NULL",
+        "SELECT m.user_id FROM authorization_tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.tenant_id=$2 AND t.disabled_at IS NULL",
         [session.userId, body.tenantId],
       );
       if (!member)
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
           "Active membership in the destination tenant is required",
         );
       const rows = await q(
-        "UPDATE sites SET owner_id=$1,tenant_id=$2,edit_token='',claim_token=NULL,anon_owner_id=NULL,updated_at=$3 WHERE tenant_id='anonymous' AND anon_owner_id=$4 AND owner_id IS NULL AND deleted_at IS NULL AND taken_down_at IS NULL RETURNING id,slug",
+        "UPDATE sites SET owner_id=$1,tenant_id=$2,edit_token='',anon_owner_id=NULL,updated_at=$3 WHERE tenant_id='anonymous' AND anon_owner_id=$4 AND owner_id IS NULL AND deleted_at IS NULL AND taken_down_at IS NULL RETURNING id,slug",
         [session.userId, body.tenantId, Date.now(), anonId],
       );
       for (const site of rows) {

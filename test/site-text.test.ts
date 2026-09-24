@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zipSync } from "fflate";
-import { closeDbForTests, createEditToken, createId, getSiteBySlug, getSiteText, insertPublishToken, insertSiteWithVersion, setSiteTakenDown, updateSiteSharing, upsertUser} from "@/lib/db";
+import { closeDbForTests, createEditToken, createId, getSiteBySlug, getSiteText, insertPublishToken, insertSiteWithVersion, setSiteTakenDown, updateSiteVisibility, upsertUser} from "@/lib/db";
 import { hashTokenSecret } from "@/lib/publish-token";
 import { createSite, deleteSite, editSite, forkSite, renameSite, rollbackTo } from "@/lib/sites";
 import { setCurrentVersion, upsertSiteText } from "@/lib/db";
@@ -476,7 +476,7 @@ describe("the index follows the current version", () => {
     const owner = await user();
     const siteId = createId("site"); const versionId = createId("ver");
     await writeVersionFiles(siteId, versionId, folderFiles({ "index.html": page("Old", "<p>from before the index existed</p>") }));
-    await insertSiteWithVersion({ id: siteId, slug: "oldsite12345", title: "Old", kind: "single", editToken: createEditToken(), claimToken: createEditToken(), anonOwnerId: null, ownerId: owner, visibility: "private" },
+    await insertSiteWithVersion({ id: siteId, slug: "oldsite12345", title: "Old", kind: "single", editToken: createEditToken(), anonOwnerId: null, ownerId: owner, visibility: "private" },
       { id: versionId, siteId, entry: "index.html", fileCount: 1, byteSize: 10, source: "upload" });
     expect(await searchSites({ userId: owner }, "before", 10)).toEqual([]);
     expect(await backfillSiteTexts({ limit: 5 })).toMatchObject({ indexed: 1, failed: 0, remaining: 0 });
@@ -485,7 +485,7 @@ describe("the index follows the current version", () => {
 
     // A version whose files are unreadable still gets a row (empty body): the worklist moves on.
     const brokenId = createId("site"); const brokenVer = createId("ver");
-    await insertSiteWithVersion({ id: brokenId, slug: "brokensite01", title: "Broken", kind: "single", editToken: createEditToken(), claimToken: createEditToken(), anonOwnerId: null, ownerId: owner, visibility: "private" },
+    await insertSiteWithVersion({ id: brokenId, slug: "brokensite01", title: "Broken", kind: "single", editToken: createEditToken(), anonOwnerId: null, ownerId: owner, visibility: "private" },
       { id: brokenVer, siteId: brokenId, entry: "index.html", fileCount: 1, byteSize: 10, source: "upload" });
     expect(await backfillSiteTexts({ limit: 5 })).toMatchObject({ indexed: 1, failed: 0, remaining: 0 });
     expect((await getSiteText(brokenId))?.body).toBe("");
@@ -519,7 +519,7 @@ describe("who finds what", () => {
     const mine = await createSite({ mode: "paste", html: page("Mine", "<p>zebra notes</p>") }, { ownerId: owner });
     const anon = await createSite({ mode: "paste", html: page("Anon", "<p>zebra sketch</p>") }, { anonOwnerId: "anon_a" });
     const pub = await createSite({ mode: "paste", html: page("Public", "<p>zebra facts</p>") }, { ownerId: other });
-    await updateSiteSharing(pub.site.id, "public", "owner");
+    await updateSiteVisibility(pub.site.id, "public");
     await addCollaborator(mine.site.id, editor);
     await flushTextIndexForTests();
     const slugs = async (viewer: Parameters<typeof searchSites>[0]) => (await searchSites(viewer, "zebra", 10)).map((r) => r.slug).sort();
@@ -599,7 +599,7 @@ describe("GET /api/sites/:slug/text", () => {
     const owner = await user();
     const siteId = createId("site"); const versionId = createId("ver");
     await writeVersionFiles(siteId, versionId, folderFiles({ "index.html": page("Fresh", "<p>not yet indexed</p>") }));
-    await insertSiteWithVersion({ id: siteId, slug: "freshsite001", title: "Fresh", kind: "single", editToken: createEditToken(), claimToken: createEditToken(), anonOwnerId: null, ownerId: owner, visibility: "public" },
+    await insertSiteWithVersion({ id: siteId, slug: "freshsite001", title: "Fresh", kind: "single", editToken: createEditToken(), anonOwnerId: null, ownerId: owner, visibility: "public" },
       { id: versionId, siteId, entry: "index.html", fileCount: 1, byteSize: 10, source: "upload" });
     expect(await getSiteText(siteId)).toBeNull();
     const body = (await (await read("freshsite001")).json()) as { text: string };
@@ -610,7 +610,7 @@ describe("GET /api/sites/:slug/text", () => {
   it("?file returns one file verbatim — text types only, 404 when absent", async () => {
     const owner = await user();
     const { site } = await createSite({ mode: "folder", files: folderFiles({ "index.html": page("App", "<p>ui</p>"), "app.js": "console.log('hi')", "logo.png": "\x89PNG" }) }, { ownerId: owner });
-    await updateSiteSharing(site.id, "public", "owner");
+    await updateSiteVisibility(site.id, "public");
     const credentials = await bearerFor(owner);
     expect((await read(site.slug, {}, "?file=app.js")).status).toBe(403);
     const js = (await (await read(site.slug, credentials, "?file=app.js")).json()) as { text: string; file: string };
@@ -619,7 +619,7 @@ describe("GET /api/sites/:slug/text", () => {
     // Over the 2 MB cap: refused from the range read's total, never read whole.
     const storage = getStorage();
     const big = await createSite({ mode: "folder", files: folderFiles({ "index.html": page("Big", "<p>x</p>"), "data.csv": "a,b\n".repeat(600_000) }) }, { ownerId: owner });
-    await updateSiteSharing(big.site.id, "public", "owner");
+    await updateSiteVisibility(big.site.id, "public");
     const readSpy = vi.spyOn(storage, "read");
     try {
       expect((await read(big.site.slug, credentials, "?file=data.csv")).status).toBe(413);
@@ -628,4 +628,22 @@ describe("GET /api/sites/:slug/text", () => {
     expect((await read(site.slug, credentials, "?file=missing.txt")).status).toBe(404);
     expect((await read(site.slug, credentials, "?file=../index.html")).status).toBe(404);
   });
+});
+
+it("labels ownership separately from visibility in mixed keyword results", async () => {
+  const alice = await user("labels-alice"), bob = await user("labels-bob");
+  const own = (await createSite({ mode: "paste", html: page("Sharedneedle own", "Sharedneedle") }, { ownerId: alice })).site;
+  const other = (await createSite({ mode: "paste", html: page("Sharedneedle public", "Sharedneedle") }, { ownerId: bob })).site;
+  const { updateSiteVisibility } = await import("@/lib/db");
+  await updateSiteVisibility(own.id, "public"); await updateSiteVisibility(other.id, "public");
+  await flushTextIndexForTests();
+  const hits = await searchSites({ userId: alice }, "Sharedneedle", 10);
+  expect(hits.find(h => h.slug === own.slug)).toMatchObject({ relationship: "owned", visibility: "public" });
+  expect(hits.find(h => h.slug === other.slug)).toMatchObject({ relationship: "public", visibility: "public" });
+  expect((await searchSites(undefined, "Sharedneedle", 10)).every(h => h.relationship === "public")).toBe(true);
+  await addCollaborator(other.id, alice);
+  expect((await searchSites({ userId: alice }, "Sharedneedle", 10)).find(h => h.slug === other.slug)?.relationship).toBe("collaborating");
+  expect((await search("Sharedneedle", await bearerFor(alice))).headers.get("cache-control")).toBe("private, no-store");
+  const refused = await search("Sharedneedle", { authorization: "Bearer ahp_invalid" });
+  expect(refused.status).toBe(401);
 });

@@ -1,9 +1,11 @@
+import { mentionsSchema, type CommentMention } from "./mention-types";
 import { z } from "zod";
 
 /** Wire format version, independent of the artifact version being discussed. */
 export const COMMENT_CONTRACT_VERSION = 1 as const;
 export const COMMENT_LIMITS = { body: 10_000, quote: 2_000, selector: 2_000, pageSize: 100 } as const;
-const id = z.string().min(1).max(128);
+export const commentIdSchema = z.string().min(1).max(128);
+const id = commentIdSchema;
 const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const unit = z.number().finite().min(0).max(1);
 const point = z.strictObject({ x: unit, y: unit });
@@ -46,12 +48,18 @@ export type CommentScope = z.infer<typeof commentScopeSchema>;
 export const mainCommentPolicySchema = z.enum(["off", "login", "members"]);
 export type MainCommentPolicy = z.infer<typeof mainCommentPolicySchema>;
 export const DEFAULT_MAIN_COMMENT_POLICY: MainCommentPolicy = "login";
-const body = z.string().trim().min(1).max(COMMENT_LIMITS.body);
+const body = z.string().trim().max(COMMENT_LIMITS.body);
+const richFields = {
+  mentions: mentionsSchema.optional(),
+  bodyFormat: z.enum(["plain", "lightweight"]).optional(),
+  attachmentIds: z.array(commentIdSchema).max(4).refine(ids => new Set(ids).size === ids.length, "Duplicate attachment").optional(),
+};
+const hasContent = (value: {body: string; attachmentIds?: string[]}) => Boolean(value.body.length || value.attachmentIds?.length);
 export const createCommentSchema = z.strictObject({
-  scope: commentScopeSchema, clientRequestId: z.uuid(), anchor: commentAnchorSchema, body,
-});
-export const replyCommentSchema = z.strictObject({ clientRequestId: z.uuid(), body });
-export const editCommentSchema = z.strictObject({ expectedRevision: revision, body });
+  scope: commentScopeSchema, clientRequestId: z.uuid(), anchor: commentAnchorSchema, body, ...richFields,
+}).refine(hasContent, "Comment needs text or an image");
+export const replyCommentSchema = z.strictObject({ clientRequestId: z.uuid(), body, ...richFields }).refine(hasContent, "Comment needs text or an image");
+export const editCommentSchema = z.strictObject({ expectedRevision: revision, body, ...richFields }).refine(value => value.attachmentIds === undefined || hasContent(value), "Comment needs text or an image");
 export const deleteCommentSchema = z.strictObject({ expectedRevision: revision });
 export const resolveCommentSchema = z.strictObject({ expectedRevision: revision, status: z.enum(["open", "resolved"]) });
 export const commentSettingsSchema = z.strictObject({ mainPolicy: mainCommentPolicySchema });
@@ -71,8 +79,10 @@ export interface CommentSpace extends CommentScope { id: string; createdAt: numb
 export interface CommentThread {
   id: string;
   spaceId: string;
-  /** Reserved; no association action is enabled in this release. */
+  /** Optional result association; the original scope and resolution remain unchanged. */
   resultVersionId?: string | null;
+  resultVersionNumber?: number | null;
+  resultAssociation?: { userId: string; at: number; actorKind: "user" | "agent" } | null;
   createdBy: string;
   anchor: CommentAnchor;
   context: CommentContext;
@@ -89,7 +99,15 @@ export const COMMENT_EMOJI = ["👍", "❤️", "🎉", "👀", "🙏", "😄"] 
 /** A validated Unicode emoji sequence; shortcuts do not restrict allowed reactions. */
 export type CommentEmoji = string;
 export interface CommentReaction { emoji: CommentEmoji; count: number; reacted: boolean }
+export const commentAttachmentSchema = z.strictObject({
+  id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), name: z.string().max(255),
+  mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+  byteSize: z.number().int().positive().max(5 * 1024 * 1024),
+  width: z.number().int().positive().max(8192), height: z.number().int().positive().max(8192),
+});
+export type CommentAttachment = z.infer<typeof commentAttachmentSchema>;
 export interface CommentMessage {
+  attachments?: CommentAttachment[];
   reactions?: CommentReaction[];
   id: string;
   threadId: string;
@@ -97,7 +115,7 @@ export interface CommentMessage {
   /** Safe account label; never includes email or uploaded HTML. */
   authorDisplayName?: string | null;
   isRoot: boolean;
-  content: { state: "visible"; body: string } | { state: "deleted"; deletedAt: number; deletedBy: string };
+  content: { state: "visible"; body: string; format?: "plain" | "lightweight"; mentions?: CommentMention[] } | { state: "deleted"; deletedAt: number; deletedBy: string };
   revision: number;
   createdAt: number;
   editedAt: number | null;
@@ -117,20 +135,24 @@ export interface StoredCommentMessage extends CommentMessage {
 }
 export interface CommentPage<T> { total?: number; items: T[]; nextCursor: string | null }
 export interface CommentThreadDetail {
+  searchMatch?: { messageId: string; excerpt: string };
   space: CommentSpace;
   thread: CommentThread;
   messages: CommentPage<CommentMessage>;
   /** Server-derived affordances, never persisted or accepted back as authorization. */
   permissions: {
     canReply: boolean;
+    canAssociateResult?: boolean;
     canResolve: boolean;
     canReopen: boolean;
     messages: Record<string, { canEdit: boolean; canDelete: boolean }>;
   };
 }
+export const associateCommentSchema = z.strictObject({ expectedRevision: revision, versionId: id.nullable() });
+export type AssociateCommentInput = z.infer<typeof associateCommentSchema>;
 export type CommentListFilter =
-  | { kind: "space"; scope: CommentScope; status?: "open" | "resolved"; unread?: boolean; cursor?: string; limit?: number }
-  | { kind: "aggregate"; authorUserId?: string; sort?: "activity" | "newest" | "oldest"; siteId: string; versionId?: string; entry?: CommentScope["entry"]; status?: "open" | "resolved"; unread?: boolean; cursor?: string; limit?: number };
+  | { kind: "space"; scope: CommentScope; status?: "open" | "resolved"; q?: string; participated?: boolean; unread?: boolean; cursor?: string; limit?: number }
+  | { kind: "aggregate"; authorUserId?: string; sort?: "activity" | "newest" | "oldest"; siteId: string; versionId?: string; entry?: CommentScope["entry"]; status?: "open" | "resolved"; q?: string; participated?: boolean; unread?: boolean; cursor?: string; limit?: number };
 /** Site likes and authenticated message emoji use distinct actor and authorization rules. */
 export type ReactionTarget = { kind: "site"; siteId: string } | { kind: "comment_message"; siteId: string; messageId: string };
 export interface AgentCommentBundle {
@@ -147,7 +169,8 @@ export const previewCommentEventSchema = z.strictObject({
   scope: commentScopeSchema,
   event: z.discriminatedUnion("type", [
     z.strictObject({ type: z.literal("ready"), filePath: z.string().min(1).max(1024).optional() }),
-    z.strictObject({ type: z.literal("selected"), anchor: commentAnchorSchema }),
+    z.strictObject({ type: z.literal("selected"), anchor: commentAnchorSchema, position: z.strictObject({ x: z.number().finite(), y: z.number().finite() }).optional() }),
+    z.strictObject({ type: z.literal("text-selected"), anchor: commentAnchorSchema, position: z.strictObject({ x: z.number().finite(), y: z.number().finite() }).optional() }),
     z.strictObject({ type: z.literal("cancelled") }),
     z.strictObject({ type: z.literal("activated"), threadId: id }),
     z.strictObject({ type: z.literal("located"), threadId: id, outcome: z.enum(["exact", "approximate", "missing"]) }),
@@ -156,7 +179,7 @@ export const previewCommentEventSchema = z.strictObject({
 export type PreviewCommentEvent = z.infer<typeof previewCommentEventSchema>;
 export type PreviewCommentCommand = {
   protocol: "artifact-comments"; schemaVersion: 1; channelId: string; scope: CommentScope;
-  command: { type: "select" } | { type: "cancel" } | { type: "markers"; visible: boolean; markers: { threadId: string; anchor: CommentAnchor }[] } | { type: "locate"; threadId: string; anchor: CommentAnchor };
+  command: { type: "text-selection"; enabled: boolean; label: string } | { type: "select" } | { type: "cancel" } | { type: "markers"; visible: boolean; markers: { threadId: string; anchor: CommentAnchor }[] } | { type: "locate"; threadId: string; anchor: CommentAnchor };
 
 };
 
@@ -175,6 +198,8 @@ export const commentListQuerySchema = commentPaginationSchema.extend({
   versionId: id,
   shareId: id.optional(),
   status: z.enum(["open", "resolved"]).optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+  participated: z.literal("true").transform(() => true).optional(),
   unread: z.literal("true").transform(() => true).optional(),
 });
 export const commentAggregateQuerySchema = commentPaginationSchema.extend({
@@ -184,5 +209,7 @@ export const commentAggregateQuerySchema = commentPaginationSchema.extend({
   shareId: id.optional(),
   entry: z.literal("main").optional(),
   status: z.enum(["open", "resolved"]).optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+  participated: z.literal("true").transform(() => true).optional(),
   unread: z.literal("true").transform(() => true).optional(),
 }).refine(value => !(value.shareId && value.entry), "Choose main or a share, not both");

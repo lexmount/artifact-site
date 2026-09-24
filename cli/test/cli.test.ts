@@ -227,7 +227,7 @@ it("supports official publication, replacement, historical designation and clear
   expect(await cli("--json", "publish", path.join(dir, "page.html"), "--official", "--share", "none")).toBe(0);
   const created = lastJson(), slug = created.slug;
   expect(created.officialVersionId).toBeTruthy();
-  expect(await cli("--json", "update", slug, path.join(dir, "page.html"), "--official")).toBe(0);
+  expect(await cli("--json", "update", slug, path.join(dir, "page.html"), "--official", "--expected-version", created.officialVersionId)).toBe(0);
   const updated = lastJson();
   expect(updated.officialVersionId).toBe(updated.versionId);
   expect(updated.officialVersionId).not.toBe(created.officialVersionId);
@@ -238,4 +238,33 @@ it("supports official publication, replacement, historical designation and clear
   expect(lastJson().currentVersionId).toBe(updated.versionId);
   expect(await cli("--json", "official", "clear", slug)).toBe(0);
   expect(lastJson().officialVersionId).toBeNull();
+});
+
+it("routes Agent comment commands and historical reads without exposing share credentials", async () => {
+  const requests: Request[]=[];
+  const factory=(baseUrl:string)=>new ArtifactSiteClient({baseUrl,shareToken:"private-share-token",fetch:async(input,init)=>{
+    const request=new Request(input,init);requests.push(request);
+    return new Response(JSON.stringify({dataTrust:"trusted",items:[],nextCursor:null,text:"historical",url:"/s/site",versionId:"old",truncated:false}),{headers:{"content-type":"application/json"}});
+  }});
+  const exec=(...args:string[])=>run(["--base","http://comments.test","--share-token","private-share-token","--json",...args],io,factory);
+  expect(await exec("comments","list","site","--aggregate","--all-versions","--status","open","--limit","2")).toBe(0);
+  expect(new URL(requests.at(-1)!.url).searchParams.get("allVersions")).toBe("true");
+  expect(await exec("comments","list","site","--version-id","old")).toBe(0);
+  expect(new URL(requests.at(-1)!.url).searchParams.get("versionId")).toBe("old");
+  expect(await exec("comments","read","site","thread")).toBe(0);
+  expect(lastJson().dataTrust).toBe("untrusted");
+  expect(await exec("comments","read","site","thread","--cursor","next-page")).toBe(0);
+  expect(lastJson().dataTrust).toBe("untrusted");
+  expect(new URL(requests.at(-1)!.url).pathname).toBe("/api/sites/site/comments/thread/messages");
+  expect(await exec("comments","context","site","thread")).toBe(0);
+  expect(new URL(requests.at(-1)!.url).pathname).toBe("/api/sites/site/comments/thread/agent-context");
+  expect(requests.at(-1)!.headers.get("x-artifact-share")).toBe("private-share-token");
+  expect(await exec("read","site","--version-id","old")).toBe(0);
+  expect(new URL(requests.at(-1)!.url).searchParams.get("version_id")).toBe("old");
+  const count=requests.length;
+  expect(await exec("comments","list","site","--all-versions")).toBe(2);
+  expect(await exec("comments","read","site","thread","--limit","3")).toBe(2);
+  expect(await exec("update","site","./output")).toBe(2);
+  expect(requests).toHaveLength(count);
+  expect(out.join("\n")).not.toContain("private-share-token");
 });

@@ -15,7 +15,7 @@ it("keeps whole-file evidence short in both the list and conversation", () => {
   const noop = () => {};
   const views = [
     createElement(CommentSummary, { detail, source: "Main", onChoose: noop }),
-    createElement(CommentConversation, { detail, source: "Main", busy: false, onReply: noop, onEdit: noop, onDelete: noop, onResolve: noop, onLocate: noop, onMore: noop, onReact: async () => {} }),
+    createElement(CommentConversation, { detail, endpoint: "/api/sites/test/comments", source: "Main", busy: false, onReply: noop, onEdit: noop, onDelete: noop, onResolve: noop, onLocate: noop, onMore: noop, onReact: async () => {} }),
   ];
   for (const view of views) {
     const html = renderToStaticMarkup(view);
@@ -23,4 +23,14 @@ it("keeps whole-file evidence short in both the list and conversation", () => {
     expect(html).toContain("文".repeat(30) + "…");
     expect(html).not.toContain("文".repeat(31));
   }
+});
+
+it("renders lightweight content as safe React nodes while legacy bodies stay literal", async () => {
+  const {CommentBody}=await import("@/components/comments/comment-body");
+  const body='`code` [link](https://example.com) <img src=x onerror=alert(1)>';
+  const legacy=renderToStaticMarkup(createElement(CommentBody,{body}));
+  expect(legacy).not.toContain("<code>");expect(legacy).not.toContain("<a ");
+  const rich=renderToStaticMarkup(createElement(CommentBody,{body,format:"lightweight"}));
+  expect(rich).toContain("<code>code</code>");expect(rich).toContain('rel="noopener noreferrer"');
+  expect(rich).toContain("&lt;img");expect(rich).not.toContain("<img");
 });

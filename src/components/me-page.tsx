@@ -9,9 +9,11 @@
 // against the server's list (which the server page resolved for this viewer, so the browser's own
 // unlisted and private sites are in it). That list is the only index an anonymous creator has, and
 // the product looked exactly like this before identity existed; identity only adds to it.
+import { useRouter, useSearchParams } from "next/navigation";
+import type { DirectoryPage } from "@/lib/directory-query";
 import AppShell from "@/components/app-shell";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo } from "react";
 import { ArrowUp, Loader2 } from "lucide-react";
 import PublishTokensCard from "@/components/publish-tokens";
 import ConnectedAppsCard from "@/components/connected-apps";
@@ -26,43 +28,23 @@ import { NO_SLUGS, mergeMySites, useOwnerSlugs } from "@/lib/my-sites";
 
 type TabId = "owned" | "collab" | "recent" | "tokens" | "connections";
 
-const subscribeNever = () => () => {};
-
-/** The home page's "All history →" lands on the recent tab: /me?tab=recent. */
-function useWantsRecent(): boolean {
-  return useSyncExternalStore(subscribeNever, () => new URLSearchParams(window.location.search).get("tab") === "recent", () => false);
-}
-
-export default function MePage({ allSites }: { allSites: SiteSummary[] }) {
+export default function MePage({ allSites, directory, userId }: { allSites: SiteSummary[]; directory?: DirectoryPage; userId?: string }) {
   const t = useT();
-  const { user, oidcEnabled, loading } = useAuth();
-  // The anonymous half: what this browser created, filtered to what the server still lists.
+  const auth = useAuth();
+  const user = auth.loading && userId ? {id:userId} : auth.user;
+  const {oidcEnabled} = auth;
+  const loading = auth.loading && !userId;
+  const router = useRouter();
+  const params = useSearchParams();
+  const tab = (params.get("tab") ?? "owned") as TabId;
+  const setPicked = (tab: TabId) => router.push(`/me?tab=${tab}`, {scroll:false});
   const browserSlugs = useOwnerSlugs();
   const mine = useMemo(() => mergeMySites(allSites, browserSlugs, NO_SLUGS), [allSites, browserSlugs]);
-  const [data, setData] = useState<{ owned: SiteSummary[]; collaborating: SiteSummary[] } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [picked, setPicked] = useState<TabId | null>(null);
-  const wantsRecent = useWantsRecent();
-  const tab: TabId = picked ?? (wantsRecent ? "recent" : "owned");
+  const load = useCallback(() => router.refresh(), [router]);
   // Every browser has a view history, signed in or not — the third tab is the same for both.
   const shelf = useRecentShelf(allSites);
   const clearHistory = () => { if (window.confirm(t("Clear your view history? The sites themselves are not affected."))) shelf.clear(); };
 
-
-  const load = useCallback(() => {
-    if (!user) return;
-    fetch("/api/me/sites")
-      .then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error ?? t("Failed to load")))))
-      .then(setData)
-      .catch((e: Error) => setError(e.message));
-  }, [user, t]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // Every owned card gets the manage actions — this list IS the account's ownership, verbatim.
-  const ownedSlugs = useMemo(() => new Set((data?.owned ?? []).map((s) => s.slug)), [data]);
 
   return (
     <AppShell>
@@ -85,7 +67,7 @@ export default function MePage({ allSites }: { allSites: SiteSummary[] }) {
               {tab === "recent"
                 ? shelf.items.length > 0 && <button type="button" className="quiet" onClick={clearHistory}>{t("Clear history")}</button>
                 /* Identity is an addition, never a wall: the sign-in offer sits beside the list, and only where an IdP exists. */
-                : oidcEnabled && <a className="quiet" href={loginHref("/me")}>{t("Sign in to see your sites on every device")}</a>}
+                : oidcEnabled && <a className="quiet" href={loginHref(typeof window === "undefined" ? "/me" : `/me${window.location.search}`)}>{t("Sign in to see your sites on every device")}</a>}
             </span>
           </div>
           <div role="tabpanel" id="me-panel" aria-labelledby={tab === "recent" ? "me-tab-recent" : "me-tab-browser"}>
@@ -103,10 +85,10 @@ export default function MePage({ allSites }: { allSites: SiteSummary[] }) {
           </div>
           <div className="work-tabs" role="tablist" aria-label={t("Account views")}>
             <button type="button" role="tab" id="me-tab-owned" aria-controls="me-panel" aria-selected={tab === "owned"} onClick={() => setPicked("owned")}>
-              {t("Created by me")}{data ? ` · ${data.owned.length}` : ""}
+              {t("Created by me")}{directory?.query.scope === "owned" ? ` · ${directory.counts.all}` : ""}
             </button>
             <button type="button" role="tab" id="me-tab-collab" aria-controls="me-panel" aria-selected={tab === "collab"} onClick={() => setPicked("collab")}>
-              {t("I can edit")}{data ? ` · ${data.collaborating.length}` : ""}
+              {t("I can edit")}{directory?.query.scope === "collab" ? ` · ${directory.counts.all}` : ""}
             </button>
             <button type="button" role="tab" id="me-tab-recent" aria-controls="me-panel" aria-selected={tab === "recent"} onClick={() => setPicked("recent")}>
               {t("Recently viewed")} · {shelf.items.length}
@@ -123,16 +105,7 @@ export default function MePage({ allSites }: { allSites: SiteSummary[] }) {
           </div>
 
           <div role="tabpanel" id="me-panel" aria-labelledby={tab === "owned" || tab === "collab" || tab === "recent" ? `me-tab-${tab}` : undefined} aria-label={tab === "tokens" ? t("Publish tokens") : tab === "connections" ? t("Connected applications") : undefined}>
-            {error && <p className="page-note error" role="alert">{error}</p>}
-            {(tab === "owned" || tab === "collab") && !data && !error && (
-              <p className="page-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>
-            )}
-            {/* onMutated: a delete must re-run load(), or the row just sits there looking not deleted. */}
-            {tab === "owned" && data && <MySites sites={data.owned} serverOwned={ownedSlugs} onMutated={load} />}
-            {/* Collaborations: the same list, every row editable (the server vetted the collaboration),
-                but a collaborator's actions stop at editing — renaming, sharing and deleting settle
-                with the owner, so the menu offers none of them. */}
-            {tab === "collab" && data && <MySites sites={data.collaborating} serverOwned={ownedSlugs} onMutated={load} manage={false} editable />}
+            {(tab === "owned" || tab === "collab") && directory && <MySites key={directory.query.scope} sites={directory.sites} directory={directory} userId={userId} onMutated={load} manage={tab === "owned"} />}
             {tab === "recent" && <RecentList shelf={shelf} />}
             {tab === "tokens" && <div className="account-tool"><PublishTokensCard /></div>}
             {tab === "connections" && <div className="account-tool"><ConnectedAppsCard /></div>}

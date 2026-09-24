@@ -185,12 +185,19 @@ describe("C2b reveal-mode switch", () => {
     expect(block(viewer, '<div className="fs-viewer"', ">")).toContain("data-bar-mode={barMode}");
   });
   it("in manual mode the two 'tidy up in passing' hide paths — drawer closing and focus leaving — go quiet too; only the intro hold and clicking into the artifact remain", () => {
-    const drawer = block(viewer, "const setDrawerOpen", "}, [revealBar, scheduleHide, barMode]);");
+    const drawer = block(viewer, "const setDrawerOpen", "}, [revealBar, scheduleHide, barMode, barPinned]);");
     expect(drawer).toContain('effect === "hide" && modeAutoHides(barMode)');
     const blur = block(viewer, "onBlurCapture=", "}}");
-    expect(blur).toContain("if (modeAutoHides(barMode)) scheduleHide()");
-    // The intro hold is mode-independent: the bar shows itself briefly so people know where it is, then hides.
-    expect(viewer).toContain("scheduleHide(INTRO_HOLD)");
+    expect(blur).toContain("if (!barPinned && modeAutoHides(barMode)) scheduleHide()");
+    // The intro hold runs only on mount; changing pin state must not restart it.
+    expect(viewer).toContain("if (!barPinnedStore.getSnapshot()) scheduleHide(INTRO_HOLD)");
+  });
+  it("a pinned bar opts out of incidental hiding but the explicit handle still collapses it", () => {
+    expect(viewer).toContain("barPinnedStore.set(next)");
+    expect(viewer).toContain('aria-pressed={barPinned}');
+    expect(viewer).not.toContain("if (!barPinned) scheduleHide(INTRO_HOLD)");
+    expect(viewer).toContain("if (!barPinned && document.activeElement === frameRef.current) collapseBar()");
+    expect(viewer).toContain('onClick={() => { if (barOpen) { setHasCollapsed(true); collapseBar(); } else { revealBar(); } }}');
   });
   it("any mode change cancels the dwell timer — including the path where another tab changes the preference (storage event), not just this page's switch", () => {
     // An effect keyed on barMode alone covers both paths; putting it in switchBarMode covers only this page's.
@@ -253,7 +260,7 @@ describe("C5 the More menu folds the secondary actions", () => {
     // The bare artifact moved into the menu with the design pass; Edit and the device switch stay on the bar.
     expect(menuBlock).not.toContain('aria-label={t("Preview device")}');
     expect(menuBlock).toContain('{t("Open in new window")}');
-    expect(menuBlock).toContain('<VersionHistory variant="menu-item"');
+    expect(menuBlock).toContain('variant="menu-item"');
     expect(menuBlock).toContain('onClick={fork}');
     expect(menuBlock).toContain('className="menu-item fs-mode"');
     // The owner's window into the administration log sits in the menu too, owner-only.
@@ -351,10 +358,13 @@ describe("C5 no action on the bar may go missing", () => {
       // this address and send it", but it is the artifact's own address, and on a private site the
       // recipient only gets a 404.
       ["新窗口打开", '{t("Open in new window")}'],
-      ["私有站点的分享指引", 'className="share-hint"'],
+      ["上传新版本", "onClick={openUpload}"],
     ] as const) {
       expect(controls, `.controls 里缺少动作：${action}`).toContain(marker);
 
+    expect(viewer).not.toContain('name="private" selector=".fs-bar .vis-private"');
+    expect(viewer).toContain('<SharePanel key={slug}');
+    expect(controls).not.toContain('className="share-hint"');
     // The visibility chip hangs in the title area, not the button area: it answers "what kind of
     // site is this", not "what can I do to it". Pin the position itself — moved into the button pile
     // it reads as one more clickable action.
@@ -459,7 +469,7 @@ describe("full-screen preview: the action bar pushes the artifact aside instead 
   // pushed-down artifact — before the push the bar covered that area anyway, so this never showed.
   it("when open the whole layer ignores pointer events; only the bar and the handle take them", () => {
     expect(ruleBody(".fs-chrome.is-open")).toContain("pointer-events: none");
-    expect(cssCode).toContain(".fs-chrome.is-open .fs-bar, .fs-chrome.is-open .fs-handle { pointer-events: auto; }");
+    expect(cssCode).toContain(".fs-chrome.is-open .fs-bar, .fs-handle[data-open=\"true\"] { pointer-events: auto; }");
     // The collapsed state is the opposite: the hot zone is the only way to summon the bar, so it must take events then.
     expect(cssCode).not.toContain(".fs-chrome { pointer-events: none");
   });
@@ -494,7 +504,7 @@ describe("full-screen preview: the action bar pushes the artifact aside instead 
       expect(blocks.some((b) => b.includes("var(--fs-slide-out)")), `${sel} 收起时应用 --fs-slide-out`).toBe(true);
     }
     expect(cssCode).toMatch(/\.fs-chrome\.is-open \.fs-bar \{[^}]*transition: top var\(--fs-slide\) linear/);
-    expect(cssCode).toMatch(/\.fs-chrome\.is-open \.fs-handle \{[^}]*transition: top var\(--fs-slide\) linear/);
+    expect(cssCode).toMatch(/\.fs-handle\[data-open="true"\] \{[^}]*transition: top var\(--fs-slide\) linear/);
   });
 
   it("under prefers-reduced-motion it snaps into place, with no half-second full-screen shift", () => {

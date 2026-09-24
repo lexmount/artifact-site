@@ -47,6 +47,125 @@ describe.skipIf(!enabled)("sandbox comment selection in Chrome", () => {
     const at2 = await count(); await command({ type: "select" }); await frame.click("input");
     expect(JSON.stringify(await next("selected", at2))).not.toContain("PRIVATE_VALUE");
   });
+  it("offers an authorized text-selection action, preserves quote context and excludes forms", async () => {
+    const frame = page.frames().find(x => x.url().endsWith("/frame"))!;
+    await command({type:"cancel"});
+    const select = async (selector:string) => frame.$eval(selector,el=>{
+      const range=document.createRange();range.selectNodeContents(el);
+      const selection=getSelection()!;selection.removeAllRanges();selection.addRange(range);
+    });
+    await select("#target");
+    await command({type:"text-selection",enabled:false,label:"Add comment"});
+    expect(await frame.$("[data-comment-selection]")).toBeNull();
+    await command({type:"text-selection",enabled:true,label:"Add comment"});
+    await frame.waitForSelector("[data-comment-selection]");
+    const at=await count();await frame.focus("[data-comment-selection]");await page.keyboard.press("Enter");
+    const event=await next("text-selected",at);
+    expect(event.anchor).toMatchObject({kind:"html",quote:{exact:"Original target",prefix:"",suffix:""}});
+    const located=await count();await command({type:"locate",threadId:"text",anchor:event.anchor});
+    expect((await next("located",located)).outcome).toBe("exact");
+    await select("textarea");await command({type:"text-selection",enabled:true,label:"Add comment"});
+    expect(await frame.$("[data-comment-selection]")).toBeNull();
+    await command({type:"text-selection",enabled:false,label:""});
+    await frame.evaluate(()=>getSelection()?.removeAllRanges());
+  });
+  it("locates selected words beyond the old excerpt limit and across inline nodes", async () => {
+    const frame=page.frames().find(x=>x.url().endsWith("/frame"))!;
+    await command({type:"cancel"});await command({type:"text-selection",enabled:true,label:"Add comment"});
+    await frame.evaluate(()=>{
+      const paragraph=document.createElement("p");paragraph.id="long-quote";
+      paragraph.append(document.createTextNode("earlier ".repeat(310)));
+      const span=document.createElement("span");span.textContent="chosen words";paragraph.append(span,document.createTextNode(" after"));
+      document.body.prepend(paragraph);span.scrollIntoView();
+      const range=document.createRange();range.setStart(span.firstChild!,0);range.setEnd(paragraph.lastChild!,6);
+      getSelection()!.removeAllRanges();getSelection()!.addRange(range);
+    });
+    await frame.waitForSelector("[data-comment-selection]");
+    const at=await count();await frame.click("[data-comment-selection]");const event=await next("text-selected",at);
+    expect(event.anchor).toMatchObject({kind:"html",quote:{exact:"chosen words after",suffix:""}});
+    const located=await count();await command({type:"locate",threadId:"long-quote",anchor:event.anchor});
+    expect((await next("located",located)).outcome).toBe("exact");
+    await command({type:"cancel"});await command({type:"text-selection",enabled:false,label:""});
+    await frame.evaluate(()=>{document.querySelector("#long-quote")?.remove();scrollTo(0,0);});
+  });
+  it.each([
+    ["paragraphs", "<p>foo</p><p>bar</p>", "foo bar"],
+    ["inline divs", '<div style="display:inline">foo</div><div style="display:inline">bar</div>', "foobar"],
+    ["block spans", '<span style="display:block">foo</span><span style="display:block">bar</span>', "foo bar"],
+    ["line break", "line1<br>line2", "line1 line2"],
+    ["disclosure", "<details open><summary>Heading</summary>Content</details>", "Heading Content"],
+    ["excluded neighbours", "Click <button>private</button> to continue<i contenteditable>secret</i>", "to continue"],
+  ])("relocates selections across %s with consistent context", async (_name, html, exact) => {
+    const frame = page.frames().find(x => x.url().endsWith("/frame"))!;
+    await command({type:"cancel"});
+    await frame.evaluate(html => {
+      const el = document.createElement("div"); el.id = "review-selection"; el.innerHTML = html;
+      el.style.margin = "50px"; document.body.prepend(el); el.scrollIntoView();
+      const range = document.createRange();
+      if (el.querySelector("button")) { range.setStart(el.childNodes[2],1); range.setEnd(el.childNodes[2],12); }
+      else range.selectNodeContents(el);
+      getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    }, html);
+    await command({type:"text-selection",enabled:true,label:"Add comment"});
+    await frame.waitForSelector("[data-comment-selection]");
+    const at = await count(); await frame.click("[data-comment-selection]");
+    const event = await next("text-selected", at);
+    expect(event.anchor).toMatchObject({kind:"html",quote:{exact}});
+    expect(JSON.stringify(event.anchor)).not.toMatch(/private|secret/);
+    if (_name === "excluded neighbours") expect(event.anchor).toMatchObject({quote:{prefix:"Click",suffix:""}});
+    const located = await count(); await command({type:"locate",threadId:"review-selection",anchor:event.anchor});
+    expect((await next("located",located)).outcome).toBe("exact");
+    await command({type:"cancel"});await command({type:"text-selection",enabled:false,label:""});
+    await frame.evaluate(()=>{document.querySelector("#review-selection")?.remove();scrollTo(0,0);});
+  });
+  it("keeps legacy element quotes compatible without weakening new selection quotes", async () => {
+    const frame = page.frames().find(x => x.url().endsWith("/frame"))!;
+    await command({type:"markers",markers:[],visible:false});await next("ready",0);
+    await frame.evaluate(() => {
+      const el=document.createElement("section");el.id="legacy";el.innerHTML="line1<br>line2";
+      document.body.prepend(el);
+    });
+    const base={schemaVersion:1,kind:"html",filePath:"index.html",selector:"#legacy",viewport:{width:800,height:600}};
+    for (const [quote,outcome] of [
+      [{exact:"line1line2"},"exact"],
+      [{exact:"line1line2",prefix:"",suffix:""},"missing"],
+      [{exact:"line1 line2",prefix:"",suffix:""},"exact"],
+      [{exact:"line 1line2"},"missing"],
+    ] as const) {
+      const at=await count();await command({type:"locate",threadId:"legacy",anchor:{...base,quote}});
+      expect((await next("located",at)).outcome).toBe(outcome);
+    }
+    await command({type:"cancel"});await frame.evaluate(()=>document.querySelector("#legacy")?.remove());
+  });
+  it("bounds selection DOM comparisons and refreshes geometry after resizing", async () => {
+    const frame=page.frames().find(x=>x.url().endsWith("/frame"))!;
+    await command({type:"cancel"});
+    await frame.evaluate(()=>{
+      const el=document.createElement("p");el.id="bounded-selection";
+      el.append(document.createTextNode("prefix ".repeat(9000)));
+      const chosen=document.createElement("span");chosen.textContent="chosen";el.append(chosen,document.createTextNode(" words"));document.body.prepend(el);
+      chosen.scrollIntoView({block:"center"});
+      const state=window as unknown as {comparisons:number; restoreComparison:()=>void};state.comparisons=0;
+      const original=Range.prototype.comparePoint;
+      Range.prototype.comparePoint=function(node,offset){state.comparisons++;return original.call(this,node,offset);};
+      state.restoreComparison=()=>{Range.prototype.comparePoint=original;};
+      const range=document.createRange();range.setStart(chosen.firstChild!,0);range.setEnd(el.lastChild!,6);
+      getSelection()!.removeAllRanges();getSelection()!.addRange(range);
+    });
+    await command({type:"text-selection",enabled:true,label:"Add comment"});await frame.waitForSelector("[data-comment-selection]");
+    const initialComparisons=await frame.evaluate(()=>(window as unknown as {comparisons:number}).comparisons);
+    expect(initialComparisons).toBeLessThan(100);
+    await page.$eval("iframe",el=>el.style.width="700px");
+    await frame.waitForFunction(()=>innerWidth===700);
+    await frame.$eval("#bounded-selection span",el=>el.scrollIntoView({block:"center"}));
+    await frame.waitForFunction(before=>(window as unknown as {comparisons:number}).comparisons>before,{},initialComparisons);
+    await frame.waitForSelector("[data-comment-selection]");
+    const at=await count();await frame.click("[data-comment-selection]");
+    expect((await next("text-selected",at)).anchor).toMatchObject({viewport:{width:700},quote:{exact:"chosen words"}});
+    await command({type:"cancel"});await command({type:"text-selection",enabled:false,label:""});
+    await frame.evaluate(()=>{(window as unknown as {restoreComparison:()=>void}).restoreComparison();document.querySelector("#bounded-selection")?.remove();scrollTo(0,0);});
+    await page.$eval("iframe",el=>el.style.width="800px");
+  });
   it("captures PDF geometry after long scrolling, reverses page rotation and relocates", async () => {
     const frame = page.frames().find(x => x.url().endsWith("/frame"))!;
     await frame.$eval("canvas", el => el.scrollIntoView());
@@ -115,29 +234,29 @@ describe.skipIf(!enabled)("sandbox comment selection in Chrome", () => {
   it("reuses verified HTML targets for geometry-only repaints and invalidates changed text", async () => {
     const frame = page.frames().find(x => x.url().endsWith("/frame"))!;
     await frame.evaluate(() => {
-      const state = window as unknown as { commentClones: number };
-      state.commentClones = 0;
-      const clone = Node.prototype.cloneNode;
-      Node.prototype.cloneNode = function(deep) { state.commentClones++; return clone.call(this, deep); };
+      const state = window as unknown as { commentTextScans: number };
+      state.commentTextScans = 0;
+      const scan = document.createTreeWalker.bind(document);
+      document.createTreeWalker = (...args) => { state.commentTextScans++; return scan(...args); };
     });
     await command({ type: "cancel" });
     const anchor = { schemaVersion: 1, kind: "html", filePath: "index.html", selector: "html>body:nth-of-type(1)>a:nth-of-type(1)", quote: { exact: "Original" }, viewport: { width: 800, height: 600 } };
     await command({ type: "markers", visible: true, markers: [{ threadId: "cache", anchor }] });
     await frame.waitForSelector("[data-artifact-comment-overlay] button");
-    const readClones = () => frame.evaluate(() => (window as unknown as { commentClones: number }).commentClones);
-    await frame.waitForFunction(() => (window as unknown as { commentClones: number }).commentClones > 0);
-    const before = await readClones();
+    const readScans = () => frame.evaluate(() => (window as unknown as { commentTextScans: number }).commentTextScans);
+    await frame.waitForFunction(() => (window as unknown as { commentTextScans: number }).commentTextScans > 0);
+    const before = await readScans();
     await frame.evaluate(async () => {
       for (let i = 0; i < 4; i++) {
-        document.querySelector<HTMLElement>("#target")!.style.marginLeft = `${40 + i}px`;
+        window.scrollTo(0,i);
         window.dispatchEvent(new Event("scroll"));
         await new Promise(requestAnimationFrame);
       }
     });
-    expect(await readClones()).toBe(before);
+    expect(await readScans()).toBe(before);
     await frame.evaluate(() => { document.querySelector("#target")!.firstChild!.textContent = "Changed target"; });
     await frame.waitForFunction(() => !document.querySelector("[data-artifact-comment-overlay] button"));
-    expect(await readClones()).toBeGreaterThan(before);
+    expect(await readScans()).toBeGreaterThan(before);
     await frame.evaluate(() => document.querySelector("#target")!.setAttribute("data-review", "one"));
     await command({ type: "markers", visible: true, markers: [{ threadId: "arbitrary", anchor: { ...anchor, selector: 'a[data-review="one"]', quote: { exact: "Changed target" } } }] });
     await frame.waitForSelector("[data-artifact-comment-overlay] button");

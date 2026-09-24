@@ -25,8 +25,8 @@ export default function SharedCommentShell({ children, header, comments }: {
     {children}
     <div className={`fs-chrome${barOpen ? " is-open" : ""}`} onFocusCapture={() => setBarOpen(true)}>
       {header}
-      <button type="button" className="fs-handle" aria-expanded={barOpen} aria-label={barOpen ? t("Hide action bar") : t("Show action bar")} onClick={() => setBarOpen(!barOpen)}>{barOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
     </div>
+    <button type="button" className="fs-handle" data-open={barOpen} aria-expanded={barOpen} aria-label={barOpen ? t("Hide action bar") : t("Show action bar")} onClick={() => setBarOpen(!barOpen)}>{barOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
     <CommentWorkspace {...comments} frameRef={frameRef} key={`${comments.scope.versionId}:${comments.scope.entry.kind === "share" ? comments.scope.entry.shareId : "main"}`} />
   </div>;
 }

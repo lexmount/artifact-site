@@ -1,4 +1,4 @@
-import { roleAllows, type ResourceRole, type ShareMode } from "@/lib/rbac";
+import type { Permission, ResourceRole, ShareMode } from "@/lib/rbac";
 import type { CommentScope, MainCommentPolicy } from "./contracts";
 
 /** Trusted server facts only. Not a request schema or a substitute for resolving credentials.
@@ -12,7 +12,8 @@ export interface CommentAccessFacts {
   canReadMainArtifact: boolean;
   canWriteArtifactDiscussion: boolean;
   /** Permanent site membership only; never the combined account/share authority. */
-  accountRole: "owner" | "site-admin" | "editor" | null;
+  accountRole: ResourceRole | null;
+  permissions: readonly Permission[];
   /** Explicit, audited governance for this tenant/site; never inferred from a global role alone. */
   managementRole: "platform-admin" | "tenant-admin" | null;
   mainPolicy: MainCommentPolicy;
@@ -28,13 +29,13 @@ export function sameCommentScope(a: CommentScope, b: CommentScope): boolean {
     && (a.entry.kind !== "share" || (b.entry.kind === "share" && a.entry.shareId === b.entry.shareId));
 }
 export function describeCommentPermissions(facts: CommentAccessFacts): CommentPermissions {
-  const role: ResourceRole | null = facts.managementRole ?? facts.accountRole;
-  const manager = roleAllows(role, "comment.aggregate");
+  const allows = (permission: Permission) => facts.permissions.includes(permission);
+  const manager = allows("comment.aggregate");
   const identity = Boolean(facts.userId);
   // Management can inspect all spaces, including revoked shares; ordinary membership cannot.
   const readable = facts.scope.entry.kind === "share"
     ? manager || facts.shareMode === "comment" || facts.shareMode === "edit"
-    : facts.canReadMainArtifact && (manager || (identity && facts.mainPolicy !== "off" && (facts.mainPolicy === "login" || facts.accountRole !== null)));
+    : facts.canReadMainArtifact && (manager || (identity && facts.mainPolicy !== "off" && (facts.mainPolicy === "login" || allows("comment.read"))));
   const canRead = facts.canReadArtifact && readable;
   const write = canRead && identity && facts.canWriteArtifactDiscussion;
   const author = write && (facts.scope.entry.kind === "main" || facts.shareMode === "comment" || facts.shareMode === "edit");
@@ -42,8 +43,8 @@ export function describeCommentPermissions(facts: CommentAccessFacts): CommentPe
     canRead, canCreate: author, canReply: author,
     canAggregate: facts.canReadArtifact && manager,
     canManageSettings: facts.canReadArtifact && identity && facts.canWriteArtifactDiscussion && manager,
-    canModerate: write && roleAllows(role, "comment.moderate"),
-    canResolveAny: write && roleAllows(role, "comment.resolve"),
+    canModerate: write && allows("comment.moderate"),
+    canResolveAny: write && allows("comment.resolve"),
   };
 }
 export interface CommentTarget {

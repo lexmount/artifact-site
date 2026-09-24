@@ -40,7 +40,7 @@ describe.skipIf(!base)("home shelves and shared history", () => {
     first = await api<Published>(owner, "/api/sites", content("History older"));
     second = await api<Published>(owner, "/api/sites", content("History newer"));
     shared = await api<Published>(owner, "/api/sites", content("History private snapshot"));
-    await api(owner, `/api/sites/${shared.slug}/sharing`, { visibility: "private", editPolicy: "owner" }, "PUT");
+    await api(owner, `/api/sites/${shared.slug}/sharing`, { visibility: "private" }, "PUT");
     const share = await api<{ token: string }>(owner, `/api/sites/${shared.slug}/shares`, { policy: "public", versionId: shared.versionId });
     token = share.token;
     await api(owner, `/api/sites/${first.slug}`, { title: "History updated first" }, "PATCH");
@@ -78,9 +78,11 @@ describe.skipIf(!base)("home shelves and shared history", () => {
     await reader.goto(base, { waitUntil: "networkidle0" });
     const href = `/v/${token}?version=${encodeURIComponent(shared.versionId)}`;
     expect(await reader.$eval("#home-sites-panel .artifact-card-link", n => n.getAttribute("href"))).toBe(href);
-    const preview = await reader.$eval("#home-sites-panel iframe", n => ({ src: n.getAttribute("src"), sandbox: n.getAttribute("sandbox") }));
-    expect(preview.sandbox).toBe("");
-    expect(preview.src).toContain(`share=${token}&v=${shared.versionId}`);
+    expect(await reader.$("#home-sites-panel .artifact-cover")).not.toBeNull();
+    await reader.$eval("#home-sites-panel .artifact-card", e => e.scrollIntoView({block:"center",behavior:"instant"}));
+    await reader.waitForSelector('#home-sites-panel [data-preview-state="ready"] iframe');
+    const previewFrame = await (await reader.$('#home-sites-panel iframe'))!.contentFrame();
+    expect(await previewFrame!.$eval("h1", n => n.textContent)).toBe("History private snapshot");
     await reader.click("#home-sites-panel .artifact-card-link");
     await reader.waitForSelector("iframe.fs-frame");
     expect(await reader.$eval("iframe.fs-frame", n => n.getAttribute("src"))).toContain(`v=${shared.versionId}`);
@@ -159,7 +161,7 @@ describe.skipIf(!base)("home shelves and shared history", () => {
     const artifact = await api<Published>(owner, "/api/sites", content("Permission-masked history"));
     await reader.goto(`${base}/s/${artifact.slug}`, { waitUntil: "domcontentloaded" });
     await reader.waitForFunction(slug => JSON.parse(localStorage.getItem("sites:recent:v1")!).items.some((item: { slug: string }) => item.slug === slug), { polling: 100 }, artifact.slug);
-    await api(owner, `/api/sites/${artifact.slug}/sharing`, { visibility: "private", editPolicy: "owner" }, "PUT");
+    await api(owner, `/api/sites/${artifact.slug}/sharing`, { visibility: "private" }, "PUT");
     await reader.reload({ waitUntil: "networkidle0" });
     expect(await reader.$eval("h1", n => n.textContent)).toBe("Site not found");
     await reader.waitForFunction(slug => !JSON.parse(localStorage.getItem("sites:recent:v1")!).items.some((item: { slug: string }) => item.slug === slug), { polling: 100 }, artifact.slug);

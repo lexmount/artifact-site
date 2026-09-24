@@ -1,4 +1,5 @@
 "use client";
+import { invalidateClientCaches } from "@/lib/client-cache";
 /** Carry the explicit link credential only to our own site APIs, never to artifact code or other origins. */
 export function withShareContext(path: string): string {
   if (typeof window === "undefined") return path;
@@ -9,7 +10,7 @@ export function withShareContext(path: string): string {
   url.searchParams.set("share", token);
   return url.pathname + url.search;
 }
-export const siteFetch: typeof fetch = (input, init) => {
+export const siteFetch: typeof fetch = async (input, init) => {
   const url =
     typeof input === "string"
       ? input
@@ -17,10 +18,15 @@ export const siteFetch: typeof fetch = (input, init) => {
         ? input.href
         : input.url;
   const next = withShareContext(url);
-  return globalThis.fetch(
+  const response = await globalThis.fetch(
     input instanceof Request
       ? new Request(new URL(next, window.location.origin), input)
       : next,
     init,
   );
+  const method=(init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  const pathname = new URL(url, typeof window === "undefined" ? "http://localhost" : window.location.origin).pathname;
+  const permissionRead = method === "POST" && /^\/api\/sites\/[^/]+\/permissions$/.test(pathname);
+  if(response.ok && !["GET","HEAD"].includes(method) && !permissionRead)invalidateClientCaches();
+  return response;
 };

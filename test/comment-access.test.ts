@@ -1,3 +1,4 @@
+import { putUserSiteRole } from "@/lib/role-bindings";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeDbForTests, createId, createShare, getShare, rbacQuery, rbacTransaction, revokeShare, upsertUser } from "@/lib/db";
 import { createSite, editSite } from "@/lib/sites";
@@ -97,10 +98,10 @@ describe("comment access with real credentials and storage", () => {
   });
   it("uses current session, membership, tenant and takedown state", async () => {
     const { site, owner, reader } = await fixture();
-    await rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'editor',$3)", [site.id, reader.user.id, Date.now()]);
+    await putUserSiteRole(rbacQuery, site.id, reader.user.id, 'editor', null);
     expect((await resolveCommentAccess(request(reader.cookie), site, main(site))).accountRole).toBe("editor");
     await rbacTransaction(async q => {
-      await q("DELETE FROM site_members WHERE site_id=$1 AND user_id=$2", [site.id, reader.user.id]);
+      await q("DELETE FROM role_bindings WHERE resource_site_id=$1 AND subject_user_id=$2", [site.id, reader.user.id]);
       expect((await resolveCommentAccess(request(reader.cookie), site, main(site), reader.session)).accountRole).toBeNull();
     });
     await rbacQuery("UPDATE sites SET taken_down_at=$1 WHERE id=$2", [Date.now(), site.id]);

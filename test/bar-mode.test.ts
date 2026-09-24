@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   BAR_MODE_KEY, DEFAULT_BAR_MODE, HOVER_DWELL_MS, Dwell,
-  hoverArmsReveal, leaveSchedulesHide, modeAutoHides, parseBarMode, readBarMode, writeBarMode, createBarModeStore,
+  BAR_PINNED_KEY, createBarPinnedStore, hoverArmsReveal, leaveSchedulesHide, modeAutoHides, parseBarMode, readBarMode, writeBarMode, createBarModeStore,
 } from "@/lib/bar-mode";
 
 /**
@@ -54,6 +54,28 @@ describe("preference persistence", () => {
     const broken = { getItem: () => { throw new Error("SecurityError"); }, setItem: () => { throw new Error("QuotaExceeded"); } };
     expect(readBarMode(broken)).toBe("manual");
     expect(() => writeBarMode(broken, "auto")).not.toThrow();
+  });
+});
+
+describe("pin persistence", () => {
+  it("keeps pinning functional when browser storage rejects writes", () => {
+    const store = createBarPinnedStore(() => ({getItem: () => null, setItem: () => { throw new Error("denied"); }}), null);
+    store.set(true);
+    expect(store.getSnapshot()).toBe(true);
+    store.set(false);
+    expect(store.getSnapshot()).toBe(false);
+  });
+  it("is off on the server, persists in this browser, and notifies subscribers", () => {
+    const values = new Map<string, string>();
+    const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+    const store = createBarPinnedStore(() => storage, null);
+    expect(store.getServerSnapshot()).toBe(false);
+    const seen: boolean[] = [];
+    const off = store.subscribe(() => seen.push(store.getSnapshot()));
+    store.set(true);
+    expect(values.get(BAR_PINNED_KEY)).toBe("true");
+    expect(seen).toEqual([true]);
+    off();
   });
 });
 

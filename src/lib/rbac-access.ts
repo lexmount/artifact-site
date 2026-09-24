@@ -1,3 +1,4 @@
+import { databaseRoleAllows, putTenantAdmin } from "@/lib/role-bindings";
 import { managementReason } from "@/lib/management-reason";
 import "server-only";
 import { createId, getUser, rbacQuery, rbacTransaction } from "@/lib/db";
@@ -8,7 +9,6 @@ import { isTokenSession } from "@/lib/publish-token";
 import {
   ANONYMOUS_TENANT,
   INIT_TENANT,
-  roleAllows,
   type Permission,
   type ResourceRole,
   type SiteRole,
@@ -32,7 +32,7 @@ export async function memberRole(
   userId: string,
 ): Promise<TenantRole | null> {
   const [row] = await rbacQuery(
-    "SELECT m.role FROM tenant_members m JOIN users u ON u.id=m.user_id JOIN tenants t ON t.id=m.tenant_id WHERE m.tenant_id=$1 AND m.user_id=$2 AND t.disabled_at IS NULL AND u.disabled_at IS NULL",
+    "SELECT m.role FROM authorization_tenant_members m JOIN users u ON u.id=m.user_id JOIN tenants t ON t.id=m.tenant_id WHERE m.tenant_id=$1 AND m.user_id=$2 AND t.disabled_at IS NULL AND u.disabled_at IS NULL",
     [tenantId, userId],
   );
   return (row?.role as TenantRole) ?? null;
@@ -41,21 +41,16 @@ export async function siteMemberRole(
   siteId: string,
   userId: string,
 ): Promise<SiteRole | null> {
-  const [row] = await rbacQuery(
-    "SELECT m.role FROM site_members m JOIN sites s ON s.id=m.site_id JOIN tenant_members tm ON tm.tenant_id=s.tenant_id AND tm.user_id=m.user_id JOIN tenants t ON t.id=s.tenant_id JOIN users u ON u.id=m.user_id WHERE m.site_id=$1 AND m.user_id=$2 AND t.disabled_at IS NULL AND u.disabled_at IS NULL",
-    [siteId, userId],
-  );
-  return (row?.role as SiteRole) ?? null;
+  const rows = await rbacQuery("SELECT role FROM authorization_site_members WHERE site_id=$1 AND user_id=$2",[siteId,userId]);
+  return ["admin","editor","commenter","viewer"].find(role=>rows.some(row=>row.role===role)) as SiteRole | undefined ?? null;
 }
-export async function accountSiteRole(
-  site: Site,
-  session: Pick<Session, "userId"> | null,
-): Promise<ResourceRole | null> {
-  if (!session || !(await memberRole(site.tenantId, session.userId)))
-    return null;
-  if (site.ownerId === session.userId) return "owner";
-  const role = await siteMemberRole(site.id, session.userId);
-  return role === "admin" ? "site-admin" : role === "editor" ? "editor" : null;
+export async function accountSiteRole(site: Site, session: Pick<Session, "userId"> | null): Promise<ResourceRole | null> {
+  if (!session || !(await tenantActive(site.tenantId))) return null;
+  const [user] = await rbacQuery("SELECT id FROM users WHERE id=$1 AND disabled_at IS NULL", [session.userId]);
+  if (!user) return null;
+  if (site.ownerId === session.userId && await memberRole(site.tenantId,session.userId)) return "owner";
+  const role=await siteMemberRole(site.id,session.userId);
+  return role === "admin" ? "site-admin" : role;
 }
 /** Elevated governance requires an explicit reason and a browser session, not a delegated agent token. */
 export async function managementRole(
@@ -145,7 +140,7 @@ export async function changeTenantMember(
     await assertSessionCurrent(q, session);
     const [manager] = session
       ? await q(
-          "SELECT m.role FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.user_id=$2 AND u.disabled_at IS NULL",
+          "SELECT m.role FROM authorization_tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.user_id=$2 AND u.disabled_at IS NULL",
           [tenantId, session.userId],
         )
       : [];
@@ -164,12 +159,12 @@ export async function changeTenantMember(
     if (!tenant || tenant.disabled_at != null || !user || (role !== null && user.disabled_at != null))
       throw new EditForbiddenError("Active tenant and account required");
     const [existing] = await q(
-      "SELECT role FROM tenant_members WHERE tenant_id=$1 AND user_id=$2",
+      "SELECT role FROM authorization_tenant_members WHERE tenant_id=$1 AND user_id=$2",
       [tenantId, userId],
     );
     if (existing?.role === "admin" && role !== "admin" && user.disabled_at == null) {
       const admins = await q(
-        "SELECT m.user_id FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.role='admin' AND u.disabled_at IS NULL",
+        "SELECT m.user_id FROM authorization_tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.role='admin' AND u.disabled_at IS NULL",
         [tenantId],
       );
       if (admins.length <= 1)
@@ -190,18 +185,20 @@ export async function changeTenantMember(
           "Transfer owned sites before removing this member",
         );
       await q(
-        "DELETE FROM site_members WHERE user_id=$1 AND site_id IN (SELECT id FROM sites WHERE tenant_id=$2)",
+        "DELETE FROM role_bindings WHERE subject_user_id=$1 AND resource_site_id IN (SELECT id FROM sites WHERE tenant_id=$2)",
         [userId, tenantId],
       );
       await q("DELETE FROM tenant_members WHERE tenant_id=$1 AND user_id=$2", [
         tenantId,
         userId,
       ]);
-    } else
+    } else {
       await q(
-        "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=excluded.role",
-        [tenantId, userId, role],
+        "INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        [tenantId, userId],
       );
+    }
+    await putTenantAdmin(q,tenantId,userId,role === "admin",session?.userId ?? null);
     await recordRbacAudit(
       q,
       tenantId,
@@ -216,6 +213,6 @@ export async function assertRolePermission(
   role: ResourceRole | null,
   permission: Permission,
 ): Promise<void> {
-  if (!roleAllows(role, permission))
+  if (!await databaseRoleAllows(role, permission))
     throw new EditForbiddenError(`Missing permission: ${permission}`);
 }

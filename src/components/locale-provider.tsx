@@ -4,11 +4,10 @@
 // so client components render the same language on the server and after hydration. Without a
 // provider (unit tests, storybook-style isolation) `useT` is plain English — never a crash.
 import { createContext, useContext, useMemo } from "react";
-import { DEFAULT_LOCALE, LOCALE_COOKIE, translatorFor, type Locale, type Translator } from "@/lib/i18n";
+import { DEFAULT_LOCALE, LOCALE_COOKIE, URL_LOCALE_COOKIE, translatorFor, type Locale, type Translator } from "@/lib/i18n";
 import "@/locales";
 
 const LocaleContext = createContext<Locale>(DEFAULT_LOCALE);
-
 export function LocaleProvider({ locale, children }: { locale: Locale; children: React.ReactNode }) {
   return <LocaleContext.Provider value={locale}>{children}</LocaleContext.Provider>;
 }
@@ -28,5 +27,12 @@ export function setLocaleCookie(locale: Locale): void {
   // otherwise never get the cookie back and the switch would appear to do nothing.
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   document.cookie = `${LOCALE_COOKIE}=${encodeURIComponent(locale)}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
-  window.location.reload();
+  document.cookie = `${URL_LOCALE_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+  const url = new URL(window.location.href);
+  // A URL override is intentionally stronger than the saved preference. Remove it when the user
+  // explicitly chooses a language, otherwise the menu would appear to do nothing after reload.
+  const hadOverride = url.searchParams.has("lang");
+  url.searchParams.delete("lang");
+  if (hadOverride) window.location.assign(url.toString());
+  else window.location.reload();
 }

@@ -8,7 +8,7 @@ export function sameCommentScope(a: CommentScope, b: CommentScope): boolean {
 /** A channel routes untrusted candidates; it is never a write credential. */
 export function acceptPreviewCommentEvent(
   event: Pick<MessageEvent, "source" | "data">,
-  expected: { source: MessageEventSource | null; channelId: string; scope: CommentScope; selecting: boolean; pendingThreadId?: string | null; visibleThreadIds?: readonly string[] },
+  expected: { source: MessageEventSource | null; channelId: string; scope: CommentScope; selecting: boolean; canSelectText?: boolean; pendingThreadId?: string | null; visibleThreadIds?: readonly string[] },
 ): PreviewCommentEvent | null {
   if (!expected.source || event.source !== expected.source) return null;
   try {
@@ -18,6 +18,7 @@ export function acceptPreviewCommentEvent(
     const value = parsed.data;
     if (value.channelId !== expected.channelId || !sameCommentScope(value.scope, expected.scope)) return null;
     if ((value.event.type === "selected" || value.event.type === "cancelled") && !expected.selecting) return null;
+    if (value.event.type === "text-selected" && !expected.canSelectText) return null;
     if (value.event.type === "located" && value.event.threadId !== expected.pendingThreadId) return null;
     if (value.event.type === "activated" && !expected.visibleThreadIds?.includes(value.event.threadId)) return null;
     return value;

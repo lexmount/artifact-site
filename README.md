@@ -30,7 +30,7 @@ There are now so many AI agents to choose from, but their output is scattered ac
 
 **artifact-site is a self-hosted workspace for individuals and teams, similar to Claude Artifacts or OpenAI Sites.** Your various agents create the work; artifact-site brings it together, turning pages and documents into links for sharing, comments and feedback, access control and version history. The agents you already use can keep editing, publishing, searching and updating that work through the CLI or MCP.
 
-> **[Try the live demo](https://artifact-site.app.lexmount.com/)** — no installation needed. Drag and drop a file to publish it and get a shareable link, without signing in.
+> **[Try the live demo](https://artifact-site.app.lexmount.com/)** — no installation needed. Drag and drop a file to publish it and get a shareable link. Try it anonymously, or **sign in with Google or GitHub** to keep your sites, organize them in folders and control who can open each link.
 >
 > Anonymous uploads expire after a few days. This is a public demo; please do not upload sensitive information.
 

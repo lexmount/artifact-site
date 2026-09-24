@@ -1,6 +1,9 @@
+import type { Authority } from "@/lib/authz";
+import { sessionReceiptShare } from "@/lib/notifications/receipts";
+import { databaseRoleAllows, everyoneRole } from "@/lib/role-bindings";
 import { readerVersionAllowed } from "@/lib/version-access";
 import { managementReason } from "@/lib/management-reason";
-import { roleAllows } from "@/lib/rbac";
+
 import { tenantActive, accountSiteRole, managementRole, recordRbacAudit } from "@/lib/rbac-access";
 import { rbacQuery, getSite, getVersion } from "@/lib/db";
 // Read access control: who may SEE a site's content.
@@ -178,7 +181,7 @@ export async function canForkSite(request: Request, site: Site, session?: Sessio
   if (site.deletedAt || site.takenDownAt || !(await tenantActive(site.tenantId))) return false;
   const resolved = session === undefined ? await resolveSession(request) : session;
   const { role } = await resolveAuthority(resolveViewer(request, resolved), site);
-  return roleAllows(role, "site.source.export") && await canReadVersion(request,site,site.currentVersionId,resolved);
+  return await databaseRoleAllows(role, "site.source.export") && await canReadVersion(request,site,site.currentVersionId,resolved);
 }
 
 /**
@@ -189,15 +192,16 @@ export async function canForkSite(request: Request, site: Site, session?: Sessio
  */
 export type ReadAccess = "public" | "capability" | "share" | "admin";
 
-export async function readAccess(request: Request, site: Site, session?: Session | null, audit = true): Promise<ReadAccess | null> {
+export async function readAccess(request: Request, site: Site, session?: Session | null, audit = true, knownAuthority?: Authority): Promise<ReadAccess | null> {
   if (!(await tenantActive(site.tenantId)) || site.deletedAt) return null;
   const resolved = session === undefined ? await resolveSession(request) : session;
-  const authority = await resolveAuthority(resolveViewer(request, resolved), site);
+  const authority = knownAuthority ?? await resolveAuthority(resolveViewer(request, resolved), site);
   if (authority.source === "management") {
     if (audit) await recordRbacAudit(rbacQuery,site.tenantId,resolved?.userId ?? null,"site.read",site.id,(managementReason(request) ?? ""));
     return "admin";
   }
   if (["account", "operator", "anonymous-cookie", "anonymous-token"].includes(authority.source)) return "capability";
+  if (authority.source === "everyone" && !site.takenDownAt) return "public";
   if (site.takenDownAt) return adminRead(request,resolved,site,audit);
   if (site.visibility !== "private") return "public";
   if (authority.source === "share") return "share";
@@ -212,8 +216,8 @@ async function adminRead(request: Request, session: Session | null, site: Site, 
   return "admin";
 }
 
-export async function canReadSite(request: Request, site: Site, session?: Session | null, audit = true): Promise<boolean> {
-  return (await readAccess(request, site, session, audit)) != null;
+export async function canReadSite(request: Request, site: Site, session?: Session | null, audit = true, knownAuthority?: Authority): Promise<boolean> {
+  return (await readAccess(request, site, session, audit, knownAuthority)) != null;
 }
 
 /** The link is an explicit credential, never inferred from another share's guest list. */
@@ -230,16 +234,22 @@ export async function requestShareAccess(request: Request, site: Site, session?:
 export async function canReadVersion(request: Request, site: Site, versionId: string, session?: Session | null): Promise<boolean> {
   const version = await getVersion(versionId);
   if (site.deletedAt || !version || version.siteId !== site.id || !(await tenantActive(site.tenantId))) return false;
-  return (await readableVersionFilter(request, site, session))(versionId);
+  if ((await readableVersionFilter(request, site, session))(versionId)) return true;
+  if (shareTokenFromRequest(request)) return false;
+  const resolved = session === undefined ? await resolveSession(request) : session;
+  return Boolean(await sessionReceiptShare(site,versionId,resolved));
 }
 /** Resolve one request's standing once, then filter this site's version rows in memory. */
 export async function readableVersionFilter(request: Request, site: Site, session?: Session | null): Promise<(id: string) => boolean> {
   if (site.deletedAt || !(await tenantActive(site.tenantId))) return () => false;
   const resolved = session === undefined ? await resolveSession(request) : session;
-  if (await accountSiteRole(site,resolved) || await managementRole(request,site,resolved) || isAnonymousCreator(resolveViewer(request,resolved),site)) return () => true;
-  if (!shareTokenFromRequest(request) && roleAllows((await resolveAuthority(resolveViewer(request,resolved),site)).role, "site.history.read")) return () => true;
+  if (await databaseRoleAllows(await accountSiteRole(site,resolved),"site.history.read") || await managementRole(request,site,resolved) || isAnonymousCreator(resolveViewer(request,resolved),site)) return () => true;
+  if (!shareTokenFromRequest(request) && await databaseRoleAllows((await resolveAuthority(resolveViewer(request,resolved),site)).role, "site.history.read")) return () => true;
   const share = await requestShareAccess(request,site,resolved);
-  if (share) return (id) => readerVersionAllowed(site, id, share.versionId);
+  if (share) {
+    const direct = await accountSiteRole(site,resolved) || await everyoneRole(site.id);
+    return (id) => readerVersionAllowed(site,id,share.versionId) || Boolean(direct) && readerVersionAllowed(site,id);
+  }
   const readable = await canReadSite(request,site,resolved,false);
   return (id) => readable && readerVersionAllowed(site, id);
 }

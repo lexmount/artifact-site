@@ -68,7 +68,7 @@ export async function commitAuthorizedCreation(site: InsertSiteInput, version: I
                 throw new EditForbiddenError("Source access was revoked");
         }
         const now = Date.now();
-        await q("INSERT INTO sites(id,slug,title,kind,current_version_id,created_at,updated_at,edit_token,claim_token,anon_owner_id,owner_id,visibility,tenant_id) VALUES($1,$2,$3,$4,$5,$6,$6,$7,NULL,$8,$9,$10,$11)", [site.id, site.slug, site.title, site.kind, version.id, now, site.ownerId ? "" : site.editToken, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, tenantId]);
+        await q("INSERT INTO sites(id,slug,title,kind,current_version_id,created_at,updated_at,edit_token,anon_owner_id,owner_id,visibility,tenant_id) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11)", [site.id, site.slug, site.title, site.kind, version.id, now, site.ownerId ? "" : site.editToken, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, tenantId]);
         await q("INSERT INTO versions(id,site_id,entry,file_count,byte_size,source,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [version.id, site.id, version.entry, version.fileCount, version.byteSize, version.source, now]);
         await writeCommitAudit(q, audit, now);
         if (version.official) await designateOfficial(q, site.id, version.id, audit, now);

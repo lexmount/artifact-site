@@ -1,8 +1,9 @@
-// Pure permission catalog. Resource and credential checks belong to rbac-access.ts.
+// Typed permission vocabulary and reference catalog for pure tests.
+// Runtime permissions come from role_permissions; migrate catalog changes explicitly.
 export const INIT_TENANT = "init";
 export const ANONYMOUS_TENANT = "anonymous";
 export type TenantRole = "admin" | "member";
-export type SiteRole = "admin" | "editor";
+export type SiteRole = "admin" | "editor" | "commenter" | "viewer";
 export type ShareMode = "view" | "comment" | "edit";
 export type ResourceRole =
   | "platform-admin"

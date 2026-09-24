@@ -1,9 +1,9 @@
 "use client";
-import { track, analyticsRequest } from "@/lib/analytics";
 import { siteFetch as fetch } from "@/lib/share-context";
 import { useSitePermissions } from "@/lib/site-permissions";
 
 
+import PreviewNavigation from "@/components/preview-navigation";
 import CommentWorkspace from "@/components/comments/anchored-workspace";
 
 
@@ -11,16 +11,19 @@ import CommentWorkspace from "@/components/comments/anchored-workspace";
 // (inline-editable title · meta · copy-link · save-as-new-site · version history · sharing · edit · device toggle ·
 // open-in-new) floats over it, revealed on demand. The iframe never gets allow-same-origin — the
 // served HTML already carries its own sandbox CSP.
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ComponentProps } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import VisibilityChip from "@/components/visibility-chip";
 import Link from "next/link";
+import ViewerBrand from "@/components/viewer-brand";
 import type { Visibility } from "@/lib/types";
-import { Pencil, ExternalLink, ArrowLeft, Monitor, Tablet, Smartphone, Copy, FileUp, Loader2, Share2, ChevronDown, ChevronUp, Lock, MousePointer2, MousePointerClick } from "lucide-react";
-import { Dwell, hoverArmsReveal, leaveSchedulesHide, modeAutoHides, barModeStore } from "@/lib/bar-mode";
+import { Pencil, ExternalLink, Monitor, Tablet, Smartphone, Copy, FileUp, Loader2, Share2, ChevronDown, ChevronUp, MousePointer2, MousePointerClick, Pin } from "lucide-react";
+import { Dwell, hoverArmsReveal, leaveSchedulesHide, modeAutoHides, barModeStore, barPinnedStore } from "@/lib/bar-mode";
 import OfficialVersion, { OFFICIAL_CHANGED } from "@/components/official-version";
-import { useUploadConfirmation } from "@/components/upload-confirmation";
+import VersionUpload from "@/components/version-upload";
+import Coachmark from "@/components/coachmark";
+import { useLearnHint } from "@/lib/use-learn-hint";
 import VersionHistory, { drawerHost } from "@/components/version-history";
 import AdminActivity from "@/components/admin-activity";
 import SharePanel from "@/components/share-panel";
@@ -115,7 +118,11 @@ export default function SiteViewer(props: {
   const viewedVersion = commentVersion || props.versionId;
   const [latestVersion, setLatestVersion] = useState(props.latestVersionId ?? props.viewedVersionId);
   const officialStatus = useCallback((official: string | null, latest: string | null) => { setOfficialVersion(official); if (latest) setLatestVersion(latest); }, []);
-  const { confirmUpload, uploadConfirmation } = useUploadConfirmation();
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [hasCollapsed, setHasCollapsed] = useState(false);
+  const learn = useLearnHint();
+  const collapsedBefore = useRef(false);
+  useLayoutEffect(() => { collapsedBefore.current = hasCollapsed; }, [hasCollapsed]);
   const [frameKey, setFrameKey] = useState(0); // bump to reload the preview after a rollback
 
   // Someone landed a new version while this page was open (see site-version-watcher): swap the
@@ -151,8 +158,7 @@ export default function SiteViewer(props: {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(props.title);
   const [forking, setForking] = useState(false);
-  const [replacing, setReplacing] = useState(false);
-  const docInput = useRef<HTMLInputElement | null>(null);
+
   // A local anonymous receipt is submitted to the server; it never enables UI actions by itself.
   const editToken = useStoredToken(slug);
 
@@ -164,13 +170,11 @@ export default function SiteViewer(props: {
 
   const titleInput = useRef<HTMLInputElement | null>(null);
   // Seed the toast from the ?published flag; the effect below auto-clears whatever is shown.
-  // The first sentence the user reads after publishing. On a private deployment it has to tell the truth: right now
-  // only you can open this address, anyone else gets a 404 — letting people believe "published means shareable" is
-  // the easiest misunderstanding this change could create.
+  // Publishing does not grant a new audience access; existing memberships remain valid.
   const [toast, setToast] = useState<string | null>(
     published
       ? (props.visibility === "private"
-          ? t("Published · Only you can open it for now. Create a share link under Sharing settings before sending it to others")
+          ? t("Published · This site is private. Create a share link under Sharing settings to invite more people")
           : t("Published · Copy the link under Sharing settings"))
       : null,
   );
@@ -189,6 +193,7 @@ export default function SiteViewer(props: {
   const [barOpen, setBarOpen] = useState(true);
   /** Reveal-mode preference, living in localStorage. The server snapshot is always the default (manual); after hydration it switches to whatever this browser remembers. */
   const barMode = useSyncExternalStore(barModeStore.subscribe, barModeStore.getSnapshot, barModeStore.getServerSnapshot);
+  const barPinned = useSyncExternalStore(barPinnedStore.subscribe, barPinnedStore.getSnapshot, barPinnedStore.getServerSnapshot);
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const chromeRef = useRef<HTMLDivElement | null>(null);
   const barRef = useRef<HTMLElement | null>(null);
@@ -206,13 +211,14 @@ export default function SiteViewer(props: {
     cancelHide();
     hideTimer.current = window.setTimeout(() => {
       hideTimer.current = null;
+      if (barPinnedStore.getSnapshot()) return;
       if (!shouldAutoHideBar({ focusHeld: focusHeld.current, drawerOpen: openDrawers.current.size > 0 })) return;
-      setBarOpen(false);
+      setHasCollapsed(true); setBarOpen(false);
     }, delay);
   }, [cancelHide]);
-  const revealBar = useCallback(() => { cancelHide(); setBarOpen(true); }, [cancelHide]);
+  const revealBar = useCallback(() => { cancelHide(); if (collapsedBefore.current) learn("expand"); setBarOpen(true); }, [cancelHide, learn]);
   /** The hover dwell timer: reveal only once it fires, and void it if the pointer leaves midway — this is the dividing line between "passing through to click a tab" and "wanting the action bar".
-   *  Built in an effect and used only inside event handlers (the ref is never touched during render); revealBar depends only on the stable cancelHide, so it is built once for the whole lifetime. */
+   *  Built in an effect and used only inside event handlers (the ref is never touched during render); revealBar uses stable callbacks and reads collapse history through a ref, so collapse and auth updates cannot cancel a pending dwell. */
   const dwell = useRef<Dwell | null>(null);
   useEffect(() => {
     const d = new Dwell(revealBar);
@@ -229,6 +235,11 @@ export default function SiteViewer(props: {
     // The switch was just clicked, so the bar has to stay put: clear any pending auto-hide (the dwell timer is voided by the effect above as the mode changes).
     cancelHide();
   }, [barMode, cancelHide]);
+  const togglePinned = useCallback(() => {
+    const next = !barPinned;
+    barPinnedStore.set(next);
+    if (next) revealBar();
+  }, [barPinned, revealBar]);
   /** Explicit collapse (clicking the handle) — bypasses focusHeld, otherwise focus still sitting on the handle after the click would keep the bar open forever. */
   const collapseBar = useCallback(() => { cancelHide(); setBarOpen(false); }, [cancelHide]);
 
@@ -238,15 +249,18 @@ export default function SiteViewer(props: {
     if (open) drawers.add(id); else drawers.delete(id);
     const effect = drawerHoldEffect(before, drawers.size);
     if (effect === "reveal") revealBar();
-    else if (effect === "hide" && modeAutoHides(barMode)) scheduleHide(); // manual mode: the bar stays after the drawer closes
-  }, [revealBar, scheduleHide, barMode]);
+    else if (effect === "hide" && modeAutoHides(barMode) && !barPinned) scheduleHide();
+  }, [revealBar, scheduleHide, barMode, barPinned]);
   const onHistoryOpen = useCallback((open: boolean) => setDrawerOpen("history", open), [setDrawerOpen]);
   const onSharingOpen = useCallback((open: boolean) => setDrawerOpen("sharing", open), [setDrawerOpen]);
   const onMenuOpen = useCallback((open: boolean) => setDrawerOpen("menu", open), [setDrawerOpen]);
   const onVersionsOpen = useCallback((open: boolean) => setDrawerOpen("versions", open), [setDrawerOpen]);
   const onActivityOpen = useCallback((open: boolean) => setDrawerOpen("activity", open), [setDrawerOpen]);
 
-  useEffect(() => { scheduleHide(INTRO_HOLD); return cancelHide; }, [scheduleHide, cancelHide]);
+  // The intro hint runs once on mount. Toggling the pin later must not restart the timer: in manual
+  // mode, unpinning means "stay where I left you", not "hide again in 2.6 seconds".
+  useEffect(() => { if (!barPinnedStore.getSnapshot()) scheduleHide(INTRO_HOLD); return cancelHide; }, [scheduleHide, cancelHide]);
+
 
   // The action bar wraps (.controls folds onto a second row on narrow screens), so its height is not a constant; its
   // measured height drives two things at once: the bar sliding itself in, and the artifact being pushed down by
@@ -275,10 +289,10 @@ export default function SiteViewer(props: {
   // interacting with the artifact" signal the parent page can observe — pointer events never reach here. Switching
   // tabs also takes this path, and collapsing is equally harmless there.
   useEffect(() => {
-    const onBlur = () => { if (document.activeElement === frameRef.current) collapseBar(); };
+    const onBlur = () => { if (!barPinned && document.activeElement === frameRef.current) collapseBar(); };
     window.addEventListener("blur", onBlur);
     return () => window.removeEventListener("blur", onBlur);
-  }, [collapseBar]);
+  }, [collapseBar, barPinned]);
 
   function flash(msg: string) { setToast(msg); }
 
@@ -319,43 +333,9 @@ export default function SiteViewer(props: {
     }
   }
 
-  // Upload new version (document sites only) — re-upload the whole file to POST /versions: a new immutable version
-  // lands under the same slug, and the share link stays unchanged. This is the only update path for document sites
-  // (there is no /edit); without this button, a web user's only way to update would be "open a new site and swap the link".
-  async function replaceDocumentFile(file: File | null) {
-    if (!file || replacing) return;
-    if (docInput.current) docInput.current.value = "";
+  function openUpload() {
     if (!window.dispatchEvent(new Event("artifact:before-comment-scope-change", { cancelable: true }))) return;
-    const official = await confirmUpload(true, permissions.canManageSharing);
-    if (official === null) return;
-    setReplacing(true);
-    try {
-      const fd = new FormData();
-      fd.set("mode", "file");
-      fd.set("official", String(official));
-      fd.set("file", file, file.name);
-      const res = await analyticsRequest("update", () => fetch(`/api/sites/${slug}/versions${latestVersion ? `?expected_version=${encodeURIComponent(latestVersion)}` : ""}`, {
-        method: "POST",
-        body: fd,
-        headers: editToken ? { "x-edit-token": editToken } : {},
-      }));
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || t("Uploading the new version failed"));
-      if (data.versionId) {
-        setLatestVersion(data.versionId);
-        if (!props.pinnedVersionId) router.refresh();
-      }
-      window.dispatchEvent(new Event(OFFICIAL_CHANGED));
-
-      track("artifact_update_success", { method: "document" });
-      setFrameKey((k) => k + 1); // reload the preview: the new version is current now
-      flash(t("New version published · The share link is unchanged"));
-    } catch (e) {
-      flash(e instanceof Error ? e.message : t("Uploading the new version failed"));
-    } finally {
-      setReplacing(false);
-      if (docInput.current) docInput.current.value = ""; // allow re-picking the same filename
-    }
+    setUploadOpen(true);
   }
 
   // Save as new site — POST /fork then jump to the new independent site.
@@ -369,6 +349,7 @@ export default function SiteViewer(props: {
       // We own the fork: remember its fresh edit token so we can edit the new copy.
       if (data.editToken) rememberEditToken(data.slug, data.editToken);
       flash(t("Saved as a new site"));
+      router.refresh();
       router.push(`/s/${data.slug}`);
     } catch (e) {
       flash(e instanceof Error ? e.message : t("Save as new site failed"));
@@ -387,7 +368,8 @@ export default function SiteViewer(props: {
 
   return (
     <div className="fs-viewer" ref={viewerRef} data-device={device} data-bar={barOpen ? "open" : "closed"} data-bar-mode={barMode}>
-      {uploadConfirmation}
+      {uploadOpen && <VersionUpload target={{ slug, title, kind, token: editToken, canOfficial: permissions.canManageSharing }} onClose={() => setUploadOpen(false)} onPublished={() => { window.dispatchEvent(new Event(ARTIFACT_REFRESH_EVENT)); }} />}
+      <Coachmark name="expand" selector=".fs-handle" enabled={hasCollapsed && !barOpen && !uploadOpen} seconds={5} text={t("Click the arrow to expand the toolbar.")} />
       <div className="fs-stage-wrap">
         {props.takenDownReason != null && (
           <div className="fs-notice" role="status">
@@ -416,6 +398,7 @@ export default function SiteViewer(props: {
         </div>
       </div>
 
+      <PreviewNavigation frameRef={frameRef} />
       <CommentWorkspace onPreviewVersionChange={setCommentVersion} previewGeneration={frameKey} frameRef={frameRef} key={`${props.versionId}:main`} slug={slug} scope={{ siteId: props.siteId, versionId: props.versionId, entry: { kind: "main" } }} filePath={props.filePath} canDownload={canDownload} editToken={editToken} />
 
       {/* Top floating layer: when collapsed, only a thin hotzone + a persistent handle remain; when expanded, it is the full action bar as before. */}
@@ -427,10 +410,10 @@ export default function SiteViewer(props: {
         // edge on its way to a browser tab triggers leave before the timer fires, the timer is voided, and the bar stays put
         // (see lib/bar-mode.ts).
         onPointerEnter={(e) => { if (hoverArmsReveal(barMode, isHoverPointer(e.pointerType))) dwell.current?.arm(); }}
-        onPointerLeave={(e) => { dwell.current?.cancel(); if (leaveSchedulesHide(barMode, isHoverPointer(e.pointerType))) scheduleHide(); }}
+        onPointerLeave={(e) => { dwell.current?.cancel(); if (!barPinned && leaveSchedulesHide(barMode, isHoverPointer(e.pointerType))) scheduleHide(); }}
       >
         {/* Devices without hover (touch screens) never get the hover reveal; tapping the hotzone/handle is their only toggle. */}
-        <div className="fs-hotzone" aria-hidden="true" onClick={() => (barOpen ? collapseBar() : revealBar())} />
+        <div className="fs-hotzone" aria-hidden="true" onClick={() => { if (barOpen) { setHasCollapsed(true); collapseBar(); } else { revealBar(); } }} />
 
         {/* The accessibility trade-off of the collapsed state: this header is opacity:0 + pointer-events:none
             when collapsed, but deliberately gets neither inert nor aria-hidden.
@@ -457,15 +440,14 @@ export default function SiteViewer(props: {
           onBlurCapture={(e) => {
             if (e.currentTarget.contains(e.relatedTarget)) return; // focus is just moving within the bar
             focusHeld.current = false;
-            if (modeAutoHides(barMode)) scheduleHide(); // manual mode: the bar stays even after focus leaves
+            if (!barPinned && modeAutoHides(barMode)) scheduleHide();
           }}
         >
           {/* The frosted glass is its own layer: backdrop-filter also creates a containing block for position:fixed
               descendants; keeping it on this purely decorative layer keeps the ancestor chain of the drawers/login gate clean. */}
           <div className="fs-bar-glass" aria-hidden="true" />
           <Link className="brand" href="/" aria-label={t("Back to sites")}>
-            <span aria-hidden="true"><ArrowLeft size={15} /></span>
-            <b>artifact-site</b>
+            <ViewerBrand />
           </Link>
           <div className="header-mid">
             <div className="header-title-edit">
@@ -490,21 +472,12 @@ export default function SiteViewer(props: {
             </div>
             <div className="viewer-meta">
               <span className="kind-chip">{kind === "single" ? t("Single file") : kind === "document" ? t("Document") : t("Folder")}</span>
-              <VisibilityChip visibility={props.visibility} />
+              <VisibilityChip visibility={props.visibility} contextualHint={props.visibility === "private" && permissions.canManageSharing} />
               <span className="dot" aria-hidden="true" />
             </div>
             <OfficialVersion slug={slug} versionId={viewedVersion} onStatus={officialStatus} onOpenChange={onVersionsOpen} />
           </div>
           <div className="controls">
-            {/* A single sentence shown only on private sites, right where the share button is: when someone is
-                about to send the thing to others, their eyes and hands are in this area. Not shown on public
-                sites — there the address in the URL bar can be sent as is. */}
-            {props.visibility === "private" && (
-              <span className="share-hint" role="note">
-                <Lock size={12} aria-hidden="true" />
-                {t("Private site: others cannot open this address directly. Get a share link from Sharing settings")}
-              </span>
-            )}
             {/* Device preview stays on the bar: flipping widths while reading is a first-class act, not a setting. */}
             <div className="segmented device-switch" role="group" aria-label={t("Preview device")}>
               {DEVICES.map((d) => {
@@ -516,31 +489,24 @@ export default function SiteViewer(props: {
                 );
               })}
             </div>
+            <button type="button" className="btn icon-only header-pin" aria-pressed={barPinned}
+              aria-label={barPinned ? t("Unpin action bar") : t("Pin action bar")}
+              title={barPinned ? t("Unpin action bar") : t("Pin action bar so it stays visible")}
+              onClick={togglePinned}><Pin size={14} aria-hidden="true" /></button>
             {/* The bar carries the two things an owner does most — edit and share — as the design draws them:
                 an outline button and a black one, then everything else behind "···". */}
             {mayEdit && <Link className="btn" href={`/s/${slug}/edit${(commentVersion || props.pinnedVersionId) ? `?version=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`}><Pencil size={14} aria-hidden="true" /> {t(officialVersion === viewedVersion ? "Create a new version" : "Edit")}</Link>}
             {!mayEdit && permissions.needsLogin && kind !== "document" && (
               <LockedAction label={t("Edit")} icon={<Pencil size={14} />} hint={t("Sign in required")} onOpen={() => openGate("edit")} />
             )}
-            {kind === "document" && permissions.canEditContent && (
-              <button data-analytics-button="update" type="button" className="btn" onClick={() => docInput.current?.click()} disabled={replacing}
-                title={t("Re-upload the whole document: a new version is published at the same link, and earlier versions can be rolled back")}>
-                {replacing ? <Loader2 size={14} className="spin" /> : <FileUp size={14} aria-hidden="true" />} {t("Upload new version")}
-              </button>
-            )}
-            {permissions.canManageSharing && <SharePanel slug={slug} onOpenChange={onSharingOpen} canManageAdmins={permissions.canManageAdmins} />}
+            {permissions.canManageSharing && <SharePanel key={slug} slug={slug} visibility={props.visibility} onOpenChange={onSharingOpen} />}
             {!permissions.canManageSharing && permissions.needsLogin && (
               <LockedAction label={t("Sharing settings")} icon={<Share2 size={14} />} hint={t("Sign in required")} onOpen={() => openGate("share")} />
-            )}
-            {/* The hidden file input stays mounted here, not inside the menu: the "Upload new version" row opens it
-                and the menu closes on that click, which would unmount an input that lives in the menu. */}
-            {kind === "document" && permissions.canEditContent && (
-              <input ref={docInput} type="file" accept=".pdf,.pptx,.ppt,.docx,.doc" hidden
-                onChange={(e) => replaceDocumentFile(e.target.files?.[0] ?? null)} />
             )}
             {/* Secondary actions fold into one "···" menu so the bar keeps its width for the title: the device
                 preview, the bare artifact, history, forking, the reveal-mode switch. */}
             <MoreMenu label={t("More")} iconOnly onOpenChange={onMenuOpen}>
+              {permissions.canEditContent && <button role="menuitem" className="menu-item" onClick={openUpload}><FileUp size={14} /> {t("Upload new version")}</button>}
               {/* Named, not a bare external-link arrow: in almost every product that arrow reads as "share", and
                   on a private site the address it opens is exactly the one others cannot use. */}
               <a
@@ -556,7 +522,7 @@ export default function SiteViewer(props: {
                 <ExternalLink size={14} aria-hidden="true" /> {t("Open in new window")}
               </a>
               {/* Reading history needs no identity — the versions API is open, and only rollback is gated. */}
-              <VersionHistory variant="menu-item" canDownload={canDownload} slug={slug} editToken={editToken} onBeforeRollback={() => window.dispatchEvent(new Event("artifact:before-comment-scope-change", { cancelable: true }))} onRolledBack={onRolledBack} onOpenChange={onHistoryOpen} />
+              <VersionHistory initialPermissions={permissions} onUpload={permissions.canEditContent ? openUpload : undefined} variant="menu-item" canDownload={canDownload} slug={slug} editToken={editToken} onBeforeRollback={() => window.dispatchEvent(new Event("artifact:before-comment-scope-change", { cancelable: true }))} onRolledBack={onRolledBack} onOpenChange={onHistoryOpen} />
               <button type="button" role="menuitem" className="menu-item" onClick={fork} disabled={forking || !permissions.canReadSource} title={t("Copy into a separate new site")}>
                 {forking ? <Loader2 size={14} className="spin" /> : <Copy size={14} aria-hidden="true" />} {t(commentVersion && commentVersion !== latestVersion ? "Save latest version as new site" : "Save as new site")}
               </button>
@@ -588,21 +554,31 @@ export default function SiteViewer(props: {
           </div>
         </header>
 
+      </div>
+
         {/* Persistent handle: touch screens have no hover, and keyboard/mouse users also need a visible "there is
             something here". It hangs off the bottom edge of the action bar, which puts it right at the top of the
             screen when collapsed. */}
         <button
           type="button"
           className="fs-handle"
+          data-open={barOpen}
+          onFocus={() => { focusHeld.current = true; cancelHide(); }}
+          onBlur={(event) => {
+            if (barRef.current?.contains(event.relatedTarget)) return;
+            focusHeld.current = false;
+            if (!barPinned && modeAutoHides(barMode)) scheduleHide();
+          }}
+          onPointerEnter={(e) => { cancelHide(); if (hoverArmsReveal(barMode, isHoverPointer(e.pointerType))) dwell.current?.arm(); }}
+          onPointerLeave={(e) => { dwell.current?.cancel(); if (!barPinned && leaveSchedulesHide(barMode, isHoverPointer(e.pointerType))) scheduleHide(); }}
           aria-expanded={barOpen}
           aria-controls="fs-bar"
           aria-label={barOpen ? t("Hide action bar") : t("Show action bar")}
           title={barOpen ? t("Hide action bar") : t("Show action bar")}
-          onClick={() => (barOpen ? collapseBar() : revealBar())}
+          onClick={() => { if (barOpen) { setHasCollapsed(true); collapseBar(); } else { revealBar(); } }}
         >
           {barOpen ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
         </button>
-      </div>
 
       {/* The login gate is portaled to body as well: the CSS says it (z-index 80) sits above the drawers (70), but
           `.fs-viewer` is position:fixed and therefore a stacking context of its own — an 80 left inside it cannot

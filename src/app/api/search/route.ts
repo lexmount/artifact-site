@@ -6,6 +6,8 @@
 import type { NextResponse } from "next/server";
 import { maintenanceTick } from "@/lib/maintenance";
 import { checkRateLimit } from "@/lib/ratelimit";
+import { assertPresentedBearerAlive } from "@/lib/auth";
+import { resolveSession } from "@/lib/session";
 import { BadRequestError } from "@/lib/errors";
 import { searchSites } from "@/lib/search";
 import { listViewerFromRequest } from "@/lib/sites";
@@ -25,8 +27,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     const limitRaw = params.get("limit");
     const limit = limitRaw === null ? 10 : Number(limitRaw);
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RESULTS) throw new BadRequestError(`limit must be an integer from 1 to ${MAX_RESULTS}`);
+    await assertPresentedBearerAlive(request, await resolveSession(request));
     const results = await searchSites(await listViewerFromRequest(request), q, limit);
-    return json({ query: q, results });
+    const response = json({ query: q, results });
+    response.headers.set("cache-control", "private, no-store");
+    return response;
   } catch (error) {
     return errorResponse(error);
   }

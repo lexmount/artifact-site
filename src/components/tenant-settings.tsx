@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import AppShell from "@/components/app-shell";
 import { useT } from "@/components/locale-provider";
@@ -221,6 +222,7 @@ export default function TenantSettings() {
             </div>
           </section>
         )}
+        {manager && selected !== "anonymous" && <p><Link href="/authorization" className="btn">{t("Manage authorization")}</Link></p>}
         {platform && (
           <section className="share-sec">
             <h2>{t("Create workspace")}</h2>

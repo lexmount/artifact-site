@@ -5,7 +5,7 @@ the CLI and never reads a path on the server's filesystem supplied by a caller.
 
 ## Connect
 
-Two ways in; both end at the same 19 tools with the account's own permissions.
+Two ways in; both end at the same 22 tools with the account's own permissions.
 
 ### Sign in from the client (OAuth)
 
@@ -127,13 +127,16 @@ cannot approve.
 
 ## Operations
 
-The server exposes **19 tools**. Descriptions state when to use each tool, its inputs and results,
+The server exposes **26 tools**. Descriptions state when to use each tool, its inputs and results,
 and permission or mutation boundaries. The connection also supplies server instructions for agents.
 
 | CLI | Remote tool |
 | --- | --- |
 | `whoami` | `artifact_site_connection` (also returns deployment limits) |
+| `find --public` | `artifact_site_find` with `scope:"public"`, without query |
 | `find [words…]` | `artifact_site_find` (omit query for my works; keywords search discoverable works) |
+| `folders list` (API: `GET /api/me/folders`) | `artifact_site_folders` |
+| `move <slug> --folder <id>` / `move <slug> --unfiled` | `artifact_site_move` (`slug`, `folder_id`; null = Unfiled) |
 | `info <slug> [--shares]` | `artifact_site_get_site`, optionally `include: ["versions", "shares"]` |
 | `read <slug>` | `artifact_site_read` |
 | `publish <path>` | `artifact_site_publish` |
@@ -141,10 +144,13 @@ and permission or mutation boundaries. The connection also supplies server instr
 | `edit <slug> <path> --file <relpath> --expected-version <id>` | `artifact_site_edit` |
 | `fork <slug>` | `artifact_site_fork` |
 | `share <slug>` | `artifact_site_share` |
-| `export <slug>` | `artifact_site_export` (manifest or file bytes) |
+| `export <slug> [--version-id <id>]` | `artifact_site_export` (manifest or file bytes) |
 | `rollback <slug> <version>` / `delete <slug>` | `artifact_site_rollback` / `artifact_site_delete` |
 | Publication recovery | `artifact_site_operation_status`, `artifact_site_upload_status` |
 | Automatic CLI upload handling | `artifact_site_upload_start`, `artifact_site_upload_write`, `artifact_site_upload_cancel` |
+| `comments list <slug>` | `artifact_site_comments_list` |
+| `comments read <slug> <thread-id>` | `artifact_site_comment_read` |
+| `comments context <slug> <thread-id>` | `artifact_site_comment_context` |
 | `skill` | `artifact-site://skill` resource (not an additional tool) |
 
 Inline publish accepts HTML or `files` containing `path`, `content`, and `encoding` (`utf8` or
@@ -152,7 +158,21 @@ Inline publish accepts HTML or `files` containing `path`, `content`, and `encodi
 Publish defaults to a public share for **both inline and staged uploads**; set `share: false`
 (CLI `--share none`) to skip it. Updating never creates a share automatically.
 
-Without search keywords, `find` ignores the search-only `limit` and returns the personal library.
+Without search keywords, `find` ignores the search-only `limit` and returns the personal library,
+separating owned and collaborative artifacts. Keyword search includes discoverable public works;
+`relationship` labels owned, collaborating, anonymous-browser-owned, or other public results,
+independently of `visibility`. A public artifact can still be owned by the connected account.
+An empty list is not an authentication failure. Diagnose identity failures with `connection`;
+if showing the public catalog as a fallback, first establish and explain the missing personal
+identity. Use `find` with `scope:"public"` and no query (CLI `find --public`, HTTP `/api/sites`),
+and label the result public. Scope is a listing option; omit it for keyword search. Do not silently replace failed personal queries.
+
+`folders` lists the connected account's flat folder labels, including stable IDs. After publication,
+call `move` with the returned artifact slug and selected folder ID; save the ID for future runs.
+Moving only changes the caller's personal assignment, never content or sharing. Missing or inaccessible
+folders/artifacts fail explicitly. If publishing succeeds and moving fails, retry only the move.
+Operator credentials cannot list or mutate a personal shelf. Read-only OAuth grants may list folders
+but cannot move artifacts. Publishing and updating do not take a destination-folder parameter.
 
 A title-only MCP update accepts only `slug` and `title`. Content replacement requires exactly
 one of `html`, `files` or `upload_id`, plus `expected_version`; it replaces the complete contents.
@@ -185,7 +205,8 @@ The 2 MiB request cap is independent of the deployment's full file/project limit
 Export returns a manifest and an authenticated ZIP URL. To stay entirely within MCP, download
 each manifest file with `artifact_site_export` plus `path`, advancing nextOffset until done, and
 write decoded bytes to the same relative paths in the agent's environment. Supply the manifest's `versionId` as
-`version_id` on every call; a concurrent version change returns 409, so restart the export.
+`version_id` on every call to keep the snapshot immutable even if a new version is published.
+An inaccessible snapshot returns 404; do not silently substitute the latest version.
 
 ## Migration and verification
 
@@ -200,7 +221,7 @@ and limits to `connection`, versions/shares to `get_site` includes, rename to ti
 and file download to `export`. Replace the old six-step upload protocol with the flow above.
 CLI `list`, `search` and `rename` remain callable compatibility commands, hidden from top-level help.
 
-Reload the client and confirm exactly 19 tools. In a new conversation, try these requests without
+Reload the client and confirm exactly 22 tools. In a new conversation, try these requests without
 mentioning MCP or a tool name: “What artifacts have I published?”, “Find last week's report”,
 “Read that report”, “Publish this page without sharing it”, and “Rename this artifact”.
 For Chinese hosts, also try “我有哪些作品”, “找一下之前的报告”, and “把这份报告发布成链接”.
@@ -290,3 +311,24 @@ if needed, rather than re-publishing. Upload sessions still expire after six hou
 `artifact_site_upload_status` takes `upload_id` and returns completed files and session expiry.
 For remote MCP, send file bytes via upload_write; it cannot open or unzip paths on your computer.
 For local ZIP/directory automation, the CLI performs extraction and transfer selection automatically.
+
+### Comment-driven revisions
+
+Read-only tools `artifact_site_comments_list`, `artifact_site_comment_read` and
+`artifact_site_comment_context` expose existing comment permissions without acknowledging read
+receipts. List defaults to the current entrance/version, supports `version_id`, `share_id`,
+`status`, `cursor`, `limit`, and explicit `aggregate` / `all_versions`. Aggregate access is
+management-only through the main entrance; a share token never expands into other discussions.
+`comment_read` takes `thread_id`; pass the returned messages cursor to continue. Context includes
+untrusted original evidence, author labels, normalized coordinate definitions, source/edit
+capabilities and message continuation. It does not claim live anchor verification.
+
+`artifact_site_read` and `artifact_site_export` accept `version_id`, including historical
+manifests and immutable file chunks. Read the original comment snapshot and latest editing
+baseline separately. Update/edit the same slug with `expected_version` and `operation_key`;
+never create a new site to bypass a permission failure or conflict. See the served publishing
+Skill for the complete workflow. No Agent comment mutations or notifications are added.
+
+### Comment image feedback
+
+Use `artifact_site_comment_image` with `slug` and `attachment_id` from comment context to read a screenshot as native MCP image content. Each call returns one PNG/JPEG derivative (up to 4 MiB) and untrusted metadata, rechecking discussion access and deletion. Pass the same `share_token` for link access. This read-only tool never marks feedback read. Optional `max_edge` defaults to 1568 pixels (256–4096 accepted); the byte limit can reduce it further. `attachment` retains original dimensions while `image` describes the returned derivative. Stored attachments are unchanged.

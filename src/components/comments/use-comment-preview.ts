@@ -1,4 +1,5 @@
 "use client";
+import { browserRandomId } from "@/lib/browser-random-id";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { COMMENT_LOCATION_FLASH_MS } from "@/lib/comments/contracts";
 import type { CommentAnchor, CommentScope, PreviewCommentCommand } from "@/lib/comments/contracts";
@@ -17,6 +18,7 @@ export function useCommentPreview({ frameRef, scope, generation = 0 }: { frameRe
   const scopeKey = JSON.stringify(scope);
   const [readyScope, setReadyScope] = useState<string | null>(null);
   const selecting = useRef(false);
+  const textSelection = useRef({ enabled: false, label: "" });
   const temporary = useRef<string | null>(null);
   const lastLocation = useRef<{ marker: CommentMarker; filePath: string | null; at: number } | null>(null);
   const reloadLocation = useRef<typeof lastLocation.current>(null);
@@ -24,6 +26,7 @@ export function useCommentPreview({ frameRef, scope, generation = 0 }: { frameRe
   const [activeThreadId, setActiveThreadId] = useState<string | undefined>();
   const pending = useRef<string | null>(null);
   const saved = useRef<{ markers: CommentMarker[]; visible: boolean }>({ markers: [], visible: false });
+  const [selectionPosition, setSelectionPosition] = useState<{x:number;y:number} | null>(null);
   const [selectedAnchor, setSelectedAnchor] = useState<CommentAnchor | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
@@ -40,14 +43,14 @@ export function useCommentPreview({ frameRef, scope, generation = 0 }: { frameRe
     let handshake: ReturnType<typeof startPreviewHandshake> | undefined;
     function load(expectedPath: string | null = null) {
       reloadLocation.current = lastLocation.current; lastLocation.current = null; acknowledgedPath.current = null;
-      channel.current = crypto.randomUUID(); active.current = true; selecting.current = false; pending.current = null;
+      channel.current = browserRandomId(); active.current = true; selecting.current = false; pending.current = null;
       setSelectedAnchor(null); setIsSelecting(false); setReady(false); setUnavailableScope(null); setLocationResult(null);
       setCurrentFilePath(null); temporary.current = null; setActiveThreadId(undefined);
       handshake?.stop();
       handshake = startPreviewHandshake(() => send({ type: "markers", ...saved.current }), expectedPath, () => setUnavailableScope(scopeKey));
     }
     function receive(event: MessageEvent) {
-      const parsed = acceptPreviewCommentEvent(event, { source: frame!.contentWindow, channelId: channel.current, scope, selecting: selecting.current, pendingThreadId: pending.current, visibleThreadIds: [...(saved.current.visible ? saved.current.markers.map(marker => marker.threadId) : []), ...(temporary.current && lastLocation.current && Date.now() - lastLocation.current.at < COMMENT_LOCATION_FLASH_MS ? [temporary.current] : [])] });
+      const parsed = acceptPreviewCommentEvent(event, { source: frame!.contentWindow, channelId: channel.current, scope, selecting: selecting.current, canSelectText: textSelection.current.enabled, pendingThreadId: pending.current, visibleThreadIds: [...(saved.current.visible ? saved.current.markers.map(marker => marker.threadId) : []), ...(temporary.current && lastLocation.current && Date.now() - lastLocation.current.at < COMMENT_LOCATION_FLASH_MS ? [temporary.current] : [])] });
       if (!parsed) return;
       if (parsed.event.type === "ready") {
         const path = parsed.event.filePath;
@@ -55,6 +58,7 @@ export function useCommentPreview({ frameRef, scope, generation = 0 }: { frameRe
         if (!handshake?.accept(canonical)) return;
         acknowledgedPath.current = canonical; setCurrentFilePath(canonical);
         setReadyScope(scopeKey); setReady(true);
+        send({ type: "text-selection", ...textSelection.current });
         // An early handshake may locate before the iframe load event rotates its channel.
         // Replay only on that exact file; internal navigation must never restore an old target.
         const replay = reloadLocation.current; reloadLocation.current = null;
@@ -63,7 +67,10 @@ export function useCommentPreview({ frameRef, scope, generation = 0 }: { frameRe
           send({ type: "locate", ...replay.marker });
         }
       }
-      if (parsed.event.type === "selected") { selecting.current = false; setIsSelecting(false); setSelectedAnchor(parsed.event.anchor); }
+      if (parsed.event.type === "selected" || parsed.event.type === "text-selected") { selecting.current = false; setIsSelecting(false); const rect = frame!.getBoundingClientRect();
+        const point = parsed.event.position;
+        setSelectionPosition(point ? {x:rect.left + Math.max(0,Math.min(rect.width,point.x * rect.width / (frame!.clientWidth || rect.width))),y:rect.top + Math.max(0,Math.min(rect.height,point.y * rect.height / (frame!.clientHeight || rect.height)))} : null);
+        setSelectedAnchor(parsed.event.anchor); }
       if (parsed.event.type === "cancelled") { selecting.current = false; setIsSelecting(false); }
       if (parsed.event.type === "activated") setActiveThreadId(parsed.event.threadId);
       if (parsed.event.type === "located") { setLocationResult(parsed.event.outcome); pending.current = null; }
@@ -108,5 +115,9 @@ export function useCommentPreview({ frameRef, scope, generation = 0 }: { frameRe
     if (saved.current.visible && !visible) { lastLocation.current = null; reloadLocation.current = null; temporary.current = null; pending.current = null; setLocationResult(null); }
     saved.current = next; send({ type: "markers", ...saved.current });
   }, [send]);
-  return { clearActiveThread: () => setActiveThreadId(undefined), activeThreadId, selectedAnchor, isSelecting, currentFilePath, ready: ready && readyScope === scopeKey, unavailable: unavailableScope === scopeKey, locationResult, navigate, select, cancel, locate, setMarkers };
+  const setTextSelection = useCallback((enabled: boolean, label: string) => {
+    textSelection.current = {enabled, label};
+    send({type:"text-selection", enabled, label});
+  }, [send]);
+  return { setTextSelection, clearActiveThread: () => setActiveThreadId(undefined), activeThreadId, selectionPosition, selectedAnchor, isSelecting, currentFilePath, ready: ready && readyScope === scopeKey, unavailable: unavailableScope === scopeKey, locationResult, navigate, select, cancel, locate, setMarkers };
 }

@@ -1,4 +1,6 @@
 "use client";
+import ArtifactCover from "@/components/artifact-cover";
+import ProgressivePreview from "@/components/progressive-preview";
 
 // The full "Recently viewed" shelf on /me: every site this browser has opened (the store keeps 50),
 // newest first, in the same rows as the site lists. History is the browser's, not the account's:
@@ -45,7 +47,7 @@ export default function RecentList({ shelf }: { shelf: RecentShelf }) {
           <div className="site-row" key={s.slug}>
             <div className="site-name">
               <SiteLink slug={s.slug} href={href} className="mini" aria-hidden="true" tabIndex={-1}>
-                <iframe src={preview} title="" loading="lazy" tabIndex={-1} inert sandbox="" />
+                {s.kind === "document" ? <ArtifactCover site={s} /> : <ProgressivePreview key={`${s.slug}:${s.updatedAt}:${preview}`} site={s} src={preview} />}
               </SiteLink>
               <div>
                 <strong><SiteLink slug={s.slug} href={href}>{s.title}</SiteLink></strong>

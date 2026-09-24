@@ -3,20 +3,20 @@ import { track } from "@/lib/analytics";
 // Share links: a site can have several, each with its own policy, expiry, people list and view log, and each can be revoked on its own.
 //
 // Share URLs can be retrieved by managers; generated passcodes are shown once.
-import { useCallback, useEffect, useState } from "react";
-import { Check, ChevronDown, Copy, Eye, Link2, Loader2, Plus, ShieldAlert } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, Copy, Link2, Loader2, Plus, ShieldAlert } from "lucide-react";
 import { useLocale, useT } from "@/components/locale-provider";
 import PeoplePicker from "@/components/people-picker";
 import ShareSaveDialog, { type ShareSettingChange } from "@/components/share-save-dialog";
-import ShareViews from "@/components/share-views";
 import {
-  EXPIRY_CHOICES, NO_NOTIFY_NOTICE, POLICY_HINT, POLICY_SHORT, SHARE_POLICY_MENU,
+  shareDiscussionUrl, EXPIRY_CHOICES, NO_NOTIFY_NOTICE, POLICY_HINT, POLICY_SHORT, SHARE_POLICY_MENU,
   SHARE_STATE_LABEL, LINK_REUSE_NOTICE, type ExpiryChoice, type MintedShare, type PickedPerson,
   type ShareSettingsDraft, shareSettingsPatch, type ShareListItem, personLabel, addPerson, errorText, expiryChoiceOf, expiryDaysFor, expiryText,
   needsPrivateNudge, privateNudgeText, readFreshPasscode, readGrantResult,
   shareConflictCode, readListedGrants, readMinted, readShares, relTime, removePerson, shareStateOf,
 } from "@/components/share-model";
 import type { SharePolicy, Visibility } from "@/lib/types";
+import { recordShareLinkCreated } from "@/lib/share-education";
 
 /** All write routes are cookie-authenticated; the server checks Origin exactly on every one. */
 const writeHeaders = () => ({ "content-type": "application/json", origin: window.location.origin });
@@ -40,6 +40,7 @@ function CopyButton({ value, label, passcode = false }: { value: string; label: 
       onClick={() => {
         void (async () => {
           setFailed(false);
+          setDone(false);
           try { await navigator.clipboard.writeText(value); } catch { setFailed(true); return; }
           track("share_link_copy", { share_type: "share_link" });
           setDone(true);
@@ -49,7 +50,7 @@ function CopyButton({ value, label, passcode = false }: { value: string; label: 
     >
       {done ? <Check size={13} /> : <Copy size={13} />} {done ? t("Copied") : t(passcode ? "Copy passcode" : "Copy link")}
     </button>
-    {failed && <span className="share-copy-error" role="status">{t("Copy failed. Select the address to copy it manually.")}</span>}
+    {failed && <span className="share-copy-error" role="status">{passcode ? t("Copy failed. Select the passcode to copy it manually.") : t("Copy failed. Right-click or long-press the link to copy its address.")}</span>}
     </>
   );
 }
@@ -80,7 +81,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
   const [asOf, setAsOf] = useState(0);
 
   // The create form. Defaults to "Signed-in users" — the most common intent, and tighter than public.
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(true);
   const [policy, setPolicy] = useState<SharePolicy>("login");
   const [mode,setMode] = useState<"view"|"comment"|"edit">("view");
   const [versionId,setVersionId] = useState("");
@@ -88,6 +89,12 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
   const [label, setLabel] = useState("");
   const [expiry, setExpiry] = useState<ExpiryChoice>("never");
   const [draftPeople, setDraftPeople] = useState<PickedPerson[]>([]);
+  const firstCreateField = useRef<HTMLSelectElement>(null);
+
+  function openCreate() {
+    setCreating(true);
+    requestAnimationFrame(() => firstCreateField.current?.focus());
+  }
 
   const load = useCallback(async () => {
     try {
@@ -97,6 +104,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
       const list = readShares(body);
       setAsOf(Date.now());
       setShares(list);
+      window.dispatchEvent(new CustomEvent("artifact:shares-changed", { detail: { slug } }));
       const versionResponse = await fetch(`/api/sites/${slug}/versions`, {cache:"no-store"});
       if (versionResponse.ok) setVersions((await versionResponse.json()).versions);
       // The people list comes with the list response (every "people" share carries its grants); there is no separate GET to pull.
@@ -132,6 +140,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
 
       const fresh = readMinted(body, window.location.origin);
       if (!fresh) throw new Error(t("The share was created, but the link could not be read from the response. Revoke it and create a new one."));
+      recordShareLinkCreated();
       const shareId = fresh.shareId;
       setMinted(fresh);
       if (shareId) setHeld((h) => ({ ...h, [shareId]: { url: fresh.url, passcode: fresh.passcode } }));
@@ -288,11 +297,17 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
 
                 {url ? (
                   <div className="copy-field">
-                    <code className="copy-field-value" title={url}>{url}</code>
+                    <a className="copy-field-value" href={url} title={url} target="_blank" rel="noopener noreferrer">{url}</a>
                     <CopyButton value={url} label={t("Copy the link for {label}", { label: linkName(s) })} />
                   </div>
                 ) : (
                   <p className="share-hint">{t("This link was created earlier. Its address was not saved by the older version and cannot be recovered. Its access rules still apply; create a new link if you have lost the address.")}</p>
+                )}
+                {state === "live" && s.mode !== "view" && url && (
+                  <p className="share-hint">
+                    {t("This link has its own discussion. Comments from the main discussion and other links are not included.")} {" "}
+                    <a href={shareDiscussionUrl(url)} target="_blank" rel="noopener noreferrer">{t("Open discussion")}</a>
+                  </p>
                 )}
                 {/* The passcode issued on a tier switch — likewise shown only this once. */}
                 {secret?.passcode && (
@@ -397,24 +412,14 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
         onClose={() => setRevoking(null)} onConfirm={() => void revoke(revoking)} />}
       {error && <p className="share-error" role="alert">{error}</p>}
 
-      {shares == null ? (
-        <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>
-      ) : list.length === 0 ? (
-        <p className="share-hint">{t("No share links yet.")}</p>
-      ) : (
-        <>
-        <ul className="share-links">
-          {list.filter(s => shareStateOf(s, now) === "live").map(renderShare)}
-        </ul>
-        {list.some(s => shareStateOf(s, now) !== "live") && <details className="share-history"><summary>{t("Expired and revoked links")} ({list.filter(s => shareStateOf(s, now) !== "live").length})</summary><ul className="share-links">{list.filter(s => shareStateOf(s, now) !== "live").map(renderShare)}</ul></details>}
-        </>
-      )}
-
       {creating ? (
-        <div className="share-new">
+        <div className="share-new is-active">
+          <div className="share-new-head">
+            <span><Link2 size={15} aria-hidden="true" /><b>{t("New share link")}</b></span>
+          </div>
           <div className="field">
             <label htmlFor="share-mode">{t("Link permissions")}</label>
-            <select id="share-mode" value={mode} onChange={e=>{setMode(e.target.value as typeof mode);if(e.target.value === "edit")setVersionId("");}}><option value="view">{t("View only")}</option><option value="comment">{t("Can comment")}</option><option value="edit">{t("Can edit")}</option></select>
+            <select ref={firstCreateField} id="share-mode" value={mode} onChange={e=>{setMode(e.target.value as typeof mode);if(e.target.value === "edit")setVersionId("");}}><option value="view">{t("View only")}</option><option value="comment">{t("Can comment")}</option><option value="edit">{t("Can edit")}</option></select>
             {mode === "edit" && <p className="share-hint">{t("Editable links change this site for everyone following its latest version.")}</p>}
             <label htmlFor="share-version">{t("Shared version")}</label><select id="share-version" value={versionId} disabled={mode === "edit"} onChange={e=>setVersionId(e.target.value)}><option value="">{t("Follow latest version")}</option>{versions.map((v,i)=><option key={v.id} value={v.id}>{t("Version {n}",{n:v.number ?? versions.length-i})}{v.official ? ` · ${t("Official version")}` : ""} · {new Date(v.createdAt).toLocaleString(locale)}</option>)}</select>
             <label htmlFor="share-new-policy">{t("Who can open this link")}</label>
@@ -460,18 +465,27 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
             <button type="button" className="btn sm solid" disabled={busy} onClick={() => void createShare()}>
               {busy ? <Loader2 size={13} className="spin" /> : <Link2 size={13} />} {t("Create")}
             </button>
-            <button type="button" className="btn sm ghost" disabled={busy} onClick={cancelCreate}>
-              {t("Cancel")}
-            </button>
+            <button type="button" className="btn sm ghost" disabled={busy} onClick={cancelCreate}>{t("Cancel")}</button>
           </div>
         </div>
       ) : (
-        <button type="button" className="btn sm" onClick={() => setCreating(true)}>
+        <button type="button" className="btn sm share-new-trigger" onClick={openCreate}>
           <Plus size={13} /> {t("New share link")}
         </button>
       )}
 
-      <ShareViews slug={slug} shares={list} icon={<Eye size={13} />} />
+      {shares == null ? (
+        <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>
+      ) : list.length === 0 ? (
+        <p className="share-hint">{t("No share links yet.")}</p>
+      ) : (
+        <>
+        <ul className="share-links">
+          {list.filter(s => shareStateOf(s, now) === "live").map(renderShare)}
+        </ul>
+        {list.some(s => shareStateOf(s, now) !== "live") && <details className="share-history"><summary>{t("Expired and revoked links")} ({list.filter(s => shareStateOf(s, now) !== "live").length})</summary><ul className="share-links">{list.filter(s => shareStateOf(s, now) !== "live").map(renderShare)}</ul></details>}
+        </>
+      )}
     </section>
   );
 }

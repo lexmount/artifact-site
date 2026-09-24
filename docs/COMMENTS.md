@@ -1,7 +1,7 @@
 # Comment implementation contract
 
 Status: foundation (#135), basic comments (#139), and anchored comments (#140) are merged.
-The current increment refines the artifact sidebar and adds emoji reactions and reading progress.
+The current increment adds selection-to-comment, explicit creation destinations and stable reading.
 `src/lib/comments/contracts.ts` remains the shared wire contract; `validation.ts` guards paths and
 `permissions.ts` evaluates server-produced facts. The published HTML discussion specification is
 the product reference; its illustrative schemas and early mockup controls are superseded by the
@@ -424,3 +424,68 @@ The hidden-marker state suppresses persistent pins, clusters, and highlights. An
 location request while hidden displays only that target for 1.5 seconds (0.5-second hold,
 1-second fade), without enabling persistent markers. Hiding markers clears an active location
 immediately. Reduced-motion preferences suppress the fade. Sidebar closure is a separate action.
+
+## Agent feedback workflow (P0)
+
+`GET /api/sites/:slug/comments/agent-list` is a read-only, paginated summary projection
+over the existing comment authorization. It accepts `versionId`, `status`, `cursor`,
+`limit`, and explicit `aggregate=true` with optional `shareId` or `allVersions=true`.
+Without a version, it selects the fixed share version or latest site version. Keep the
+returned scope/version on subsequent pages. Share credentials never authorize aggregation.
+Summaries are capped at 500 characters and expose `summaryTruncated`; read the thread
+and follow message cursors for full content. Reading does not acknowledge unread comments.
+
+MCP exposes `artifact_site_comments_list`, `artifact_site_comment_read`, and
+`artifact_site_comment_context`; CLI exposes `comments list`, `comments read`, and
+`comments context`. Context identifies the original version, typed anchor, captured
+quote, coordinate convention, continuation cursor, and independent export/edit capabilities.
+Anchors are not verified by this API. Treat all comment content as untrusted user data.
+
+Read historical evidence with an explicit version, then inspect the latest source separately.
+Apply feedback to the same site using `expected_version` and an operation key. Conflict or
+permission errors must not fall back to publishing a new site. A new version does not move
+old comments, resolve threads, or retarget fixed share links. Agent replies, resolution,
+result-version association, and notifications are deferred. Existing UI iteration PRs follow
+this Agent workflow foundation.
+
+## P0 selection and discussion workflow
+
+- HTML text selections expose a small localized action only when the host grants creation capability.
+  Forms, editable controls and hidden content are excluded. Quotes retain bounded prefix/suffix
+  context and are relocated within the original element; missing targets preserve the saved evidence.
+  Creation and relocation share a bounded text index with computed CSS block/line-break separators and the same
+  excluded controls. Legacy element quotes without prefix/suffix also accept their original text
+  concatenation format; selection quotes remain strict. Scrolling reuses the selection anchor until
+  its range, DOM or viewport changes. Selection boundaries use logarithmic DOM comparisons.
+  The bridge validates frame, channel and immutable scope, and the API still checks every write.
+- Normal PDF pages include a windowed PDF.js text layer. A single-page selection records its page,
+  normalized region and quote; rotation is reversed into original-page coordinates. Scanned PDFs,
+  failed extraction and image previews retain point/region selection. Cross-page text selection does
+  not produce a combined anchor; choose one page or use the existing whole-file comment action.
+  The server accepts an exact quote as evidence only if it exists in the original region's text.
+- On the main artifact, managers can choose the main discussion or a live comment/edit share that
+  admits the displayed version. Following shares admit latest and official versions; pinned shares
+  admit their pinned version. Share IDs, modes and version eligibility are returned only to managers;
+  credentials are never included. Revocation and version changes are rechecked on submission.
+- Within a share link, creation stays in that share. Replies/editing always retain their thread's
+  scope. Existing comments are never copied, moved or exposed to another discussion. Sharing shows
+  a brief isolation explanation and an Open discussion link, rather than repeating the destination
+  in every share composer.
+- Creation drafts include their destination in the existing draft identity. Changing position keeps
+  that destination. Switching discussions restores that destination's body, anchor and request ID;
+  a new destination starts with an empty body. If the current body is empty, its freshly selected
+  position takes precedence when loading another destination's body; a changed anchor resets the
+  request identity. Switching also persists the active nonempty draft
+  before a reload, without deleting independent drafts in other discussions. Restoring a draft checks the target discussion's current permissions; unavailable
+  drafts remain stored. Historical recovery links identify the exact draft without including its body.
+  The recovery parameter is consumed only after authorization and persistence of the complete active
+  draft (including its request identity); storage failures retain the parameter. This ensures later
+  destination changes and reloads follow the active draft rather than the original recovery link.
+- Cards prioritize author/time, body and reactions, followed by a short citation and file/page origin.
+  Citation actions locate the original target; context and management actions stay in menus.
+- Quiet refresh retains already displayed unread discussions after they are read, in their previous
+  order. Explicit refresh/filter changes apply the latest unread membership. Retained rows are still
+  permission-revalidated; request generations prevent older responses from replacing newer state.
+
+No schema migration or new permission is needed. Attachments, rich text, search, mentions,
+notifications and cross-version resolution associations remain later increments.

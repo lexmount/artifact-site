@@ -55,13 +55,12 @@ export function siteUrl(slug: string): string {
 /** A Site as anyone may see it: every per-site secret removed. Named so callers can hold the
  *  projection by type, and so widening it is a deliberate edit rather than a silent slip. */
 /** `takenDownReason` stays out too: it is written for the owner and administrators, never for a reader. */
-export type PublicSite = Omit<Site, "editToken" | "claimToken" | "anonOwnerId" | "takenDownReason"> & { expiresAt: number | null };
+export type PublicSite = Omit<Site, "editToken" | "anonOwnerId" | "takenDownReason"> & { expiresAt: number | null };
 
 /**
- * Public projection — strips ALL THREE per-site secrets. Each one is, on its own, sufficient
+ * Public projection — strips both per-site secrets. Each one is, on its own, sufficient
  * authorization for some site:
  *
- *   claimToken   retired receipt column; never accepted for claiming
  *   editToken    anonymous management credential, never accepted on owned sites
  *   anonOwnerId  the creating browser's cookie value. lib/authz grants `owner` on an unclaimed
  *                site to whoever presents it (`safeEqual(viewer.anonId, site.anonOwnerId)`), and
@@ -69,7 +68,7 @@ export type PublicSite = Omit<Site, "editToken" | "claimToken" | "anonOwnerId" |
  *                it into a public GET handed any reader full control (delete included) of the site,
  *                and since the anonymous drop is the product's entry point, that is most sites.
  *
- * None of the three may ever appear in a response that is not the creator's own.
+ * Neither may ever appear in a response that is not the creator's own.
  *
  * Written as an ALLOWLIST — naming what goes out — rather than as `delete`s off a clone, because
  * the deny-list version is what failed: it was written when there were two secrets, `anonOwnerId`
@@ -94,7 +93,6 @@ export function publicSite(site: Site): PublicSite {
     expiresAt: anonymousExpiresAt(site),
     ownerId: site.ownerId,
     visibility: site.visibility,
-    editPolicy: "owner",
   };
 }
 
@@ -227,7 +225,7 @@ export async function commitUploadedVersion(
   // Same audit path as createSite: a site built by chunked upload looks identical in the audit table to one from a one-shot upload.
   const audit = input.ctx ? auditRow(input.ctx, session.siteId, session.versionId, "create") : undefined;
   await insertSiteRetryingSlug(
-    { tenantId: await creationTenant(session_?.userId ?? null,session.tenantId), id: session.siteId, title, kind: input.document ? "document" : "folder", editToken: session_ ? "" : editToken, claimToken: "", anonOwnerId: session_ ? null : anonId, ownerId: session_?.userId ?? null, visibility: policy.defaultVisibility },
+    { tenantId: await creationTenant(session_?.userId ?? null,session.tenantId), id: session.siteId, title, kind: input.document ? "document" : "folder", editToken: session_ ? "" : editToken, anonOwnerId: session_ ? null : anonId, ownerId: session_?.userId ?? null, visibility: policy.defaultVisibility },
     version, audit,
   );
   scheduleTextIndex(session.siteId, session.versionId);
@@ -255,7 +253,7 @@ export async function createSite(
   const audit = ctx ? auditRow(ctx, siteId, versionId, "create") : undefined;
   // Visibility is decided HERE, not by the column default, because it depends on which deployment
   // this is: the intranet opens up, the public internet stays shut until the owner says otherwise. See config.defaultVisibility.
-  await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: normalized.title, kind: normalized.kind, editToken: owner.ownerId ? "" : editToken, claimToken: "", anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility: policy.defaultVisibility }, version, audit);
+  await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: normalized.title, kind: normalized.kind, editToken: owner.ownerId ? "" : editToken, anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility: policy.defaultVisibility }, version, audit);
   scheduleTextIndex(siteId, versionId); // searchable text follows the version; the response does not wait for it
   return { site: (await getSite(siteId))!, version: (await getVersion(versionId))! };
 }
@@ -564,7 +562,7 @@ export async function forkSite(
   //   · Inserting first and calling updateSiteSharing afterwards leaves a window in which the copy of a
   //     private source is public. A single write leaves no window.
   const visibility = stricter(source.visibility, policy.defaultVisibility);
-  await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: `${source.title} (copy)`, kind: source.kind, editToken: owner.ownerId ? "" : editToken, claimToken: "", anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility }, version, audit);
+  await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: `${source.title} (copy)`, kind: source.kind, editToken: owner.ownerId ? "" : editToken, anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility }, version, audit);
   scheduleTextIndex(siteId, versionId);
   return { site: (await getSite(siteId))!, version: (await getVersion(versionId))! };
 }

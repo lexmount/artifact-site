@@ -77,7 +77,8 @@ describe("anchored API and Agent integration", () => {
     const allowed = await getAgentContext(req(reader.cookie, "/", undefined, token), site.slug, first.detail.thread.id);
     expect(allowed.capabilities).toEqual({ canEditContent: false, canExportSource: false });
     expect(JSON.stringify(allowed)).not.toContain(token);
-    expect((await CONTEXT(req(reader.cookie), { params: Promise.resolve({ slug: site.slug, threadId: first.detail.thread.id }) })).status).toBe(404);
+    // A verified browser participant now retains revocable, version-scoped access.
+    expect((await CONTEXT(req(reader.cookie), { params: Promise.resolve({ slug: site.slug, threadId: first.detail.thread.id }) })).status).toBe(200);
     await revokeShare(share.id);
     expect((await CONTEXT(req(reader.cookie, "/", undefined, token), { params: Promise.resolve({ slug: site.slug, threadId: first.detail.thread.id }) })).status).toBe(404);
     expect((await getAgentContext(req(owner.cookie), site.slug, first.detail.thread.id)).scope.entry).toEqual({ kind: "share", shareId: share.id });

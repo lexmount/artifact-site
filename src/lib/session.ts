@@ -6,6 +6,7 @@
 // Server-only: this module reaches the database / object store / secrets, and must never be
 // bundled into a client component. The import is a build-time tripwire (see next.js docs).
 import "server-only";
+import { SESSION_COOKIE_NAMES } from "@/lib/session-cookie";
 import { randomBytes } from "node:crypto";
 import { config } from "@/lib/config";
 import { safeEqual, sha256hex } from "@/lib/crypto";
@@ -29,15 +30,6 @@ const SESSION_ABSOLUTE_MS = 90 * 24 * 60 * 60 * 1000; // total lifetime, active 
 /** Don't write to the DB on every single request — only once the window has moved materially. */
 const TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
-/**
- * `__Host-` forces Secure + Path=/ + no Domain, which is exactly what stops a sibling subdomain
- * from tossing a cookie of the same name and pinning the user to an attacker's session. The prefix
- * is only honoured over HTTPS, so plain-HTTP local dev falls back to an unprefixed name; production
- * is always HTTPS and always gets the hardened one.
- */
-const SECURE_COOKIE = "__Host-ah_session";
-const DEV_COOKIE = "ah_session";
-
 /** The DB stores sha256(secret), never the secret — a read-only dump yields nothing usable. */
 const hashSecret = sha256hex;
 
@@ -50,8 +42,8 @@ const hashSecret = sha256hex;
  * would happily accept it.
  */
 function readSessionSecret(request: Request): string | null {
-  if (isSecureRequest(request)) return readCookie(request, SECURE_COOKIE);
-  return readCookie(request, DEV_COOKIE);
+  if (isSecureRequest(request)) return readCookie(request, SESSION_COOKIE_NAMES.secure);
+  return readCookie(request, SESSION_COOKIE_NAMES.development);
 }
 
 export interface MintedSession {
@@ -86,7 +78,7 @@ export async function mintSession(
 
 function buildCookie(request: Request, value: string, maxAgeSec: number): string {
   const secure = isSecureRequest(request);
-  const name = secure ? SECURE_COOKIE : DEV_COOKIE;
+  const name = secure ? SESSION_COOKIE_NAMES.secure : SESSION_COOKIE_NAMES.development;
   const parts = [`${name}=${encodeURIComponent(value)}`, "Path=/", "HttpOnly", "SameSite=Lax", `Max-Age=${maxAgeSec}`];
   if (secure) parts.push("Secure");
   return parts.join("; ");

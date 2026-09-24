@@ -92,6 +92,18 @@ function cacheEvictPrefix(prefix: string): void {
 }
 
 export class S3Storage implements Storage {
+  async writeCommentAttachment(id: string, bytes: Uint8Array, mimeType: "image/png" | "image/jpeg") {
+    await this.client.send(new PutObjectCommand({Bucket:this.bucket, Key:`comment-attachments/${safeRelativePath(id)}`, Body:bytes, ContentType:mimeType}));
+  }
+  async readCommentAttachment(id: string) {
+    const result = await this.client.send(new GetObjectCommand({Bucket:this.bucket, Key:`comment-attachments/${safeRelativePath(id)}`}));
+    if (!result.Body) throw new StorageError();
+    return result.Body.transformToByteArray();
+  }
+  async removeCommentAttachment(id: string) {
+    await this.client.send(new DeleteObjectCommand({Bucket:this.bucket, Key:`comment-attachments/${safeRelativePath(id)}`}));
+  }
+
   private readonly client: S3Client;
   private readonly bucket: string;
 

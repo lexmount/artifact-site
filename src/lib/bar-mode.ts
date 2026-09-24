@@ -18,6 +18,7 @@ export type BarMode = "manual" | "auto";
 
 export const DEFAULT_BAR_MODE: BarMode = "manual";
 export const BAR_MODE_KEY = "sites:barMode";
+export const BAR_PINNED_KEY = "sites:barPinned";
 /** How long the cursor must dwell in the hot zone before it counts as "wants the bar" rather than "passing through to click a tab". Crossing a 14px zone never comes close to this. */
 export const HOVER_DWELL_MS = 200;
 
@@ -80,6 +81,36 @@ export function createBarModeStore(
 }
 
 export const barModeStore = createBarModeStore(() => (typeof window === "undefined" ? null : window.localStorage));
+
+export function createBarPinnedStore(
+  getStorage: () => StorageLike | null | undefined,
+  eventTarget: StorageEventTarget | null = typeof window === "undefined" ? null : window,
+) {
+  const listeners = new Set<Listener>();
+  let fallback = false;
+  let storageFailed = false;
+  const read = () => {
+    if (storageFailed) return fallback;
+    try { const storage = getStorage(); return storage ? storage.getItem(BAR_PINNED_KEY) === "true" : fallback; } catch { return fallback; }
+  };
+  return {
+    subscribe(listener: Listener) {
+      listeners.add(listener);
+      const onStorage = (event: Event) => { const key = (event as StorageEvent).key; if (key === BAR_PINNED_KEY || key === null) listener(); };
+      eventTarget?.addEventListener("storage", onStorage);
+      return () => { listeners.delete(listener); eventTarget?.removeEventListener("storage", onStorage); };
+    },
+    getSnapshot: read,
+    getServerSnapshot: () => false,
+    set(pinned: boolean) {
+      fallback = pinned;
+      try { getStorage()?.setItem(BAR_PINNED_KEY, String(pinned)); storageFailed = false; } catch { storageFailed = true; }
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+export const barPinnedStore = createBarPinnedStore(() => (typeof window === "undefined" ? null : window.localStorage));
 
 /** Whether a hover into the hot zone should start the dwell timer. Only "auto" mode + a real mouse counts; a touch-synthesized enter does not (see isHoverPointer). */
 export function hoverArmsReveal(mode: BarMode, isMousePointer: boolean): boolean {

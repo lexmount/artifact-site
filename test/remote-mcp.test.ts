@@ -1,3 +1,4 @@
+import { putUserSiteRole } from "@/lib/role-bindings";
 import { mcpTools } from "@/lib/mcp-tools";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -138,7 +139,7 @@ it("uses the configured public address behind a reverse proxy", async () => {
   const created = await call(ca, "publish", { html: "<html>Proxy export</html>", share: false });
   process.env.ARTIFACT_PUBLIC_URL = "https://public.example";
   const exported = await call(ca, "export", { slug: created.data.slug });
-  expect(exported.data.downloadUrl).toBe(`https://public.example/api/sites/${created.data.slug}/export`);
+  expect(exported.data.downloadUrl).toBe(`https://public.example/api/sites/${created.data.slug}/export?version_id=${exported.data.versionId}`);
 });
 
 
@@ -521,7 +522,7 @@ it("forwards tenant and share context with existing MCP credentials", async () =
   const account = (await call(ownerClient,"connection")).data.user;
   const tenant = createId("tenant");
   await rbacQuery("INSERT INTO tenants(id,name) VALUES($1,'MCP destination')",[tenant]);
-  await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'member')",[tenant,account.id]);
+  await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)",[tenant,account.id]);
   const published = await call(ownerClient,"publish",{html:"<html>Shared context</html>",share:false,tenant_id:tenant});
   expect(published.error).toBe(false); const slug=published.data.slug;
   expect((await getSiteBySlug(slug))!.tenantId).toBe(tenant);
@@ -542,10 +543,10 @@ it("rejects further MCP chunks immediately after an editor is removed", async ()
   const slug=(await call(ca,"publish",{html:"<html>Original</html>",share:false})).data.slug;
   const {getSiteBySlug,rbacQuery}=await import("@/lib/db"); const site=(await getSiteBySlug(slug))!;
   const user=(await call(ce,"connection")).data.user;
-  await rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'editor',1)",[site.id,user.id]);
+  await putUserSiteRole(rbacQuery, site.id, user.id, 'editor', null);
   const upload_id=(await call(ce,"upload_start",{slug})).data.versionId;
   expect((await call(ce,"upload_write",{upload_id,path:"index.html",index:0,base64:"YQ==",final:false})).error).toBe(false);
-  await rbacQuery("DELETE FROM site_members WHERE site_id=$1 AND user_id=$2",[site.id,user.id]);
+  await rbacQuery("DELETE FROM role_bindings WHERE resource_site_id=$1 AND subject_user_id=$2",[site.id,user.id]);
   expect((await call(ce,"upload_write",{upload_id,path:"index.html",index:1,base64:"Yg==",final:false})).data.status).toBe(403);
   expect((await getSiteBySlug(slug))!.currentVersionId).toBe(site.currentVersionId);
 });
@@ -639,5 +640,257 @@ it.each(["html", "multipart"])("recovers %s fallback publication and update thro
     expect((await call(c, "update", update)).data.versionId).toBe(updated.data.versionId);
     expect(await rbacQuery("SELECT id FROM sites WHERE slug=$1", [slug])).toHaveLength(1);
     expect(await rbacQuery("SELECT id FROM versions WHERE site_id=(SELECT id FROM sites WHERE slug=$1)", [slug])).toHaveLength(2);
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it("reads isolated feedback and immutable evidence before an idempotent same-site revision", async () => {
+  const { createComment, replyComment } = await import("@/lib/comments/service");
+  const { rbacQuery } = await import("@/lib/db");
+  const a = await identity("feedback-owner"), b = await identity("feedback-reader");
+  const ca = await connect(a.token), cb = await connect(b.token);
+  const created = await call(ca,"publish",{html:"<html><body>Original evidence</body></html>",share:false});
+  const slug=created.data.slug;
+  const info=(await call(ca,"get_site",{slug})).data;
+  const original=info.version.id;
+  const share=(await call(ca,"share",{slug,policy:"public",mode:"comment",versionId:original})).data;
+  const second=(await call(ca,"share",{slug,policy:"public",mode:"comment",versionId:original})).data;
+  const request = (token?:string) => new Request(`${origin}/api/comments`,{method:"POST",headers:{...a.headers,...(token?{"x-artifact-share":token}:{})}});
+  const main=await createComment(request(),slug,{scope:{siteId:info.site.id,versionId:original,entry:{kind:"main"}},anchor:{schemaVersion:1,kind:"html",filePath:"index.html",selector:"body",quote:{exact:"Original evidence"},viewport:{width:1200,height:800}},body:"Correct the evidence",clientRequestId:crypto.randomUUID()});
+  const { uploadCommentAttachment } = await import("@/lib/comments/attachments");
+  const sharp = (await import("sharp")).default;
+  const bytes=await sharp({create:{width:160,height:90,channels:3,background:"green"}}).png().toBuffer();
+  const attachment=await uploadCommentAttachment(request(share.token),slug,{siteId:info.site.id,versionId:original,entry:{kind:"share",shareId:share.share.id}},new File([new Uint8Array(bytes)],"expected-design.png"));
+  const shared=await createComment(request(share.token),slug,{scope:{siteId:info.site.id,versionId:original,entry:{kind:"share",shareId:share.share.id}},anchor:{schemaVersion:1,kind:"document",filePath:"index.html"},body:"Private link feedback",attachmentIds:[attachment.id],clientRequestId:crypto.randomUUID()});
+  for(let i=0;i<32;i++) { __resetRateLimitForTests(); await replyComment(request(),slug,main.detail.thread.id,{body:`Reply ${i}`,clientRequestId:crypto.randomUUID()}); }
+  __resetRateLimitForTests();
+  const list=await call(ca,"comments_list",{slug});
+  expect(list.error).toBe(false);expect(list.data.items).toHaveLength(1);
+  expect(list.data.scope.versionId).toBe(original);expect(list.data.items[0].summary).toBe("Correct the evidence");
+  const aggregate=await call(ca,"comments_list",{slug,aggregate:true,all_versions:true,limit:1});
+  expect(aggregate.data.hasMore).toBe(true);
+  const next=await call(ca,"comments_list",{slug,aggregate:true,all_versions:true,limit:1,cursor:aggregate.data.nextCursor});
+  expect(next.data.items).toHaveLength(1);expect(next.data.items[0].threadId).not.toBe(aggregate.data.items[0].threadId);
+  expect((await call(cb,"comments_list",{slug,share_token:share.token})).data.items[0].threadId).toBe(shared.detail.thread.id);
+  expect((await call(cb,"comments_list",{slug,share_token:share.token,aggregate:true})).error).toBe(true);
+  expect((await call(cb,"comment_read",{slug,thread_id:shared.detail.thread.id,share_token:second.token})).error).toBe(true);
+  const context=await call(cb,"comment_context",{slug,thread_id:shared.detail.thread.id,share_token:share.token});
+  expect(context.data.capabilities).toEqual({canExportSource:false,canEditContent:false});
+  const detail=await call(ca,"comment_read",{slug,thread_id:main.detail.thread.id});
+  expect(detail.data.messages.nextCursor).toBeTruthy();
+  const rest=await call(ca,"comment_read",{slug,thread_id:main.detail.thread.id,cursor:detail.data.messages.nextCursor});
+  expect(detail.data.messages.items.length+rest.data.items.length).toBe(33);expect(rest.data.nextCursor).toBeNull();
+  expect(await rbacQuery("SELECT * FROM comment_read_scopes WHERE site_id=$1",[info.site.id])).toHaveLength(0);
+  const nativeImage=await ca.callTool({name:"artifact_site_comment_image",arguments:{slug,attachment_id:attachment.id}});
+  expect(nativeImage.isError).not.toBe(true);
+  expect((nativeImage.content as {type:string}[])[1].type).toBe("image");
+  const intermediate=await call(ca,"update",{slug,expected_version:original,html:"<html><body>Intervening change</body></html>"});
+  expect(intermediate.error).toBe(false);
+  const evidence=await call(ca,"read",{slug,version_id:original,file:"index.html"});expect(evidence.data.text).toContain("Original evidence");
+  const manifest=await call(ca,"export",{slug,version_id:original});expect(manifest.data.versionId).toBe(original);
+  expect((await call(ca,"export",{slug,version_id:original,path:"index.html"})).error).toBe(false);
+  expect((await call(cb,"read",{slug,share_token:share.token,version_id:intermediate.data.versionId})).error).toBe(true);
+  expect((await call(cb,"export",{slug,share_token:share.token,version_id:original})).error).toBe(true);
+  const historical=await call(ca,"comment_context",{slug,thread_id:main.detail.thread.id});
+  expect(historical.data.artifact).toMatchObject({originalVersionId:original,latestVersionId:intermediate.data.versionId});
+  expect(historical.data.location.verification).toBe("not-checked");
+  expect((await call(ca,"update",{slug,expected_version:original,html:"stale"})).error).toBe(true);
+  const args={slug,expected_version:intermediate.data.versionId,html:"<html><body>Intervening change + fixed feedback</body></html>",operation_key:"feedback-same-site-update"};
+  const updated=await call(ca,"update",args), replay=await call(ca,"update",args);
+  expect(updated.error).toBe(false);expect(updated.data.slug).toBe(slug);expect(replay.data.versionId).toBe(updated.data.versionId);
+  const threadId=shared.detail.thread.id;
+  const revision=(await call(ca,"comment_read",{slug,thread_id:threadId})).data.thread.revision;
+  expect((await call(cb,"comment_result",{slug,thread_id:threadId,version_id:updated.data.versionId,expected_revision:revision,share_token:share.token})).error).toBe(true);
+  expect((await call(ca,"comment_result",{slug,thread_id:threadId,version_id:updated.data.versionId,expected_revision:revision})).error).toBe(false);
+  const linked=(await call(ca,"comment_read",{slug,thread_id:threadId})).data;
+  expect(linked.space.versionId).toBe(original);
+  expect(linked.thread.resolution.status).toBe("open");
+  expect(linked.thread.resultVersionId).toBe(updated.data.versionId);
+  expect(linked.thread.resultAssociation.actorKind).toBe("agent");
+  const audits=await rbacQuery("SELECT actor_id,reason FROM rbac_audit WHERE action='comment.result.associate' AND target_id=$1",[threadId]);
+  expect(audits).toHaveLength(1);
+  expect(audits[0].actor_id).toBe(linked.thread.resultAssociation.userId);
+  expect(JSON.parse(audits[0].reason as string)).toMatchObject({versionId:updated.data.versionId,actorKind:"agent"});
+  expect((await call(ca,"comment_result",{slug,thread_id:threadId,version_id:null,expected_revision:revision})).error).toBe(true);
+  expect((await call(ca,"find")).data.owned).toHaveLength(1);
+  expect((await call(cb,"comments_list",{slug,share_token:share.token})).data.scope.versionId).toBe(original);
+  expect((await call(ca,"comment_read",{slug,thread_id:main.detail.thread.id})).data.thread.resolution.status).toBe("open");
+});
+
+it("runs CLI feedback -> historical read -> same-site update through real API handlers", async () => {
+  const { run } = await import("../cli/src/cli");
+  const { ArtifactSiteClient } = await import("../cli/src/client");
+  const { callApi } = await import("@/lib/mcp/api");
+  const { createComment, replyComment } = await import("@/lib/comments/service");
+  const { writeFileSync } = await import("node:fs");
+  const a=await identity("cli-feedback");const ca=await connect(a.token);
+  const created=(await call(ca,"publish",{html:"<h1>Before feedback</h1>",share:false})).data;
+  const { rbacQuery } = await import("@/lib/db");
+  // Base64url slugs can begin with a dash; always exercise CLI option termination.
+  const slug = "-cli-feedback";
+  await rbacQuery("UPDATE sites SET slug=$1 WHERE slug=$2", [slug, created.slug]);
+  const info=(await call(ca,"get_site",{slug})).data;
+  const thread=await createComment(new Request(`${origin}/api/comments`,{method:"POST",headers:a.headers}),slug,{scope:{siteId:info.site.id,versionId:info.version.id,entry:{kind:"main"}},anchor:{schemaVersion:1,kind:"document",filePath:"index.html"},body:"Change the heading",clientRequestId:crypto.randomUUID()});
+  for (let i = 0; i < 31; i++) {
+    __resetRateLimitForTests();
+    await replyComment(new Request(`${origin}/api/comments`, { method: "POST", headers: a.headers }), slug, thread.detail.thread.id, { body: `CLI reply ${i}`, clientRequestId: crypto.randomUUID() });
+  }
+  __resetRateLimitForTests();
+  const output:string[]=[], errors:string[]=[];
+  const file=join(dir,"revision.html");writeFileSync(file,"<h1>After feedback</h1>");
+  const transport:typeof fetch=async(input,init)=>{
+    const request=new Request(input,init), u=new URL(request.url), parts=u.pathname.split("/");
+    const op=parts[2]==="operations" ? "operation_status" : parts[2]==="auth" ? "whoami" : parts[4]==="edit" ? "edit" : parts[4]==="text" ? "read" : parts[5]==="agent-list" ? "comments_list" : parts[6]==="agent-context" ? "comment_context" : parts[6]==="messages" ? "comment_messages" : parts[4]==="comments" ? "comment_read" : "get";
+    try {const value=await callApi(request,op,{slug:parts[3],key:decodeURIComponent(parts[3]),threadId:parts[5],query:Object.fromEntries(u.searchParams),...(request.method==="POST"?{body:await request.json()}:{})});return Response.json(value);}
+    catch(error){const e=error as {statusCode?:number;data?:unknown};return Response.json(e.data ?? {error:String(error)},{status:e.statusCode??500});}
+  };
+  vi.stubEnv("ARTIFACT_SITE_TOKEN",a.token);vi.stubEnv("ARTIFACT_SITE_CONFIG_DIR",join(dir,"cli-config"));
+  const exec=(...args:string[])=>run(["--base",origin,"--json",...args],{out:l=>output.push(l),err:l=>errors.push(l),stdin:async()=>""},baseUrl=>new ArtifactSiteClient({baseUrl,token:a.token,fetch:transport,retries:0}));
+  try {
+    expect(await exec("comments","list","--",slug), errors.join("\n")).toBe(0);expect(JSON.parse(output.at(-1)!).items[0].threadId).toBe(thread.detail.thread.id);
+    expect(await exec("comments","context","--",slug,thread.detail.thread.id), errors.join("\n")).toBe(0);expect(JSON.parse(output.at(-1)!).artifact.originalVersionId).toBe(info.version.id);
+    expect(await exec("comments", "read", "--", slug, thread.detail.thread.id)).toBe(0);
+    const firstPage = JSON.parse(output.at(-1)!).messages;
+    expect(firstPage.nextCursor).toBeTruthy();
+    expect(await exec("comments", "read", "--cursor", firstPage.nextCursor, "--", slug, thread.detail.thread.id)).toBe(0);
+    const lastPage = JSON.parse(output.at(-1)!);
+    expect(lastPage.nextCursor).toBeNull();
+    // Replies can share a timestamp; their random IDs break ties, not insertion order.
+    const messages = [...firstPage.items, ...lastPage.items] as { id: string; content: { body: string } }[];
+    expect(messages).toHaveLength(32);
+    expect(new Set(messages.map(message => message.id)).size).toBe(32);
+    expect(messages.map(message => message.content.body).sort()).toEqual([
+      "Change the heading", ...Array.from({ length: 31 }, (_, i) => `CLI reply ${i}`),
+    ].sort());
+    expect(await exec("read","--version-id",info.version.id,"--file","index.html","--",slug)).toBe(0);
+    const args=["update","--expected-version",info.version.id,"--operation-key","cli-feedback-revision","--",slug,file];
+    expect(await exec(...args),errors.join("\n")).toBe(0);const result=JSON.parse(output.at(-1)!);
+    expect(result.slug).toBe(slug);expect(result.versionId).not.toBe(info.version.id);
+    expect(await exec(...args),errors.join("\n")).toBe(0);expect(JSON.parse(output.at(-1)!).versionId).toBe(result.versionId);
+    expect(await exec("update","--expected-version",info.version.id,"--operation-key","cli-feedback-conflict","--",slug,file)).toBe(4);
+    expect((await call(ca,"find")).data.owned).toHaveLength(1);
+    expect(await exec("read","--version-id",info.version.id,"--file","index.html","--",slug)).toBe(0);expect(JSON.parse(output.at(-1)!).text).toContain("Before feedback");
+  } finally {vi.unstubAllEnvs();}
+});
+
+// Trust classification belongs to the tool boundary even if an API adds a same-named field.
+it("keeps comment detail and continuation untrusted regardless of API labels", async () => {
+  const api = await import("@/lib/mcp/api");
+  const a = await identity("comment-trust");
+  const client = await connect(a.token);
+  const spy = vi.spyOn(api, "callApi").mockResolvedValue({ dataTrust: "trusted", items: [] });
+  try {
+    for (const cursor of [undefined, "next-page"]) {
+      const result = await call(client, "comment_read", { slug: "site", thread_id: "thread", ...(cursor ? { cursor } : {}) });
+      expect(result.error).toBe(false);
+      expect(result.data.dataTrust).toBe("untrusted");
+    }
+  } finally { spy.mockRestore(); }
+});
+
+it("returns native comment image content and rechecks access on every MCP read", async () => {
+  const a = await identity("image-owner"), b = await identity("image-reader");
+  const ca = await connect(a.token), cb = await connect(b.token);
+  const created = await call(ca, "publish", {html:"<p>Image feedback</p>",share:false});
+  const { getSiteBySlug } = await import("@/lib/db");
+  const { uploadCommentAttachment, discardCommentAttachment } = await import("@/lib/comments/attachments");
+  const sharp = (await import("sharp")).default;
+  const site = (await getSiteBySlug(created.data.slug))!;
+  const request = new Request(`${origin}/api/comments`, {method:"POST",headers:a.headers});
+  const bytes = await sharp({create:{width:1800,height:1200,channels:3,background:"red"}}).png().toBuffer();
+  const image = await uploadCommentAttachment(request,site.slug,{siteId:site.id,versionId:site.currentVersionId,entry:{kind:"main"}},new File([new Uint8Array(bytes)],"feedback.png"));
+  const args = {slug:site.slug,attachment_id:image.id};
+  const result = await ca.callTool({name:"artifact_site_comment_image",arguments:args});
+  expect(result.isError).not.toBe(true);
+  const content = result.content as {type:string;data?:string;mimeType?:string;text?:string}[];
+  expect(content[1]).toMatchObject({type:"image",mimeType:"image/png"});
+  expect((await sharp(Buffer.from(content[1].data!,"base64")).metadata()).width).toBe(1568);
+  expect(JSON.parse(content[0].text!)).toMatchObject({dataTrust:"untrusted",attachment:{id:image.id,width:1800,height:1200},image:{width:1568,height:1045,resized:true}});
+  const smaller=await ca.callTool({name:"artifact_site_comment_image",arguments:{...args,max_edge:256}});
+  expect(JSON.parse((smaller.content as {text:string}[])[0].text).image.width).toBe(256);
+  expect((await call(ca,"comment_image",{...args,max_edge:8192})).error).toBe(true);
+  expect((await call(cb,"comment_image",args)).error).toBe(true);
+  await discardCommentAttachment(request,site.slug,image.id);
+  expect((await call(ca,"comment_image",args)).error).toBe(true);
+  const {createComment}=await import("@/lib/comments/service");
+  const {revokeShare}=await import("@/lib/db");
+  const share=(await call(ca,"share",{slug:site.slug,policy:"public",mode:"comment"})).data;
+  const other=(await call(ca,"share",{slug:site.slug,policy:"public",mode:"comment"})).data;
+  const scoped=new Request(request.url,{method:"POST",headers:{...a.headers,"x-artifact-share":share.token}});
+  const scope={siteId:site.id,versionId:site.currentVersionId,entry:{kind:"share" as const,shareId:share.share.id}};
+  const attached=await uploadCommentAttachment(scoped,site.slug,scope,new File([new Uint8Array(bytes)],"shared.png"));
+  await createComment(scoped,site.slug,{scope,anchor:{kind:"document",schemaVersion:1,filePath:"index.html"},body:"Screenshot",attachmentIds:[attached.id],clientRequestId:crypto.randomUUID()});
+  const sharedArgs={slug:site.slug,attachment_id:attached.id,share_token:share.token};
+  expect((await call(cb,"comment_image",sharedArgs)).error).toBe(false);
+  expect((await call(cb,"comment_image",{...sharedArgs,share_token:other.token})).error).toBe(true);
+  await revokeShare(share.share.id);
+  expect((await call(cb,"comment_image",sharedArgs)).error).toBe(true);
+
+});
+
+it("lists personal folders and moves artifacts without changing sharing", async () => {
+  const { POST: createFolder } = await import("@/app/api/me/folders/route");
+  const { getSiteBySlug } = await import("@/lib/db");
+  const a = await identity("folders-a"), b = await identity("folders-b");
+  const ca = await connect(a.token), cb = await connect(b.token);
+  const folder = (await (await createFolder(new Request(`${origin}/api/me/folders`, {
+    method: "POST", headers: a.headers, body: JSON.stringify({ name: "Reports" }),
+  }))).json()).folder;
+  expect((await call(ca, "folders")).data.folders).toEqual([expect.objectContaining({ id: folder.id, name: "Reports" })]);
+  expect((await call(cb, "folders")).data.folders).toEqual([]);
+  const site = (await call(ca, "publish", { html: "<html>Filed report</html>", share: false })).data;
+  const foreignFolder = (await (await createFolder(new Request(`${origin}/api/me/folders`, {
+    method: "POST", headers: b.headers, body: JSON.stringify({ name: "Other reports" }),
+  }))).json()).folder;
+  expect((await call(ca, "move", { slug: site.slug, folder_id: foreignFolder.id })).error).toBe(true);
+  const before = await getSiteBySlug(site.slug);
+  expect((await call(cb, "move", { slug: site.slug, folder_id: folder.id })).error).toBe(true);
+  expect((await call(ca, "move", { slug: site.slug, folder_id: "missing" })).error).toBe(true);
+  for (let i = 0; i < 2; i++) expect((await call(ca, "move", { slug: site.slug, folder_id: folder.id })).data).toMatchObject({ ok: true, slug: site.slug, folderId: folder.id });
+  expect(await getSiteBySlug(site.slug)).toEqual(before);
+  expect((await call(ca, "move", { slug: site.slug, folder_id: null })).data.folderId).toBeNull();
+  process.env.PUBLISH_API_TOKEN = "folder-operator";
+  const operator = await connect("folder-operator");
+  expect((await call(operator, "folders")).error).toBe(true);
+  expect((await call(operator, "move", { slug: site.slug, folder_id: folder.id })).error).toBe(true);
+});
+
+it("keeps CLI, MCP and HTTP personal folders and public lookup consistent", async () => {
+  const { run } = await import("../cli/src/cli");
+  const { ArtifactSiteClient } = await import("../cli/src/client");
+  const { callApi } = await import("@/lib/mcp/api");
+  const { POST: createFolder, GET: listFolders } = await import("@/app/api/me/folders/route");
+  const { updateSiteVisibility } = await import("@/lib/db");
+  const a = await identity("cli-library"), b = await identity("other-library");
+  const ca = await connect(a.token), cb = await connect(b.token);
+  const folder = (await (await createFolder(new Request(`${origin}/api/me/folders`, { method: "POST", headers: a.headers, body: JSON.stringify({ name: "Reports" }) }))).json()).folder;
+  const site = (await call(ca, "publish", { html: "<h1>Library report</h1>", share: false })).data;
+  const { getSiteBySlug } = await import("@/lib/db");
+  await updateSiteVisibility((await getSiteBySlug(site.slug))!.id, "public");
+  expect((await call(cb, "find")).data).toMatchObject({ scope: "mine", owned: [], collaborating: [] });
+  expect((await call(cb, "find", { scope: "public" })).data).toMatchObject({ scope: "public", sites: [expect.objectContaining({ slug: site.slug })] });
+  expect((await call(cb, "find", { scope: "public", query: "report" })).error).toBe(true);
+  const output: string[] = [], errors: string[] = [];
+  const transport: typeof fetch = async (input, init) => {
+    const request = new Request(input, init), u = new URL(request.url);
+    const op = u.pathname.endsWith("/assignments") ? "move" : u.pathname.endsWith("/folders") ? "folders" : u.pathname === "/api/sites" ? "public_list" : u.pathname === "/api/me/sites" ? "list" : "whoami";
+    try { return Response.json(await callApi(request, op, { ...(request.method === "PUT" ? { body: await request.json() } : {}) })); }
+    catch (error) { const e = error as { statusCode?: number; data?: unknown }; return Response.json(e.data ?? { error: String(error) }, { status: e.statusCode ?? 500 }); }
+  };
+  vi.stubEnv("ARTIFACT_SITE_TOKEN", a.token); vi.stubEnv("ARTIFACT_SITE_CONFIG_DIR", join(dir, "cli-library-config"));
+  const exec = (...args: string[]) => run(["--base", origin, "--json", ...args], { out: l => output.push(l), err: l => errors.push(l), stdin: async () => "" }, (baseUrl, token) => new ArtifactSiteClient({ baseUrl, token, fetch: transport, retries: 0 }));
+  try {
+    expect(await exec("folders", "list")).toBe(0);
+    expect(JSON.parse(output.at(-1)!)).toEqual((await call(ca, "folders")).data);
+    expect(await exec("move", site.slug, "--folder", folder.id)).toBe(0);
+    const state = await (await listFolders(new Request(`${origin}/api/me/folders`, { headers: a.headers }))).json();
+    expect(state.assign[site.slug]).toBe(folder.id);
+    expect(await exec("move", site.slug, "--folder", "missing")).toBe(1);
+    expect(await exec("move", site.slug, "--unfiled")).toBe(0);
+    expect(JSON.parse(output.at(-1)!).folderId).toBeNull();
+    expect(await exec("find", "--public")).toBe(0); expect(JSON.parse(output.at(-1)!).scope).toBe("public");
+    process.env.PUBLISH_API_TOKEN = "library-operator"; vi.stubEnv("ARTIFACT_SITE_TOKEN", "library-operator");
+    expect(await exec("whoami")).toBe(0); expect(JSON.parse(output.at(-1)!)).toMatchObject({ operator: true, tokenStatus: "operator", user: null });
+    expect(await exec("folders", "list")).toBe(3);
+    expect(await exec("find")).toBe(3);
   } finally { vi.unstubAllEnvs(); }
 });

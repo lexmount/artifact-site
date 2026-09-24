@@ -5,6 +5,7 @@
 //   npx vitest run test/storage-s3.integration.test.ts
 import { afterAll, describe, expect, it } from "vitest";
 import { S3Storage, __resetS3CacheForTests } from "@/lib/storage-s3";
+import { HeadObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import { u8 } from "./helpers";
 
 const live = Boolean(process.env.ARTIFACT_S3_BUCKET);
@@ -19,14 +20,29 @@ describe.skipIf(!live)("S3Storage — live COS round-trip", () => {
     if (live) await storage.removeSite(S).catch(() => {});
   });
 
+  it("private comment images round-trip outside the version namespace", async () => {
+    const id = `attachment-s3it-${Date.now()}`;
+    try {
+      for (const mimeType of ["image/png", "image/jpeg"] as const) {
+        await storage.writeCommentAttachment(id, u8("private raster"), mimeType);
+        const metadata=await (storage as unknown as {client:S3Client}).client.send(new HeadObjectCommand({Bucket:process.env.ARTIFACT_S3_BUCKET,Key:`comment-attachments/${id}`}));
+        expect(metadata.ContentType).toBe(mimeType);
+      }
+      expect(Buffer.from(await storage.readCommentAttachment(id)).toString()).toBe("private raster");
+      await expect(storage.readCommentAttachment("../sites/secret")).rejects.toThrow();
+      await storage.removeCommentAttachment(id);
+      await expect(storage.readCommentAttachment(id)).rejects.toThrow();
+    } finally { await storage.removeCommentAttachment(id); }
+  });
+
   it("a zero-byte object reads as an empty range, like the local backend (S3 answers 416 to any byte range on it)", async () => {
-    await storage.writeFileToVersion(S, V2, "empty.txt", new Uint8Array(0));
-    const slice = await storage.readRange(S, V2, "empty.txt", 0, 1023);
+    await storage.writeFileToVersion(S, "ver_s3it_zero", "empty.txt", new Uint8Array(0));
+    const slice = await storage.readRange(S, "ver_s3it_zero", "empty.txt", 0, 1023);
     expect(slice.total).toBe(0);
     expect(slice.bytes.byteLength).toBe(0);
     // A range that starts past the object's end is still an error: only the zero-byte case is normalised.
-    await storage.writeFileToVersion(S, V2, "one.txt", u8("x"));
-    await expect(storage.readRange(S, V2, "one.txt", 5, 9)).rejects.toThrow();
+    await storage.writeFileToVersion(S, "ver_s3it_zero", "one.txt", u8("x"));
+    await expect(storage.readRange(S, "ver_s3it_zero", "one.txt", 5, 9)).rejects.toThrow();
   });
 
   it("write → measure → list → stat → read → copy → remove", async () => {

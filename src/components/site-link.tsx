@@ -23,5 +23,5 @@ export default function SiteLink({ slug, href, ...props }: Omit<ComponentProps<t
       else if (!separate) window.location.assign(href);
     }
   };
-  return <Link {...props} href={href} prefetch={token ? false : props.prefetch} onClick={e => { void open(e); }} onAuxClick={e => { if (e.button === 1) void open(e); }} />;
+  return <Link {...props} href={href} prefetch={props.prefetch ?? false} onClick={e => { void open(e); }} onAuxClick={e => { if (e.button === 1) void open(e); }} />;
 }

@@ -17,7 +17,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
     if (typeof body.slug !== "string" || !body.slug) throw new FolderError("slug is required");
     if (body.folderId !== null && typeof body.folderId !== "string") throw new FolderError("folderId must be a folder id or null");
     await assignUserSite(session.userId, body.slug, body.folderId);
-    return json({ ok: true }, 200);
+    return json({ ok: true, slug: body.slug, folderId: body.folderId }, 200);
   } catch (error) {
     return errorResponse(error);
   }

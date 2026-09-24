@@ -73,7 +73,7 @@ export const rateLimit = {
   get maxKeys(): number { return intFromEnv("ARTIFACT_RATE_LIMIT_MAX_KEYS", 10_000); }, // hard cap on tracked clients
 };
 
-// One line per process, not per request: the enforceOwnership getter runs on every call.
+// Configuration warnings are emitted once per process.
 const warned = new Set<string>();
 function warnOnce(message: string): void {
   if (warned.has(message)) return;
@@ -158,6 +158,10 @@ export const config = {
     return Number.isSafeInteger(days) && days >= 7 && days <= 3650 ? days : 0;
   },
   /** Audit retention: 0 keeps records forever. Invalid values fail safe to no deletion. */
+  get notificationRetentionDays(): number {
+    const value = Number(process.env.ARTIFACT_NOTIFICATION_RETENTION_DAYS ?? 90);
+    return Number.isInteger(value) && value >= 1 && value <= 3650 ? value : 90;
+  },
   get auditRetentionDays(): number {
     const raw = process.env.ARTIFACT_AUDIT_RETENTION_DAYS ?? "0";
     const days = /^\d+$/.test(raw) ? Number(raw) : NaN;
@@ -299,8 +303,6 @@ export const config = {
     if (raw === "open" || raw === "login" || raw === "token") return raw;
     return this.publishApiToken ? "token" : "open";
   },
-  /** @deprecated RBAC is always enforced; retained as a read-only compatibility value. */
-  get enforceOwnership(): boolean { return true; },
   /**
    * Which metadata store to use. Postgres is the only production store; "sqlite" exists solely
    * as the test suite's backend (no external service needed to run `npm test`) and is refused
@@ -309,6 +311,8 @@ export const config = {
    * still wins so an existing deployment env stays valid; unset means postgres. The test suite
    * asks for sqlite explicitly (test/setup.ts) rather than this getter knowing about vitest.
    */
+  /** 0 disables slow-query diagnostics. Logs contain timings only, never SQL or parameters. */
+  get perfLogMs(): number { return Math.max(0, intFromEnv("ARTIFACT_PERF_LOG_MS", 1000)); },
   get dbDriver(): string {
     const explicit = (process.env.ARTIFACT_DB_DRIVER || "").trim().toLowerCase();
     if (explicit) return explicit;

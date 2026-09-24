@@ -77,7 +77,11 @@ async function serve(request: Request, context: { params: Promise<{ slug: string
     const location = baseHref + (path ?? []).map(encodeURIComponent).join("/") + (search ? `?${search}` : "");
     return new NextResponse(null, {status:307,headers:{location,"cache-control":"private, no-store"}});
   }
+  // Document navigations include popups, which inherit the preview sandbox and cannot use
+  // the native PDF plugin. Use the same reader for direct links; raw fetch/download stays PDF.
   const versionId=access.versionId;
-  const result = await servePreviewFile(slug, path, versionId, baseHref, request.headers.get("range"), imageViewer);
-  return new NextResponse(result.body as BodyInit, { status: result.status, headers: { ...result.headers, "cache-control": access.key ? "private, no-store" : result.headers["cache-control"] ?? "no-store" } });
+  const result = await servePreviewFile(slug, path, versionId, baseHref, request.headers.get("range"), imageViewer,
+    ["document", "iframe", "frame", "object", "embed"].includes(request.headers.get("sec-fetch-dest") ?? ""),
+    url.searchParams.get("__artifact_download") === "1");
+  return new NextResponse(result.body as BodyInit, { status: result.status, headers: { ...result.headers, vary: "Sec-Fetch-Dest", "cache-control": access.key ? "private, no-store" : result.headers["cache-control"] ?? "no-store" } });
 }

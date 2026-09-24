@@ -146,15 +146,25 @@ ${body}
 }
 
 /** The PDF.js viewer wrapper: renders `fileRelpath` (the pdf) with a download link to the original. */
-function viewerPage(meta: DocumentMeta, fileRelpath: string): string {
+function viewerPage(meta: DocumentMeta, fileRelpath: string, downloadQuery = ""): string {
   const config = jsonForScriptTag({
     file: encodeRelpath(fileRelpath),
-    original: encodeRelpath(meta.originalRelpath),
+    original: encodeRelpath(meta.originalRelpath) + downloadQuery,
     name: meta.originalName,
   });
   const head = `<style>
   #stage { padding: 18px 0 40px; }
   .pg { display: block; margin: 0 auto 14px; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.45); max-width: calc(100vw - 24px); }
+  .pdf-page { position:relative; width:fit-content; margin:0 auto 14px; }
+  .pdf-page .pg { margin:0; max-width:none; }
+  .textLayer { position:absolute; inset:0; overflow:clip; line-height:1; text-align:initial; transform-origin:0 0; text-size-adjust:none; forced-color-adjust:none; --scale-round-x:1px; --scale-round-y:1px; --min-font-size:1; --text-scale-factor:calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv:calc(1 / var(--min-font-size)); }
+  .textLayer[data-main-rotation="90"] { transform:rotate(90deg) translateY(-100%); }
+  .textLayer[data-main-rotation="180"] { transform:rotate(180deg) translate(-100%, -100%); }
+  .textLayer[data-main-rotation="270"] { transform:rotate(270deg) translateX(-100%); }
+  .textLayer :is(span,br) { position:absolute; color:transparent; white-space:pre; cursor:text; transform-origin:0 0; user-select:text; }
+  .textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) { --font-height:0; --scale-x:1; --rotate:0deg; font-size:calc(var(--text-scale-factor) * var(--font-height)); transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+  .textLayer .markedContent { display:contents; }
+  .textLayer ::selection { background:rgba(85,115,65,.3); }
   #err { max-width: 560px; margin: 12vh auto; padding: 24px; text-align: center; display: none; }
   #err .t { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
   #err .d { font-size: 13px; color: #9aa0a8; margin-bottom: 18px; }
@@ -175,10 +185,10 @@ function viewerPage(meta: DocumentMeta, fileRelpath: string): string {
   <button type="button" id="play" title="Play full screen page by page: →/←/Space to turn pages, Esc to exit">Play</button>
   <button type="button" id="zo" aria-label="Zoom out">−</button>
   <button type="button" id="zi" aria-label="Zoom in">＋</button>
-  <a class="dl" id="dl" href="${escapeHtml(encodeRelpath(meta.originalRelpath))}">Download original</a>
+  <a class="dl" id="dl" href="${escapeHtml(encodeRelpath(meta.originalRelpath) + downloadQuery)}">Download original</a>
 </div>
 <div id="stage"></div>
-<div id="err"><div class="t" id="errtitle">Preview failed to load</div><div class="d" id="errmsg"></div><a href="${escapeHtml(encodeRelpath(meta.originalRelpath))}">Download the original to view it</a></div>
+<div id="err"><div class="t" id="errtitle">Preview failed to load</div><div class="d" id="errmsg"></div><a href="${escapeHtml(encodeRelpath(meta.originalRelpath) + downloadQuery)}">Download the original to view it</a></div>
 <div id="show" hidden aria-label="Presentation mode" role="dialog">
   <canvas id="slide"></canvas>
   <div id="shbar"><span id="shpg"></span><button type="button" id="shx">Exit</button></div>
@@ -333,7 +343,8 @@ const boot = async () => {
     const canvas = document.createElement("canvas");
     canvas.className = "pg";
     canvas.dataset.page = String(i);
-    stage.appendChild(canvas);
+    const wrapper = document.createElement("div"); wrapper.className="pdf-page";
+    wrapper.appendChild(canvas); stage.appendChild(wrapper);
     canvases.push(canvas);
   }
   pagesEl.textContent = doc.numPages + (doc.numPages === 1 ? " page" : " pages");
@@ -383,6 +394,15 @@ const boot = async () => {
     const context = canvas.getContext("2d");
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     await page.render({ canvasContext: context, viewport }).promise;
+    canvas.parentElement.querySelector(".textLayer")?.remove();
+    if (!isThumb) {
+      const layer=document.createElement("div"); layer.className="textLayer";
+      layer.dataset.commentTextPage=canvas.dataset.page;
+      layer.style.setProperty("--total-scale-factor",String(viewport.scale));
+      canvas.parentElement.appendChild(layer);
+      try { await new lib.TextLayer({textContentSource:await page.getTextContent(),container:layer,viewport}).render(); }
+      catch { layer.remove(); /* Canvas/region comments remain usable if text extraction fails. */ }
+    }
     renderedSig.set(canvas, sig);
     paintedCount++;
     beacon("page-rendered", Number(canvas.dataset.page));
@@ -393,6 +413,7 @@ const boot = async () => {
 
   function releasePage(canvas) {
     if (!renderedSig.has(canvas)) return;
+    canvas.parentElement.querySelector(".textLayer")?.remove();
     canvas.width = 0; // frees the backing store; CSS box (set above) keeps the layout
     canvas.height = 0;
     renderedSig.delete(canvas);
@@ -668,4 +689,9 @@ export function buildDocumentFiles(
   const files = buildDocumentWrapperFiles(meta, originalBytes.byteLength, previewPdf, note);
   files.push({ relpath: meta.originalRelpath, bytes: originalBytes });
   return files;
+}
+
+/** Navigation to a PDF bundled with HTML uses the same sandbox-compatible reader. */
+export function bundledPdfViewer(relpath: string): string {
+  return viewerPage({ format: "pdf", originalName: relpath.split("/").pop()!, originalRelpath: relpath }, relpath, "?__artifact_download=1");
 }

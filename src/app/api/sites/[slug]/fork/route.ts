@@ -47,7 +47,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     // an Origin from those would only break non-browser clients. Mirrors the edit route.
     await assertMutationOrigin(request, forkView?.site);
     // Ownership follows the caller's real identity, exactly as POST /api/sites decides it: the two
-    // markers are exclusive, and `ownerId` is what authz.resolveCapability actually consults for a
+    // markers are exclusive, and `ownerId` is what authz.resolveAuthority actually consults for a
     // signed-in caller. Hardcoding `anonOwnerId` here orphaned every fork a signed-in user made —
     // owned by nobody, so its own creator could not edit, rename or delete it.
     const owner = session ? { ownerId: session.userId, tenantId: request.headers.get("x-artifact-tenant") || undefined } : { anonOwnerId: anonId };

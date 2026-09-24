@@ -55,6 +55,10 @@ async function sqliteSchema(): Promise<Map<string, Set<string>>> {
   return out;
 }
 
+// Require a concrete SQL type so source-code regexes and partial statement fragments
+// cannot backtrack an optional IF NOT EXISTS into a fictitious column named IF.
+const addedColumnPattern = /ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(?:IF NOT EXISTS\s+)?(\w+)\s+(?:TEXT|BIGINT|INTEGER|BOOLEAN|BIGSERIAL|JSONB)\b/g;
+
 /**
  * Tables → columns from the PostgreSQL bootstrap, RBAC baseline, and numbered migration modules.
  * The registry file also declares schema_migrations. Shared SQL is checked against actual SQLite.
@@ -109,10 +113,13 @@ function postgresSchema(): Map<string, Set<string>> {
     out.set(table, columns);
   }
   for (const m of source.matchAll(
-    /ALTER TABLE\s+(\w+)\s+ADD COLUMN (?:IF NOT EXISTS\s+)?(\w+)/g,
+    addedColumnPattern,
   )) {
     out.get(m[1])?.add(m[2]);
   }
+  // Cleanup migrations remove retired declarations from the effective schema.
+  for (const m of source.matchAll(/DROP TABLE IF EXISTS\s+(\w+)/g)) out.delete(m[1]);
+  for (const m of source.matchAll(/ALTER TABLE\s+(\w+)\s+DROP COLUMN\s+(\w+)/g)) out.get(m[1])?.delete(m[2]);
   return out;
 }
 
@@ -131,6 +138,16 @@ const EXPECTED_DIFFERENCES: Record<
 };
 
 describe("schema parity between the two metadata backends", () => {
+  it("recognizes optional column guards without treating parser source as SQL", () => {
+    const source = [
+      "ALTER TABLE sample ADD COLUMN plain TEXT",
+      "ALTER TABLE sample ADD COLUMN IF NOT EXISTS guarded BIGINT",
+      String.raw`/^ALTER TABLE sample ADD COLUMN IF NOT EXISTS (\w+)\s/`,
+      'statement.replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN")',
+    ].join("\n");
+    expect([...source.matchAll(addedColumnPattern)].map(match=>match.slice(1,3))).toEqual([["sample","plain"],["sample","guarded"]]);
+  });
+
   it("declares the same tables on both sides", async () => {
     const sqlite = await sqliteSchema();
     const pg = postgresSchema();

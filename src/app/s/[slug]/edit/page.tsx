@@ -59,7 +59,7 @@ export default async function EditorPage({ params, searchParams }: {
   // binary, and an update means re-uploading. Go straight back to the site page.
   if (view.site.kind === "document") redirect(`/s/${slug}`);
 
-  // The capability is computed on the server through the same resolveCapability the write routes
+  // The capability is computed on the server through the same resolveAuthority the write routes
   // use (requirePermission(…, "site.content.edit")), so this UI gate can never be wider than the server's.
   // `?t=` is handed to it as well, so a visitor arriving via an editable link gets an unlocked first
   // paint without waiting for hydration to fish the token out of the URL.

@@ -131,7 +131,7 @@ fi
 for k in ARTIFACT_MAX_BYTES ARTIFACT_MAX_FILES ARTIFACT_MAX_FILE_BYTES ARTIFACT_INLINE_UPLOAD_MAX_BYTES \
          ARTIFACT_RATE_LIMIT_BURST ARTIFACT_RATE_LIMIT_PER_MIN ARTIFACT_RATE_LIMIT_MAX_KEYS \
          ARTIFACT_S3_CACHE_BYTES ARTIFACT_CONVERT_TIMEOUT_MS ARTIFACT_CONVERT_CONCURRENCY ARTIFACT_DELETED_RETENTION_DAYS ARTIFACT_QUOTA_SITES_PER_USER ARTIFACT_QUOTA_BYTES_PER_USER \
-         ARTIFACT_QUOTA_SITES_PER_ANON ARTIFACT_QUOTA_BYTES_PER_ANON ARTIFACT_ANON_SITE_TTL_DAYS ARTIFACT_AUDIT_RETENTION_DAYS ARTIFACT_VIEW_RETENTION_DAYS ARTIFACT_PORT POSTGRES_PORT; do
+         ARTIFACT_QUOTA_SITES_PER_ANON ARTIFACT_QUOTA_BYTES_PER_ANON ARTIFACT_ANON_SITE_TTL_DAYS ARTIFACT_AUDIT_RETENTION_DAYS ARTIFACT_NOTIFICATION_RETENTION_DAYS ARTIFACT_VIEW_RETENTION_DAYS ARTIFACT_PORT POSTGRES_PORT; do
   v="${!k:-}"
   if [ -n "$v" ] && ! [[ "$v" =~ ^[0-9]+$ ]]; then err "$k=$v is not a plain number. Numeric variables accept only byte counts / integers; a value like 50MB is silently ignored."; fi
 done
@@ -202,6 +202,15 @@ if [[ "${ARTIFACT_VIEW_RETENTION_DAYS:-0}" =~ ^[0-9]+$ ]]; then
   if [ "$view_retention_days" -ne 0 ] && { [ "$view_retention_days" -lt 7 ] || [ "$view_retention_days" -gt 3650 ]; }; then
     err "ARTIFACT_VIEW_RETENTION_DAYS must be 0 or between 7 and 3650; invalid values disable cleanup"
   fi
+fi
+
+# Slow read diagnostics are optional, but malformed values should not silently fall back.
+if ! [[ "${ARTIFACT_PERF_LOG_MS:-1000}" =~ ^[0-9]+$ ]]; then
+  err "ARTIFACT_PERF_LOG_MS must be a non-negative integer (0 disables diagnostics)."
+fi
+
+if [[ "${ARTIFACT_NOTIFICATION_RETENTION_DAYS:-90}" =~ ^[0-9]+$ ]] && { [ "${ARTIFACT_NOTIFICATION_RETENTION_DAYS:-90}" -lt 1 ] || [ "${ARTIFACT_NOTIFICATION_RETENTION_DAYS:-90}" -gt 3650 ]; }; then
+  err "ARTIFACT_NOTIFICATION_RETENTION_DAYS must be between 1 and 3650."
 fi
 
 # ---- plan ----------------------------------------------------------------------------------

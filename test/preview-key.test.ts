@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHmac } from "node:crypto";
-import { closeDbForTests, updateSiteSharing } from "@/lib/db";
+import { closeDbForTests, updateSiteVisibility } from "@/lib/db";
 import { createSite } from "@/lib/sites";
 import {
   PREVIEW_KEY_SEP, PREVIEW_KEY_TTL_MS, mintScopedPreviewKey, readScopedPreviewKey, previewBaseHref, splitSlugKey,
@@ -69,27 +69,27 @@ const keyed = (slug: string, key: string) => `${slug}${PREVIEW_KEY_SEP}${key}`;
 describe("a private site's sub-resources: the opaque frame gets in via the credential in the path", () => {
   it("a sub-request without the credential is 404 — that is the moment the image breaks", async () => {
     const site = await made();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     expect((await get(site.slug, ["a.png"])).status).toBe(404);
   });
 
   it("carrying a credential issued by this site in the URL fetches it", async () => {
     const site = await made();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     expect((await get(keyed(site.slug, await mintPreviewKey(site)), ["a.png"])).status).toBe(200);
   });
 
   it("[KEY] a credential issued by another site does not open this one", async () => {
     const mine = await made();
     const other = await made();
-    await updateSiteSharing(mine.id, "private", "owner");
+    await updateSiteVisibility(mine.id, "private");
     // The signature binds the siteId and the secret is derived per site — both layers mismatch.
     expect((await get(keyed(mine.slug, await mintPreviewKey(other)), ["a.png"])).status).toBe(404);
   });
 
   it("an expired credential does not count", async () => {
     const site = await made();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const stale = await mintPreviewKey(site, Date.now() - PREVIEW_KEY_TTL_MS - 1000);
     expect((await get(keyed(site.slug, stale), ["a.png"])).status).toBe(404);
   });
@@ -102,7 +102,7 @@ describe("a private site's sub-resources: the opaque frame gets in via the crede
 
   it("a garbage credential segment neither derails the request nor gets treated as a new site", async () => {
     const site = await made();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     for (const junk of ["", "not-a-key", "abc.def", "999999999999.x"]) {
       expect((await get(keyed(site.slug, junk), ["a.png"])).status).toBe(404);
     }
@@ -112,7 +112,7 @@ describe("a private site's sub-resources: the opaque frame gets in via the crede
 describe("the credential is written into the artifact's <base>", () => {
   it("a private site's entry HTML carries the credential in <base> — that is how sub-resources inherit it", async () => {
     const site = await made();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const res = await get(site.slug, [], site.editToken); // the real gate (this deployment has no ownership enforcement)
     const html = await res.text();
 
@@ -140,7 +140,7 @@ describe("revocation must actually take effect: a credential cannot extend its o
   // entry by credential keeps the one already in hand.
   it("fetching the entry by credential leaves the original credential in <base>, not a fresh one", async () => {
     const site = await made();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const key = await mintPreviewKey(site);
 
     const html = await (await get(keyed(site.slug, key), [])).text();
@@ -149,7 +149,7 @@ describe("revocation must actually take effect: a credential cannot extend its o
 
   it("a fresh credential is minted only when entering through the real gate", async () => {
     const site = await made();
-    await updateSiteSharing(site.id, "private", "owner");
+    await updateSiteVisibility(site.id, "private");
     const old = await mintPreviewKey(site, Date.now() - 60_000); // minted earlier, so the signature differs
 
     const html = await (await get(site.slug, [], site.editToken)).text();

@@ -1,3 +1,4 @@
+import { sweepCommentAttachments } from "@/lib/comments/attachments";
 // Orphan reconciler — GC for version trees in storage that no metadata references. Orphans come
 // from the files-first write order (files land, then the DB row is recorded): a crash / DB failure
 // between the two, or a partially-failed delete, leaves objects with no version row. Since the local
@@ -62,5 +63,7 @@ export async function reconcileOrphans(opts: { dryRun?: boolean; graceMs?: numbe
       result.errors += 1;
     }
   }
+  const attachments = await sweepCommentAttachments(dryRun);
+  result.errors += attachments.errors;
   return result;
 }

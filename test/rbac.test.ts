@@ -1,3 +1,5 @@
+import { resolveRole } from "./fixtures/authorization-role";
+import { putTenantAdmin, putUserSiteRole } from "@/lib/role-bindings";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   closeDbForTests,
@@ -6,7 +8,7 @@ import {
   insertSiteWithVersion,
   rbacQuery,
   upsertUser,
-  updateSiteSharing,
+  updateSiteVisibility,
   rbacTransaction,
 } from "@/lib/db";
 import { ANONYMOUS_TENANT, INIT_TENANT, roleAllows } from "@/lib/rbac";
@@ -20,7 +22,7 @@ describe("tenant migration and role contract", () => {
     });
     expect(user.tenantId).toBe(INIT_TENANT);
     expect(
-      (await rbacQuery("SELECT id FROM tenants ORDER BY id")).map((r) => r.id),
+      (await rbacQuery("SELECT id FROM tenants WHERE id IN ($1,$2) ORDER BY id", [ANONYMOUS_TENANT, INIT_TENANT])).map((r) => r.id),
     ).toEqual([ANONYMOUS_TENANT, INIT_TENANT]);
     await rbacQuery("DELETE FROM tenant_members WHERE user_id=$1", [user.id]);
     await closeDbForTests();
@@ -76,13 +78,12 @@ import { createShare, revokeShare } from "@/lib/db";
 import { createSite, editSite } from "@/lib/sites";
 import { mintSession, csrfSafe } from "@/lib/session";
 import {
-  resolveCapability,
   resolveViewer,
 } from "@/lib/authz";
 import { canReadVersion, hashToken } from "@/lib/share";
 import { authorizePreview } from "@/lib/preview-access";
 import { changeTenantMember } from "@/lib/rbac-access";
-import { POST as addMember } from "@/app/api/sites/[slug]/collaborators/route";
+import { grantMember } from "./fixtures/authorization-api";
 import { POST as claim } from "@/app/api/me/adopt/route";
 
 const origin = "https://rbac.example";
@@ -144,26 +145,24 @@ describe("RBAC boundaries", () => {
       admin = await identity(),
       target = await identity();
     const site = await artifact(owner);
-    await rbacQuery(
-      "INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'editor',1),($1,$3,'admin',1)",
-      [site.id, editor.user.id, admin.user.id],
-    );
+    await putUserSiteRole(rbacQuery, site.id, editor.user.id, 'editor', null);
+    await putUserSiteRole(rbacQuery, site.id, admin.user.id, 'admin', null);
     expect(
-      await resolveCapability(
+      await resolveRole(
         resolveViewer(request(editor.cookie), editor.session),
         site,
       ),
-    ).toBe("content");
+    ).toBe("editor");
     expect(
-      await resolveCapability(
+      await resolveRole(
         resolveViewer(request(admin.cookie), admin.session),
         site,
       ),
-    ).toBe("manage");
+    ).toBe("site-admin");
     const ctx = { params: Promise.resolve({ slug: site.slug }) };
     expect(
       (
-        await addMember(
+        await grantMember(
           request(
             editor.cookie,
             {},
@@ -175,7 +174,7 @@ describe("RBAC boundaries", () => {
     ).toBe(403);
     expect(
       (
-        await addMember(
+        await grantMember(
           request(
             admin.cookie,
             {},
@@ -187,7 +186,7 @@ describe("RBAC boundaries", () => {
     ).toBe(403);
     expect(
       (
-        await addMember(
+        await grantMember(
           request(
             admin.cookie,
             {},
@@ -199,7 +198,7 @@ describe("RBAC boundaries", () => {
     ).toBe(200);
     expect(
       (
-        await addMember(
+        await grantMember(
           request(
             owner.cookie,
             {},
@@ -211,7 +210,7 @@ describe("RBAC boundaries", () => {
     ).toBe(200);
     expect(
       (
-        await addMember(
+        await grantMember(
           request(
             admin.cookie,
             {},
@@ -221,9 +220,9 @@ describe("RBAC boundaries", () => {
         )
       ).status,
     ).toBe(403);
-    const audit = await rbacQuery("SELECT target_id,reason FROM rbac_audit WHERE action='site.member.change' AND target_id=$1",[site.id]);
+    const audit = await rbacQuery("SELECT target_id,reason FROM rbac_audit WHERE action='authorization.grant' AND target_id=$1",[site.id]);
     expect(audit.length).toBeGreaterThan(0);
-    expect(audit.some(row=>JSON.parse(row.reason as string).userId===target.user.id)).toBe(true);
+    expect(audit.some(row=>JSON.parse(row.reason as string).subject.id===target.user.id)).toBe(true);
   });
   it("tenant administration is explicit and cannot cross tenant boundaries", async () => {
     const owner = await identity(),
@@ -234,44 +233,42 @@ describe("RBAC boundaries", () => {
       tenant,
     ]);
     await rbacQuery(
-      "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'admin')",
+      "INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)",
       [tenant, admin.user.id],
     );
+    await putTenantAdmin(rbacQuery,tenant,admin.user.id,true,null);
     expect(
-      await resolveCapability(
+      await resolveRole(
         resolveViewer(
           request(admin.cookie, { "x-management-reason": "support" }),
           admin.session,
         ),
         site,
       ),
-    ).toBe("none");
-    await rbacQuery(
-      "UPDATE tenant_members SET role='admin' WHERE tenant_id='init' AND user_id=$1",
-      [admin.user.id],
-    );
+    ).toBe(null);
+    await putTenantAdmin(rbacQuery,"init",admin.user.id,true,null);
     expect(
-      await resolveCapability(
+      await resolveRole(
         resolveViewer(request(admin.cookie), admin.session),
         site,
       ),
-    ).toBe("none");
+    ).toBe(null);
     expect(
-      await resolveCapability(
+      await resolveRole(
         resolveViewer(
           request(admin.cookie, { "x-management-reason": "support" }),
           admin.session,
         ),
         site,
       ),
-    ).toBe("owner");
+    ).toBe("tenant-admin");
     await rbacQuery("UPDATE tenants SET disabled_at=1 WHERE id='init'");
     expect(
-      await resolveCapability(
+      await resolveRole(
         resolveViewer(request(owner.cookie), owner.session),
         site,
       ),
-    ).toBe("none");
+    ).toBe(null);
     await rbacQuery("UPDATE tenants SET disabled_at=NULL WHERE id='init'");
   });
   it("keeps one active tenant admin under concurrent removals", async () => {
@@ -282,9 +279,11 @@ describe("RBAC boundaries", () => {
       tenant,
     ]);
     await rbacQuery(
-      "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'admin'),($1,$3,'admin')",
+      "INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2),($1,$3)",
       [tenant, a.user.id, b.user.id],
     );
+    await putTenantAdmin(rbacQuery,tenant,a.user.id,true,null);
+    await putTenantAdmin(rbacQuery,tenant,b.user.id,true,null);
     const results = await Promise.allSettled([
       changeTenantMember(request(a.cookie), tenant, a.user.id, null),
       changeTenantMember(request(b.cookie), tenant, b.user.id, null),
@@ -292,7 +291,7 @@ describe("RBAC boundaries", () => {
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(
       await rbacQuery(
-        "SELECT user_id FROM tenant_members WHERE tenant_id=$1 AND role='admin'",
+        "SELECT user_id FROM authorization_tenant_members WHERE tenant_id=$1 AND role='admin'",
         [tenant],
       ),
     ).toHaveLength(1);
@@ -307,16 +306,16 @@ describe("RBAC boundaries", () => {
     const { share, token } = await link(site, "edit");
     const req = request(external.cookie, { "x-artifact-share": token });
     expect(
-      await resolveCapability(resolveViewer(req, external.session), site),
-    ).toBe("content");
+      await resolveRole(resolveViewer(req, external.session), site),
+    ).toBe("editor");
     expect(
-      await resolveCapability(
+      await resolveRole(
         resolveViewer(request("", { "x-artifact-share": token }), null),
         site,
       ),
-    ).toBe("none");
+    ).toBe("viewer");
     expect(
-      await rbacQuery("SELECT * FROM site_members WHERE user_id=$1", [
+      await rbacQuery("SELECT * FROM role_bindings WHERE subject_user_id=$1 AND resource_type='site'", [
         external.user.id,
       ]),
     ).toHaveLength(0);
@@ -324,8 +323,8 @@ describe("RBAC boundaries", () => {
     expect(access).not.toBeNull();
     await revokeShare(share.id, Date.now());
     expect(
-      await resolveCapability(resolveViewer(req, external.session), site),
-    ).toBe("none");
+      await resolveRole(resolveViewer(req, external.session), site),
+    ).toBe(null);
     expect(await authorizePreview(request(), site, access!.key)).toBeNull();
   });
   it("fixed shares and sub-resource grants cannot switch versions", async () => {
@@ -403,10 +402,8 @@ describe("RBAC action acceptance", () => {
       admin = await identity(),
       editor = await identity();
     const site = await artifact(owner);
-    await rbacQuery(
-      "INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'admin',1),($1,$3,'editor',1)",
-      [site.id, admin.user.id, editor.user.id],
-    );
+    await putUserSiteRole(rbacQuery, site.id, admin.user.id, 'admin', null);
+    await putUserSiteRole(rbacQuery, site.id, editor.user.id, 'editor', null);
     const ctx = { params: Promise.resolve({ slug: site.slug }) };
     expect(
       (
@@ -476,9 +473,10 @@ describe("RBAC action acceptance", () => {
       tenant,
     ]);
     await rbacQuery(
-      "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'admin')",
+      "INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)",
       [tenant, admin.user.id],
     );
+    await putTenantAdmin(rbacQuery,tenant,admin.user.id,true,null);
     await expect(
       disableUser(
         request(),
@@ -489,9 +487,10 @@ describe("RBAC action acceptance", () => {
     ).rejects.toThrow(/another active tenant administrator/);
     const replacement = await identity();
     await rbacQuery(
-      "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'admin')",
+      "INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)",
       [tenant, replacement.user.id],
     );
+    await putTenantAdmin(rbacQuery,tenant,replacement.user.id,true,null);
     expect(
       (
         await disableUser(
@@ -535,7 +534,7 @@ it("never exposes the anonymous browser credential in artifact resource keys", a
       { anonOwnerId: anonId },
     )
   ).site;
-  await updateSiteSharing(site.id, "private", "owner");
+  await updateSiteVisibility(site.id, "private");
   site.visibility = "private";
   const access = await authorizePreview(
     request(`__Host-ah_anon=${anonId}`),
@@ -559,7 +558,7 @@ it("exchanges the share URL for a read-only URL before serving artifact code", a
   const location=response.headers.get("location")!;
   expect(location).not.toContain(token);
   const resource=new Request(`${origin}${location}`);
-  expect(await resolveCapability(resolveViewer(resource),site)).toBe("none");
+  expect(await resolveRole(resolveViewer(resource),site)).toBe(null);
   const bytes=await previewRoute(resource,{params:Promise.resolve({slug:location.split("/")[3]})});
   expect(bytes.status).toBe(200);
   expect(await bytes.text()).toContain("one");
@@ -653,7 +652,7 @@ it("returns precise tenant errors and skips nonexistent member removal audits", 
   const { GET, PATCH } = await import("@/app/api/tenants/[tenantId]/route");
   const { POST } = await import("@/app/api/tenants/route");
   const { PUT } = await import("@/app/api/tenants/[tenantId]/members/route");
-  const { DELETE } = await import("@/app/api/sites/[slug]/collaborators/route");
+  const { DELETE } = await import("@/app/api/authorization/bindings/[id]/route");
   const owner = await identity(), site = await artifact(owner);
   const oldToken = process.env.PUBLISH_API_TOKEN;
   process.env.PUBLISH_API_TOKEN = "test-platform-operator";
@@ -668,8 +667,8 @@ it("returns precise tenant errors and skips nonexistent member removal audits", 
     const missing = await PUT(request("", headers, { email: "missing@example.com", role: "member" }), { params: Promise.resolve({ tenantId: "init" }) });
     expect(missing.status).toBe(404);
     expect((await missing.json()).code).toBe("user_not_found");
-    const req = new Request(`${origin}/api/sites/${site.slug}/collaborators?userId=absent`, { method: "DELETE", headers: { cookie: owner.cookie, origin } });
-    expect((await DELETE(req, { params: Promise.resolve({ slug: site.slug }) })).status).toBe(200);
+    const req = new Request(`${origin}/api/sites/${site.slug}/collaborators?userId=absent`, { method: "DELETE", headers: { cookie: owner.cookie, origin, "content-type":"application/json" }, body:JSON.stringify({expectedRevision:1}) });
+    expect((await DELETE(req, { params: Promise.resolve({ id: "absent" }) })).status).toBe(404);
     expect(await rbacQuery("SELECT id FROM rbac_audit WHERE action='site.member.remove' AND target_id=$1", [site.id])).toEqual([]);
   } finally {
     if (oldToken === undefined) delete process.env.PUBLISH_API_TOKEN;
@@ -681,15 +680,15 @@ it("audits a management mutation once and rechecks SSE access without audit spam
   const { canReadSite } = await import("@/lib/share");
   const owner = await identity(), target = await identity(), manager = await identity();
   const site = await artifact(owner);
-  await rbacQuery("UPDATE tenant_members SET role='admin' WHERE tenant_id='init' AND user_id=$1", [manager.user.id]);
+  await putTenantAdmin(rbacQuery,"init",manager.user.id,true,null);
   const req = request(manager.cookie, { "x-management-reason": "Support request" }, { email: target.user.email });
-  expect((await addMember(req, { params: Promise.resolve({ slug: site.slug }) })).status).toBe(200);
-  expect(await rbacQuery("SELECT id FROM rbac_audit WHERE action='site.management' AND target_id=$1", [site.id])).toHaveLength(1);
+  expect((await grantMember(req, { params: Promise.resolve({ slug: site.slug }) })).status).toBe(200);
+  expect(await rbacQuery("SELECT id FROM rbac_audit WHERE action='authorization.grant' AND target_id=$1", [site.id])).toHaveLength(1);
   expect(await canReadSite(req, site)).toBe(true);
   for (let i = 0; i < 3; i++) expect(await canReadSite(req, site, undefined, false)).toBe(true);
   expect(await rbacQuery("SELECT id FROM rbac_audit WHERE action='site.read' AND target_id=$1", [site.id])).toHaveLength(1);
   await rbacQuery("DELETE FROM tenant_members WHERE tenant_id='init' AND user_id=$1", [manager.user.id]);
-  await updateSiteSharing(site.id, "private", "owner");
+  await updateSiteVisibility(site.id, "private");
   expect(await canReadSite(req, { ...site, visibility: "private" }, undefined, false)).toBe(false);
 });
 
@@ -698,9 +697,9 @@ it("limits people search after applying tenant membership", async () => {
   const viewer = await identity();
   await rbacQuery("INSERT INTO tenants(id,name) VALUES('picker','Picker')");
   await rbacQuery("DELETE FROM tenant_members WHERE user_id=$1", [viewer.user.id]);
-  await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id,role) VALUES('picker',$1,'member')", [viewer.user.id]);
+  await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id) VALUES('picker',$1)", [viewer.user.id]);
   const target = await upsertUser({ authProvider: "test", providerSubject: "picker-target", displayName: "Picker target" });
-  await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id,role) VALUES('picker',$1,'member')", [target.id]);
+  await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id) VALUES('picker',$1)", [target.id]);
   for (let i = 0; i < 55; i++) {
     const outsider = await upsertUser({ authProvider: "test", providerSubject: `picker-outsider-${i}`, displayName: "Picker outsider" });
     await rbacQuery("UPDATE users SET last_login_at=$1 WHERE id=$2", [Date.now() + 1000, outsider.id]);
@@ -768,7 +767,7 @@ it("version filtering adds no duplicate administrator read audit", async () => {
   const { readableVersionFilter, canReadSite } = await import("@/lib/share");
   const { listAdminLog } = await import("@/lib/db");
   const owner = await identity(), admin = await identity(), site = await artifact(owner);
-  await updateSiteSharing(site.id, "private", "owner");
+  await updateSiteVisibility(site.id, "private");
   site.visibility = "private";
   const adminModule = await import("@/lib/admin");
   const auditRead = vi.spyOn(adminModule, "recordAdminRead");
@@ -791,9 +790,9 @@ it("version filtering adds no duplicate administrator read audit", async () => {
 
 it("records one access audit per management preview without a second preview event", async () => {
   const owner = await identity(), manager = await identity(), site = await artifact(owner);
-  await updateSiteSharing(site.id, "private", "owner");
+  await updateSiteVisibility(site.id, "private");
   site.visibility = "private";
-  await rbacQuery("UPDATE tenant_members SET role='admin' WHERE tenant_id='init' AND user_id=$1", [manager.user.id]);
+  await putTenantAdmin(rbacQuery,"init",manager.user.id,true,null);
   const access = await authorizePreview(request(manager.cookie, { "x-management-reason": "Support investigation" }), site, null);
   expect(access).not.toBeNull();
   expect(await rbacQuery("SELECT action FROM rbac_audit WHERE target_id=$1 AND actor_id=$2", [site.id, manager.user.id])).toEqual([{ action: "site.read" }]);
@@ -803,7 +802,7 @@ it("records one access audit per management preview without a second preview eve
 
 it("keeps an access audit for operator previews that pass the ordinary capability gate", async () => {
   const owner = await identity(), site = await artifact(owner);
-  await updateSiteSharing(site.id, "private", "owner");
+  await updateSiteVisibility(site.id, "private");
   site.visibility = "private";
   const previous = process.env.PUBLISH_API_TOKEN;
   process.env.PUBLISH_API_TOKEN = "audit-preview-operator";

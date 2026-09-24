@@ -9,7 +9,7 @@ import { GET as versionsGET } from "@/app/api/sites/[slug]/versions/route";
 import { POST as rollbackPOST } from "@/app/api/sites/[slug]/rollback/route";
 import { POST as sitesPOST } from "@/app/api/sites/route";
 import { readVersionFile, testAudit} from "./helpers";
-import { updateSiteSharing } from "@/lib/db";
+import { updateSiteVisibility } from "@/lib/db";
 
 const params = (slug: string) => ({ params: Promise.resolve({ slug }) });
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -212,7 +212,7 @@ describe("versions — the read gate for private sites", () => {
 
   it("a private site answers strangers with 404 and leaks no version information at all", async () => {
     const created = await createSite({ mode: "paste", html: "<title>S</title><body>x</body>" });
-    await updateSiteSharing(created.site.id, "private", "owner");
+    await updateSiteVisibility(created.site.id, "private");
 
     const res = await versionsGET(anon(created.site.slug), params(created.site.slug));
     expect(res.status).toBe(404);
@@ -225,7 +225,7 @@ describe("versions — the read gate for private sites", () => {
 
   it("answers 404 rather than 403 — to someone who should not know, \"forbidden\" is itself information", async () => {
     const created = await createSite({ mode: "paste", html: "<title>S</title><body>x</body>" });
-    await updateSiteSharing(created.site.id, "private", "owner");
+    await updateSiteVisibility(created.site.id, "private");
     const res = await versionsGET(anon(created.site.slug), params(created.site.slug));
     expect(res.status).not.toBe(403);
     expect(res.status).toBe(404);

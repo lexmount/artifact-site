@@ -5,11 +5,132 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Keep the account menu above transformed home-page artwork.
+- Keep new share-link creation at the top of sharing settings and move external visit data into its own tab.
+- Replace the account menu's inline language tiles with a compact checked submenu.
+- Restore keyboard focus when closing account menus, hide closed visit explanations from assistive technology, and ignore aborted view-history responses.
+
+- Avoid flashing the home-page login entry for browsers with a session cookie; focus the first copy action when opening quick sharing.
+
+- Show the home-page sign-in/sign-up entry before account detection finishes, then animate the first or changed signed-in identity into place without replaying on routine navigation.
+
+- Exclude automatic publish links from sharing guidance, isolate anonymous reminder history, and improve first-paint positioning, keyboard toolbar retention and quick-share modal isolation.
+
+- Unify product branding across shared readers, owners, editors, version selection and notification viewers; retain the logo mark on narrow screens.
+
+- Scope private-site guidance to each account and site, include server-side share history, and keep the guidance visible outside the collapsing header.
+- Refine the notification inbox, remove acknowledged rows from its unread filter, and make mobile quick sharing a compact bottom sheet.
+- Improve both collapsed viewer controls, retain header pinning when browser storage fails, and ignore stale identity requests after sign-in changes.
+
+- Restore authored fragment links before preview history-event handlers run so TOC highlights can match the original `href`.
+
+- Preserve native anchor activation in sandboxed previews, including event cancellation, stopped propagation, repeated named anchors, keyboard focus and visual-editor documents. Exercise these behaviors in Chrome in CI.
+
+- Keep pure `#fragment` links inside hosted artifacts as same-document navigation instead of reloading the preview before scrolling to the target.
+- Add social sharing metadata for public marketing pages, crawler rules and a marketing-only sitemap.
+- Document Google and GitHub sign-in on the hosted demo in every README translation.
+- Show localized, actionable quota guidance for new-site and new-version uploads.
+- Improve sharing with quick audience links, repeated private-site guidance, persistent header pinning, URL locale overrides and adaptive collapsed-header contrast.
+- Add language and notification-center entries to the account menu, tighten header utility spacing, and limit the account arrival animation to relevant home-page auth changes.
+
+- Preserve existing accounts, sites and permissions when a Logto application change gives a user
+  a new OIDC subject but the same verified email address. Historical duplicates resolve to the
+  earliest account; migrations log account identifiers and duplicate warnings.
+
+- Gradually load sandboxed card and list previews after visible cards remain on screen, while preserving fast metadata covers on initial navigation.
+
+- Show share URLs as single-line, truncated links that open in a new tab, with a separate copy button.
+
+- Clarify the comment destination label and help text in English and Simplified Chinese.
+
+- Preserve search drafts and view selections during delayed navigation, refresh directories after publishing or copying, and keep pagination working after deleted folder bookmarks fall back to All sites.
+
+- Stream navigation loading states in a persistent shell and reuse recent routes for 30 seconds.
+- Return paginated personal lists with permissions and folder data; paginate and search the public directory in SQL.
+- Replace automatic live list thumbnails with metadata covers, deduplicate permission lookups, and cancel abandoned requests.
+- Load the full agent reference on demand, cache its rendering, and add local navigation markers plus opt-out slow-read diagnostics.
+- Document and probe public-edge HTTP/2 and disable bundled proxy response buffering.
+- Add permission-checked comment mentions with an extensible candidate policy, keyboard-accessible picker, durable mention identities, and deduplicated in-app notifications.
+
+- Add discussion follows and a personal notification inbox for replies, with permission-checked deep links, revocable version-scoped share access receipts, and configurable notification retention.
+
+- Keep the home update-artifact link next to the upload hint rather than at the far edge.
+
+- Place the text-selection comment action near the mouse release point, with viewport clamping and selection-based keyboard/touch fallback.
+
+- Remember acknowledgement of the update-artifact banner using account-scoped coachmark preferences and replace its close icon with a clear “Got it” button.
+
+- Place the home page update-artifact shortcut beside the upload hint as an underlined text link, with wrapping on narrow screens.
+
+- Add a shared new-version upload panel to the library, viewer More menu, and version history, with whole-content replacement, conflict acknowledgement, retry recovery, correctable rejected files, and explicit official designation. Uploads also work on LAN HTTP origins. Add a home shortcut to updating existing artifacts.
+- Compact the viewer header around the project logo, title and version. Replace the persistent private-link warning with dismissible, account-scoped guidance and teach the collapsed toolbar handle.
+- Reduce idle comment list polling from 10 to at most 30 seconds, suspend background timers, and coalesce foreground refreshes while retaining low-frequency unread checks.
+
+- Add CLI/MCP personal-folder listing and moves, explicit public-catalog lookup, and operator identity reporting; label search ownership independently of visibility and align agent help and Skill guidance.
+- CLI JSON compatibility: `whoami.tokenStatus` now uses `unidentified` instead of `rejected` for credentials without an identified account and adds `operator` for verified operator credentials. `email` now comes from the server identity and is null when absent, rather than using the saved login email.
+- Replace the site deletion browser prompt with an accessible confirmation and retryable errors.
+- Open bundled PDF links in the sandboxed PDF.js reader while preserving raw downloads and range reads; route platform-return links through a host confirmation to preserve browser identity.
+- Keep comment previews, posting and image uploads working on LAN HTTP origins where `crypto.randomUUID` is unavailable, using secure random bytes for UUID generation.
+
+- Load comment images near the viewport and separate mobile preview/remove touch targets without enlarging thumbnails.
+- Attribute comment result associations made with personal API tokens to agents, matching OAuth attribution and audit records.
+
+- Clarify comment-style preview and code-format controls; halve attachment thumbnails while keeping full-size image previews.
+
+- Improve comment search with safe keyword highlighting, clear controls and filter summaries; restore keyboard focus when returning to discussions and enlarge touch controls.
+- Show image upload progress and processing states, preserve individual retry/cancel, and proportionally resize overlarge re-encoded images within existing upload/decode limits.
+- Add authenticated native MCP image reads for comment attachments, retaining share isolation and per-read access checks.
+
+
+- Add lightweight comment links and inline code with a safe preview, plus pasted/uploaded image
+  attachments for comments and replies. Keep image drafts across reloads, offer upload retry and
+  accessible previews, and protect image reads with the discussion permissions. Decode uploaded
+  rasters, expire abandoned drafts after seven days, and clean up removed attachments.
+- Search comment text and replies within authorized discussions, filter discussions you participated
+  in, and record an adjusted version without moving or automatically resolving original feedback.
+  Result associations retain actor/time audit records and hide inaccessible target versions.
+- Synchronize comment mutations with unread refresh and reject obsolete in-flight responses while
+  keeping reading order and drafts stable.
+
+- Explain per-link comment isolation beside the destination picker and identify share
+  destinations with the same short link ID as sharing settings and creation date.
+  Keep destination rows consistent and floating editors within the soft-keyboard viewport;
+  preserve input height when switching between floating and sidebar composition.
+
+- Simplify comment creation with a shared compact sidebar/floating composer, contextual
+  selection toolbar, grouped quotes, adaptive input height, and quieter draft controls.
+
 - Preserve file metadata and SHA-256 receipts during parallel uploads and re-uploads, keeping
   entry-page detection stable and enforcing aggregate upload limits when merging receipts.
   Revalidate stale limit failures and identify retryable receipt contention as `upload_conflict`.
 
+- Keep site action menus inside the viewport so bottom-row actions, including Delete, remain
+  reachable. Flip menus above their trigger when needed and scroll tall menus on short screens.
+  Respect the visible area during mobile zoom and keyboard use; close menus when outside scrolling moves their trigger.
+  Keep width stable on open and restore keyboard focus without scrolling on dismissal.
+- Add read-only comment listing, discussion and context tools to MCP and CLI, historical source reads/exports, and an Agent feedback-to-update workflow. CLI content updates now require an explicit version baseline; existing-site revisions preserve the original address.
+
+- Add selection-to-comment for HTML and selectable PDF text, including verified citations and
+  file/page labels. Managers can choose a live, version-compatible share discussion when composing
+  from the main artifact; each destination keeps its own draft. Share management links directly to
+  the independent discussion. Keep read discussions stable during quiet unread-list refreshes.
+
 - Restore the original README banner display width across all six languages.
+
+- Remove retired authorization tables and columns after the four-table RBAC rollout. Grant
+  management now uses `/api/authorization/*`; remove the old collaborators API and edit-policy
+  controls/fields. Keep visibility, share links, ownership and anonymous management unchanged.
+  Upgrade directly from 0.2.0; no separate PR1 deployment is required. Stop every instance sharing
+  the database before deploying; neither 0.2.0 nor PR1 binaries can run against the cleaned schema. See `docs/RBAC.md` for deployment and backup requirements.
+
+- Move role catalogs and authorization grants to four database tables. Migrate existing tenant
+  administrators and site roles at startup before retiring old role storage.
+  Add Administration → Authorization and scoped grant editors in Sharing and Workspaces, with
+  viewer/commenter/editor/admin roles for named members, own-workspace members and global everyone.
+  Support revocation for disabled accounts, audit administrative authorization reads, and exclude
+  only named collaborators from audience statistics. Preserve share-link scope, CLI/MCP identity
+  and immediate revocation. Deploy with a coordinated
+  restart; old and new authorization writers must not run together (see `docs/RBAC.md`).
 
 ## 0.2.0 — 2026-09-17
 

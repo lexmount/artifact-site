@@ -3,9 +3,10 @@
 // block, symlink lstat reject, realpath containment. HTML gets <base> + a storage shim + the
 // sandbox CSP; assets get the bare sandbox CSP. Serves the site's CURRENT version dir.
 import path from "node:path";
+import { previewNavigationBootstrap } from "@/lib/preview-navigation";
 import { commentPreviewBootstrap } from "@/lib/comments/preview-bootstrap";
 import { config } from "@/lib/config";
-import { refreshDocumentWrapper } from "@/lib/document-site";
+import { bundledPdfViewer, refreshDocumentWrapper } from "@/lib/document-site";
 import { getCurrentVersion, getSiteBySlug, getVersion } from "@/lib/db";
 import { EDITOR_MARK, editorBootstrapScript } from "@/lib/editor-bootstrap";
 import { getStorage, safeRelativePath, StorageError } from "@/lib/storage";
@@ -103,7 +104,7 @@ function injectAfterHead(html: string, fragment: string): string {
 
 export function injectPreviewBootstrap(html: string, baseHref: string, filePath = "index.html", documentMode = false): string {
   const base = `<base href="${escapeAttribute(baseHref)}">`;
-  return injectAfterHead(html, `${base}${storageShim}${selectionBootstrap()}${commentPreviewBootstrap(filePath, config.publicUrl || "*", documentMode)}`);
+  return injectAfterHead(html, `${base}${storageShim}${previewNavigationBootstrap()}${selectionBootstrap()}${commentPreviewBootstrap(filePath, config.publicUrl || "*", documentMode)}`);
 }
 
 /**
@@ -116,7 +117,7 @@ export function injectPreviewBootstrap(html: string, baseHref: string, filePath 
 export function injectVisualEditor(html: string, baseHref: string, nonce: string): string {
   const base = `<base href="${escapeAttribute(baseHref)}">`;
   const editor = `<script ${EDITOR_MARK}>${editorBootstrapScript(nonce)}</script>`;
-  return injectAfterHead(html, `${base}${storageShim}${editor}`);
+  return injectAfterHead(html, `${base}${storageShim}${previewNavigationBootstrap()}${editor}`);
 }
 
 // Characters allowed in a CSP source. Values come from the operator-configured CSP_CONNECT_SRC,
@@ -306,6 +307,8 @@ export async function servePreviewFile(
   /** The browser's raw `Range` request header. Only media types take the range path; see below. */
   rangeHeader?: string | null,
   imageViewer = false,
+  pdfNavigation = false,
+  download = false,
 ): Promise<PreviewResponse> {
   const site = await getSiteBySlug(slug);
   if (!site || site.deletedAt) return jsonResponse(404, { error: "site not found" });
@@ -331,6 +334,12 @@ export async function servePreviewFile(
     }
     if (kind !== "file") return jsonResponse(404, { error: "file not found" });
     const extension = path.extname(target).toLowerCase();
+    if (pdfNavigation && extension === ".pdf" && !download && !(site.kind === "document" && target.startsWith("original/"))) {
+      return { status: 200, body: injectPreviewBootstrap(bundledPdfViewer(target), baseHref, target, true), headers: {
+        "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store",
+        "content-security-policy": composePreviewCsp(config.cspConnectSrc), "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...PREVIEW_CORS_HEADER,
+      } };
+    }
     if (imageViewer && /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(extension)) {
       const imagePath = target.split("/").map(encodeURIComponent).join("/");
       const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f5f1}img{max-width:100%;max-height:100vh;object-fit:contain}</style></head><body><img src="${escapeAttribute(imagePath)}" alt=""></body></html>`;
@@ -371,6 +380,7 @@ export async function servePreviewFile(
           "accept-ranges": "bytes",
           ...PREVIEW_CORS_HEADER,
         };
+        if (download || (site.kind === "document" && target.startsWith("original/"))) mediaHeaders["content-disposition"] = attachmentDisposition(target.split("/").pop() || target);
         if (wanted) {
           const slice = await storage.readRange(site.id, version.id, target, wanted.start, wanted.end);
           return {
@@ -416,7 +426,7 @@ export async function servePreviewFile(
     };
     // Only for DOCUMENT sites' original/ dir — an HTML site may legitimately ship its own
     // "original/" assets, and forcing downloads on those would change existing behaviour.
-    if (site.kind === "document" && target.startsWith("original/")) {
+    if (download || (site.kind === "document" && target.startsWith("original/"))) {
       headers["content-disposition"] = attachmentDisposition(target.split("/").pop() || target);
     }
     return { status: 200, body, headers };

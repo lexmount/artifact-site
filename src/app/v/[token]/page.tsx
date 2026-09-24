@@ -17,6 +17,8 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { headers } from "next/headers";
 import Link from "next/link";
+import ViewerBrand from "@/components/viewer-brand";
+import { ExternalLink, Pencil } from "lucide-react";
 import { config } from "@/lib/config";
 import SharedCommentShell from "@/components/comments/shared-comment-shell";
 import Assistant from "@/components/assistant";
@@ -126,8 +128,8 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
     openGraph: { type: "article", siteName: "artifact-site", title, url },
     twitter: { card: "summary", title },
     alternates: { canonical: url },
-    // A protected link should not be indexed even if it leaks into a crawler's queue.
-    robots: share.policy === "public" ? undefined : { index: false, follow: false },
+    // Share links are for recipients, not search results. Public affects access, not indexing.
+    robots: { index: false, follow: false },
   };
 }
 
@@ -274,8 +276,7 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
         <header className="app-header fs-bar" aria-label={t("Shared output")}>
           <div className="fs-bar-glass" aria-hidden="true" />
           <Link className="brand" href="/" aria-label={t("artifact-site home")}>
-            <span aria-hidden="true">←</span>
-            <b>artifact-site</b>
+            <ViewerBrand />
           </Link>
           <div className="header-mid">
             <span className="header-title" title={site.title}>{site.title}</span>
@@ -287,9 +288,10 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
             <OfficialVersion slug={site.slug} versionId={version.id} share={token} />
           </div>
           <div className="controls">
-            {mode === "edit" && <Link className="btn" href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}`}>{t("Edit")}</Link>}
+            {mode === "edit" && <Link className="btn" title={t("Edit")} href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}`}><Pencil size={14} aria-hidden="true" />{t("Edit")}</Link>}
             {/* Pin this rendered preview to the same immutable version as its discussion. A reload follows the link again. */}
-            <a className="btn sm ghost" href={`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`} target="_blank" rel="noreferrer">
+            <a className="btn sm ghost" title={t("Open in a new tab")} href={`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`} target="_blank" rel="noreferrer">
+              <ExternalLink size={14} aria-hidden="true" />
               {t("Open in a new tab")}
             </a>
           </div>

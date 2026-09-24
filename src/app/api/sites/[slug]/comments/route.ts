@@ -26,6 +26,8 @@ export function GET(request: Request, context: CommentRouteContext) {
           : { kind: "main" },
       },
       status: query.status,
+      q: query.q,
+      participated: query.participated,
       unread: query.unread,
       cursor: query.cursor,
       limit: query.limit,

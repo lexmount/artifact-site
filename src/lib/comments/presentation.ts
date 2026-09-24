@@ -12,3 +12,8 @@ export function commentAnchorLabel(anchor: CommentAnchor, excerpt: string | null
   if (anchor.kind === "document") return t("Comment on the whole file") + (quote ? ` · ${quote}` : "");
   return quote || (anchor.kind === "pdf" ? t("Page {page}", { page: anchor.page }) : anchor.filePath);
 }
+
+/** The immutable file/page origin stays visible even when an excerpt is available. */
+export function commentAnchorSource(anchor: CommentAnchor, t: Translator): string {
+  return anchor.filePath + (anchor.kind === "pdf" ? ` · ${t("Page {page}", { page: anchor.page })}` : "");
+}

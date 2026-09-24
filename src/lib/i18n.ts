@@ -13,6 +13,11 @@ export const DEFAULT_LOCALE: Locale = "en";
 
 /** Cookie a viewer's explicit choice is remembered in; absent → Accept-Language → English. */
 export const LOCALE_COOKIE = "ah_locale";
+/** Session-only locale selected through `?lang=`. It keeps client navigation consistent without
+ * replacing the viewer's saved preference after the browser session ends. */
+export const URL_LOCALE_COOKIE = "ah_locale_url";
+/** Internal request header written by the proxy after client values have been stripped. */
+export const URL_LOCALE_HEADER = "x-artifact-ui-locale";
 
 export type Messages = Record<string, string>;
 export type Params = Record<string, string | number>;
@@ -65,6 +70,16 @@ export function resolveLocale(explicit: string | null | undefined, acceptLanguag
     if (l) return l;
   }
   return DEFAULT_LOCALE;
+}
+
+/** A query-string language is an ephemeral override: it wins for this visit, but is never
+ * persisted. Keeping this pure also lets links and the client provider share the same rules. */
+export function localeFromSearch(search: string): Locale | null {
+  try {
+    return normalise(new URLSearchParams(search).get("lang"));
+  } catch {
+    return null;
+  }
 }
 
 function normalise(tag: string | null | undefined): Locale | null {

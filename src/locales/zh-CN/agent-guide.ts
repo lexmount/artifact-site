@@ -17,6 +17,7 @@ export const agentGuide: Messages = {
   "Copy token": "复制 Token",
   "Could not copy automatically. Select the token and copy it manually.": "自动复制失败，请选中 Token 手动复制。",
   "Connection information": "连接信息",
+  "List my folders": "列出我的文件夹",
   "Find artifacts": "查找作品",
   "Write upload content": "写入上传内容",
   "Token name": "Token 名称",

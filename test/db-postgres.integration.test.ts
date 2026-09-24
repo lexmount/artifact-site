@@ -1,3 +1,4 @@
+import { putUserSiteRole } from "@/lib/role-bindings";
 // Integration test against a REAL Postgres. Skipped unless ARTIFACT_DATABASE_URL is set, so it
 // never runs in CI. Run manually:
 //   ARTIFACT_DATABASE_URL=postgres://user:pw@host:5432/db?sslmode=disable \
@@ -36,6 +37,35 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
     const users = await Promise.all(Array.from({ length: 3 }, () => store.upsertUser({ authProvider: "test", providerSubject: subject })));
     expect(new Set(users.map((user) => user.id)).size).toBe(1);
     expect(users.filter((user) => user.created)).toHaveLength(1);
+  });
+
+  it("atomically keeps the old account when an OIDC subject changes", async () => {
+    const stamp = Date.now();
+    const email = `oidc-cutover-${stamp}@example.test`;
+    const old = await store.upsertUser({
+      authProvider: "oidc", providerSubject: `old-${stamp}`, email, emailVerified: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await store.upsertUser({
+      authProvider: "oidc", providerSubject: `duplicate-${stamp}`, email, emailVerified: true,
+    });
+    const migrated = await Promise.all(Array.from({ length: 3 }, () => store.upsertUser({
+      authProvider: "oidc", providerSubject: `new-${stamp}`, email, emailVerified: true,
+      migrateVerifiedEmail: true,
+    })));
+    expect(new Set(migrated.map((user) => user.id))).toEqual(new Set([old.id]));
+    expect(migrated.every((user) => !user.created && user.providerSubject === `new-${stamp}`)).toBe(true);
+  });
+
+  it("atomically creates a new cutover account and initializes its tenant", async () => {
+    const stamp = Date.now();
+    const users = await Promise.all(Array.from({ length: 3 }, () => store.upsertUser({
+      authProvider: "oidc", providerSubject: `fresh-${stamp}`,
+      email: `fresh-${stamp}@example.test`, emailVerified: true, migrateVerifiedEmail: true,
+    })));
+    expect(new Set(users.map((user) => user.id)).size).toBe(1);
+    expect(users.filter((user) => user.created)).toHaveLength(1);
+    expect(users.every((user) => user.tenantId === "init")).toBe(true);
   });
 
   it("keeps a pool connection available while RBAC callers wait for the advisory lock", async () => {
@@ -201,7 +231,7 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
 
       expect(await listed()).toBe(true); // public by default → in the directory
 
-      await store.updateSiteSharing(S3, "unlisted", "owner");
+      await store.updateSiteVisibility(S3, "unlisted");
       expect(await listed()).toBe(false); // stranger: gone
       expect(await listed({})).toBe(false); // blank viewer is a stranger, not a wildcard
       expect(await listed({ anonId: "anon_pgit" })).toBe(true); // creating browser: still mine
@@ -219,10 +249,10 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
       // the home page's prune passes, so leaving them out silently drops their recent-shelf entry.
       const mate = await store.upsertUser({ authProvider: "t", providerSubject: `pgit-mate-${Date.now()}` });
       expect(await listed({ userId: mate.id })).toBe(false); // not yet granted
-      await store.rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_by,granted_at) VALUES($1,$2,'editor',$3,$4)", [S3,mate.id,user.id,Date.now()]);
+      await putUserSiteRole(store.rbacQuery.bind(store), S3, mate.id, 'editor', user.id);
       expect(await listed({ userId: mate.id })).toBe(true);
 
-      await store.updateSiteSharing(S3, "public", "owner");
+      await store.updateSiteVisibility(S3, "public");
       expect(await listed()).toBe(true); // flipping back re-lists it
     } finally {
       await hardDelete2(S3);

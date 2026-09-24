@@ -112,8 +112,8 @@ describe("the SSE outlet", () => {
 
   it("hides a private site's feed from a stranger, same answer as the page", async () => {
     const { site } = await createSite({ mode: "paste", html: "<html><head></head><body>p</body></html>" }, {}, CTX);
-    const { updateSiteSharing } = await import("@/lib/db");
-    await updateSiteSharing(site.id, "private", "owner");
+    const { updateSiteVisibility } = await import("@/lib/db");
+    await updateSiteVisibility(site.id, "private");
     const res = await eventsGET(request(site.slug, new AbortController().signal), { params: Promise.resolve({ slug: site.slug }) });
     expect(res.status).toBe(404);
   });

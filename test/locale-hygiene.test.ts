@@ -1,3 +1,5 @@
+import ts from "typescript";
+import { zhCN } from "@/locales/zh-CN";
 // The reverse of "every t() string has a translation": every zh-CN key is still referenced by some
 // source file, as a string literal — directly in t("…"), or through a label table whose values are
 // literals. Keys that survive only in the locale files are how 43 stale entries accumulated.
@@ -39,4 +41,21 @@ describe("zh-CN locale hygiene", () => {
       expect(stale, `没有源码引用的键：${stale.map((k) => k.slice(0, 60)).join(" | ")}`).toEqual([]);
     });
   }
+});
+
+
+it("provides translations for literal t() calls in source files", () => {
+  const missing = new Set<string>();
+  for (const file of walk(abs("src")).filter(file=>!file.includes("/locales/"))) {
+    const source = ts.createSourceFile(file,readFileSync(file,"utf8"),ts.ScriptTarget.Latest,true);
+    const visit = (node:ts.Node) => {
+      if(ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "t") {
+        const key=node.arguments[0];
+        if(key && ts.isStringLiteralLike(key) && !Object.hasOwn(zhCN,key.text)) missing.add(key.text);
+      }
+      ts.forEachChild(node,visit);
+    };
+    visit(source);
+  }
+  expect([...missing].sort()).toEqual([]);
 });

@@ -36,7 +36,7 @@ To keep anonymous browser creation available alongside an operator token, explic
 the fallback policy to `token`, which rejects anonymous browser creation. Use `open` only where
 anonymous creation is intended; existing-site access and editing still follow their own rules.
 
-`login` requires an OIDC-configured server. CLI keyword find, read, info and skill work without a token where access permits. Remote MCP always requires a valid Bearer token — an OAuth access token the client obtained by signing in, a personal token, or the operator token. Publishing, updating, sharing and deleting require a token in the current client. The default open local setup issues no credentials; use browser uploads or the agent publishing guide, or configure OIDC or `PUBLISH_API_TOKEN` for authenticated CLI/MCP use. Supply an operator credential through `ARTIFACT_SITE_TOKEN`; operator tokens have broad privileges and cannot use the personal library (`find` without keywords). `whoami` prints “token present but not recognised by the server” for these tokens; verify them with a successful test publish instead. Environment tokens override saved tokens. `logout` forgets local credentials but does not revoke server-side tokens.
+`login` requires an OIDC-configured server. CLI keyword find, read, info and skill work without a token where access permits. Remote MCP always requires a valid Bearer token — an OAuth access token the client obtained by signing in, a personal token, or the operator token. Publishing, updating, sharing and deleting require a token in the current client. The default open local setup issues no credentials; use browser uploads or the agent publishing guide, or configure OIDC or `PUBLISH_API_TOKEN` for authenticated CLI/MCP use. Supply an operator credential through `ARTIFACT_SITE_TOKEN`; operator tokens have broad privileges and cannot use the personal library (`find` without keywords). `whoami` reports these as operator credentials, with no personal account or folders. Older servers may not identify operator credentials; do not test identity by publishing. Environment tokens override saved tokens. `logout` forgets local credentials but does not revoke server-side tokens.
 
 `login` runs the one-time device authorisation: it prints a message with a link and a code,
 opens the browser, and waits for you to click **Allow**. The publish token it receives is stored
@@ -44,6 +44,8 @@ with mode 0600; the base URL is remembered so later commands need no `--base`.
 
 Environment overrides (useful in CI and for agents): `ARTIFACT_SITE_URL`, `ARTIFACT_SITE_TOKEN`,
 `ARTIFACT_SITE_CONFIG_DIR`.
+
+JSON compatibility: `whoami --json` now returns `tokenStatus: "unidentified"` (previously `"rejected"`) when a credential yields no identified account, and `"operator"` for verified operator credentials. Explicit token rejection codes remain distinct. The top-level `email` comes from the server identity, or is `null`; it no longer uses a potentially stale saved login email. Scripts should handle these values explicitly.
 
 ## Commands
 
@@ -53,10 +55,13 @@ it when passing such identifiers, for example `artifact-site --json read -- -YOU
 | Command | What it does |
 | --- | --- |
 | `publish <path>` | New site from an `.html`, a directory (build output), a `.zip`, or a pdf/pptx/ppt/docx/doc. `-` reads HTML from stdin. Creates a **public share link** by default (`--share login\|email\|passcode\|none`). |
-| `update <slug> <path>` | Replace the current content. The route follows the site's kind: single page → the new `.html`; file tree → a directory or zip; document → the new file. `--expected-version <id>` refuses to overwrite someone else's newer version (exit 4). |
-| `export <slug> [-o file]` | Download the current version as a zip; prints the version id for `--expected-version`. |
+| `update <slug> <path>` | Replace the current content. The route follows the site's kind: single page → the new `.html`; file tree → a directory or zip; document → the new file. Required `--expected-version <id>` refuses to overwrite someone else's newer version (exit 4). |
+| `export <slug> [--version-id <id>] [-o file]` | Download the selected version (default current) as a zip; prints the version id for `--expected-version`. |
 | `share <slug>` | Another share link: `--policy`, `--label`, `--expires 7\|30\|90`, `--passcode`. |
 | `find` · `info <slug> [--shares]` | Your remote artifacts · one artifact's kind, files and history, optionally owner-only sharing summaries. |
+| `find --public` | Explicit public catalog, not a personal listing. Omit keywords. |
+| `folders list` | My flat folder labels with stable IDs; requires a personal account. |
+| `move <slug> --folder <id>` / `move <slug> --unfiled` | Change only my folder assignment; content, ownership and sharing stay unchanged. |
 | `find <words…>` | Sites whose current text contains every word (title matches first; Chinese works). `-n` caps the results. Searches what you may list: yours, ones you may edit, public ones. |
 | `read <slug>` | The current version as plain text (HTML stripped, pdf/docx/pptx text extracted). `--file <relpath>` prints one file verbatim; `--max-chars` cuts the output. |
 | `update <slug> --title <title>` | Rename the display title without changing its address or contents. Cannot combine with a replacement path. |
@@ -66,7 +71,26 @@ it when passing such identifiers, for example `artifact-site --json read -- -YOU
 | `whoami` · `logout` · `skill` | Identity · forget the token · print the platform's agent guide. |
 
 Use `find` without keywords for “my artifacts”; use keywords to search all discoverable works,
-including public artifacts. `read` retrieves content; `info` inspects metadata and version history.
+including public artifacts. Each keyword result carries `relationship` (owned, collaborating,
+anonymous, public) separately from `visibility`; owned artifacts can also be public. JSON output
+includes `scope`: mine, discoverable, or public. Never present mixed/public results as "my sites".
+A personal-list failure does not automatically load the public catalog. Use `whoami` to diagnose
+identity, then explicitly use `find --public` if public content is useful. Browser sign-in is separate
+from CLI authentication; an empty list is not a sign-in failure, and network/permission errors do
+not establish login state.
+
+File a newly published or existing artifact with:
+
+```bash
+artifact-site folders list --json
+artifact-site move --folder fld_EXAMPLE -- YOUR_SLUG
+artifact-site move --unfiled -- YOUR_SLUG
+```
+
+Reuse a saved folder ID on the same server/account. Unknown or inaccessible targets fail explicitly.
+If publication succeeded but filing failed, retry only `move`; do not publish a duplicate.
+
+`read` retrieves content; `info` inspects metadata and version history.
 CLI handles upload chunking automatically, so there are no separate transfer commands to learn.
 `list`, `search` and `rename` remain compatible with existing scripts but are hidden from the main
 help. New scripts should use `find`, `find <words…>` and `update --title` respectively.
@@ -122,7 +146,7 @@ read permissions. Public sharing creates a reader URL without changing site visi
 
 ```sh
 artifact-site publish report.pdf --official
-artifact-site update SLUG report.pdf --official
+artifact-site update SLUG report.pdf --expected-version BASELINE --official
 artifact-site official set SLUG VERSION_ID
 artifact-site official clear SLUG
 artifact-site info SLUG
@@ -164,3 +188,29 @@ Library callers can use `client.withOperation(key, () => client.createPaste(html
 `client.operationStatus(key)` and `client.uploadStatus(versionId)`. Persist the key before calling.
 
 Cached publication results are checked against the server before reuse. If the artifact was deleted, inspect the previous publication and choose a new `--operation-key` to publish again.
+
+## Revise an artifact from feedback
+
+```bash
+artifact-site comments list SLUG --status open --json
+artifact-site comments list SLUG --aggregate --all-versions --json
+artifact-site comments context SLUG THREAD --json
+artifact-site comments read SLUG THREAD --json
+artifact-site comments read SLUG THREAD --cursor CURSOR --limit 30 --json
+artifact-site read SLUG --version-id ORIGINAL --file index.html --json
+artifact-site export SLUG --version-id BASELINE --out source.zip --json
+artifact-site update SLUG ./output --expected-version BASELINE --operation-key feedback-fix-001 --json
+```
+
+Comments commands return JSON (pretty-printed without `--json`). Lists default to the current
+version and main discussion, or the presented share's own scope. Use `--version-id`, `--status`,
+`--cursor`, `--limit`, and manager-only `--aggregate` / `--share-id` / `--all-versions` explicitly.
+Keep the returned version and filters when paging. Follow discussion `messages.nextCursor`, or
+context `continuation.messagesCursor`, using `read --cursor`; those continuation pages return a
+top-level `nextCursor`. Reads do not mark anything read. Share credentials can be supplied through
+`ARTIFACT_SITE_SHARE_TOKEN`; comment access does not grant source access or editing.
+
+Content `update` now requires `--expected-version` (title-only rename is unchanged). Read the
+latest editable version separately from an old comment's evidence, then revise the same slug.
+A 409 exits 4: inspect and reconcile the winner, not a blind overwrite or new publication.
+Reuse the operation key after uncertain responses; fixed-version shares remain on the old version.

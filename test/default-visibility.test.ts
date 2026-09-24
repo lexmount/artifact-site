@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDbForTests, getSite, updateSiteSharing } from "@/lib/db";
+import { closeDbForTests, getSite, updateSiteVisibility } from "@/lib/db";
 import { createSite, forkSite } from "@/lib/sites";
 
 let dir: string;
@@ -66,7 +66,7 @@ describe("a fork is a new site too, and is governed by the same deployment postu
   // and put it in the home-page directory.
   const forkOf = async (visibility: string) => {
     const site = (await createSite({ mode: "paste", html: "<title>源</title><body>x</body>" }, {})).site;
-    if (visibility !== (await getSite(site.id))!.visibility) await updateSiteSharing(site.id, visibility as never, "owner");
+    if (visibility !== (await getSite(site.id))!.visibility) await updateSiteVisibility(site.id, visibility as never);
     const forked = await forkSite(site.slug, {});
     return (await getSite(forked!.site.id))!.visibility;
   };

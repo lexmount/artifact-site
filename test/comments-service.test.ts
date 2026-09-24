@@ -1,3 +1,6 @@
+import * as authorization from "@/lib/authz";
+import * as shareAccess from "@/lib/share";
+import { putUserSiteRole } from "@/lib/role-bindings";
 import { getAgentContext } from "@/lib/comments/agent-context";
 import * as commentAccess from "@/lib/comments/access";
 import { createFingerprintCache, fingerprint } from "@/lib/comments/store";
@@ -16,10 +19,13 @@ import {
   upsertUser,
   setSitePurged,
 } from "@/lib/db";
-import { createSite } from "@/lib/sites";
+import { testAudit } from "./helpers";
+import { createSite, replaceSiteContent } from "@/lib/sites";
 import { mintSession } from "@/lib/session";
 import { hashToken } from "@/lib/share";
 import {
+  associateCommentResult,
+  commentResultOptions,
   commentUnread,
   setCommentReaction,
   getCommentPermissions,
@@ -36,6 +42,8 @@ import { migrateNumbered } from "@/lib/migrations";
 import { up as migrateReview } from "@/lib/migrations/0002-comment-review-indexes";
 import { siteLikes } from "@/lib/comments/likes";
 import { POST, GET } from "@/app/api/sites/[slug]/comments/route";
+import { GET as commentOptions } from "@/app/api/sites/[slug]/comments/options/route";
+import { PATCH as updateCommentStatus } from "@/app/api/sites/[slug]/comments/[threadId]/status/route";
 const migrationDialect = process.env.ARTIFACT_DB_DRIVER === "postgres" ? "postgres" : "sqlite";
 const origin = "https://comments.example";
 afterEach(closeDbForTests);
@@ -314,7 +322,7 @@ describe("comment persistence and real routes", () => {
   it("records migration once and rejects modified history", async () => {
     await fixture();
     await rbacTransaction(q => migrateNumbered(q, migrationDialect));
-    expect(await rbacQuery("SELECT id FROM schema_migrations")).toHaveLength(6);
+    expect(await rbacQuery("SELECT id FROM schema_migrations")).toHaveLength(13);
     const [saved] = await rbacQuery(
       "SELECT checksum FROM schema_migrations WHERE id='0001-comments'",
     );
@@ -629,7 +637,7 @@ it("memoizes fingerprint secrets per operation without retaining replaced databa
 it("reports editor history access separately from share aggregation", async () => {
   const {site, reader, input} = await fixture();
   expect(await getCommentPermissions(req(reader.cookie), site.slug, input.scope)).toMatchObject({canReadVersions:false,canAggregate:false});
-  await rbacQuery("INSERT INTO site_members(site_id,user_id,role,granted_at) VALUES($1,$2,'editor',$3)", [site.id, reader.user.id, Date.now()]);
+  await putUserSiteRole(rbacQuery, site.id, reader.user.id, 'editor', null);
   expect(await getCommentPermissions(req(reader.cookie), site.slug, input.scope)).toMatchObject({canReadVersions:true,canAggregate:false});
 });
 
@@ -750,4 +758,208 @@ describe("comment engagement", () => {
     await expect(commentUnread(req(reader.cookie,undefined,tokens[0]),site.slug,read)).rejects.toMatchObject({statusCode:404});
   });
 
+});
+
+it("projects Agent summaries without widening share access or acknowledging unread", async () => {
+  const { listAgentComments, agentCommentListSchema } = await import("@/lib/comments/agent-list");
+  const { site, owner, reader, input } = await fixture();
+  const token = randomUUID();
+  const share = await createShare({ id: createId("shr"), siteId: site.id, tokenHash: hashToken(token), policy: "public", passcodeHash: null, label: null, createdBy: owner.user.id, createdAnonId: null, expiresAt: null, mode: "comment", versionId: site.currentVersionId });
+  const created = await createComment(req(reader.cookie, undefined, token), site.slug, {
+    ...input, scope: { ...input.scope, entry: { kind: "share", shareId: share.id } }, body: "a".repeat(499) + "😀" + "tail",
+  });
+  const query = agentCommentListSchema.parse({});
+  const result = await listAgentComments(req(reader.cookie, undefined, token), site.slug, query);
+  expect(result.scope.versionId).toBe(site.currentVersionId);
+  const { agentThread } = await import("@/lib/comments/agent-context");
+  const detail = created.detail;
+  detail.thread.context.excerpt = "a".repeat(1999) + "😀tail";
+  expect(agentThread(detail).thread.context.excerpt).toBe("a".repeat(1999) + "😀");
+  expect(result.items[0]).toMatchObject({ threadId: created.detail.thread.id, summaryTruncated: true, summary: "a".repeat(499) + "😀" });
+  expect((await listAgentComments(req(owner.cookie), site.slug, query)).items).toHaveLength(0);
+  expect((await listAgentComments(req(owner.cookie), site.slug, { ...query, aggregate: "true", allVersions: "true" })).items).toHaveLength(1);
+  await expect(listAgentComments(req(reader.cookie), site.slug, { ...query, aggregate: "true" })).rejects.toBeTruthy();
+  await expect(listAgentComments(req(owner.cookie, undefined, token), site.slug, { ...query, aggregate: "true" })).rejects.toMatchObject({ statusCode: 404 });
+  await expect(listAgentComments(req(owner.cookie), site.slug, { ...query, shareId: share.id })).rejects.toMatchObject({ statusCode: 400 });
+  expect(agentCommentListSchema.safeParse({ allVersions: "true" }).success).toBe(false);
+  expect(await rbacQuery("SELECT * FROM comment_read_scopes WHERE site_id=$1", [site.id])).toHaveLength(0);
+  await revokeShare(share.id);
+  await expect(listAgentComments(req(owner.cookie, undefined, token), site.slug, query)).rejects.toMatchObject({ statusCode: 404 });
+});
+
+it("keeps Agent aggregate share filters scoped to the authorized site", async () => {
+  const { listAgentComments, agentCommentListSchema } = await import("@/lib/comments/agent-list");
+  const local = await fixture();
+  const foreign = await fixture();
+  const token = randomUUID();
+  const share = await createShare({ id: createId("shr"), siteId: foreign.site.id, tokenHash: hashToken(token), policy: "public", passcodeHash: null, label: null, createdBy: foreign.owner.user.id, createdAnonId: null, expiresAt: null, mode: "comment", versionId: foreign.site.currentVersionId });
+  const { detail } = await createComment(req(foreign.owner.cookie, undefined, token), foreign.site.slug, {
+    ...foreign.input, scope: { ...foreign.input.scope, entry: { kind: "share", shareId: share.id } }, body: "Foreign site feedback",
+  });
+  const query = agentCommentListSchema.parse({ aggregate: "true", allVersions: "true", shareId: share.id });
+  const authorized = await listAgentComments(req(foreign.owner.cookie), foreign.site.slug, query);
+  expect(authorized.items.map(item => item.threadId)).toEqual([detail.thread.id]);
+  const isolated = await listAgentComments(req(local.owner.cookie), local.site.slug, query);
+  expect(isolated.items).toEqual([]);
+  expect(isolated.nextCursor).toBeNull();
+  expect(isolated.hasMore).toBe(false);
+  await expect(listAgentComments(req(local.owner.cookie), foreign.site.slug, query)).rejects.toMatchObject({ statusCode: 404 });
+});
+
+it("offers only version-safe live share destinations without exposing tokens", async () => {
+  const {site,owner,reader,input}=await fixture();
+  const ids:string[]=[];
+  for(const [label,mode,expiresAt] of [["live","comment",null],["expired","comment",Date.now()-1000],["read-only","view",null]] as const) {
+    const id=createId("share");ids.push(id);
+    await createShare({id,siteId:site.id,tokenHash:hashToken("private-"+id),token:"private-"+id,policy:"public",mode,passcodeHash:null,label,createdBy:owner.user.id,createdAnonId:null,expiresAt,versionId:null});
+  }
+  const context={params:Promise.resolve({slug:site.slug})};
+  const response=await commentOptions(new Request(`${origin}/api/sites/${site.slug}/comments/options`,{headers:{cookie:owner.cookie}}),context);
+  expect(response.status).toBe(200);
+  const options=await response.json();
+  expect(options.shares).toEqual(expect.arrayContaining([
+    expect.objectContaining({id:ids[0],active:true,mode:"comment",versionIds:[site.currentVersionId]}),
+    expect.objectContaining({id:ids[1],active:false}),
+    expect.objectContaining({id:ids[2],mode:"view"}),
+  ]));
+  expect(JSON.stringify(options)).not.toContain("tokenHash");
+  expect(JSON.stringify(options)).not.toContain("private-");
+  expect(options.shares.find((s: {id:string})=>s.id===ids[0])).toMatchObject({id:ids[0],createdAt:expect.any(Number)});
+  expect((await commentOptions(new Request(`${origin}/api/sites/${site.slug}/comments/options`,{headers:{cookie:reader.cookie}}),context)).status).toBe(404);
+  // Options are advisory: revocation between choosing and sending is rechecked by the write.
+  await revokeShare(ids[0]);
+  await expect(createComment(req(owner.cookie),site.slug,{...input,scope:{...input.scope,entry:{kind:"share",shareId:ids[0]}}})).rejects.toThrow();
+});
+
+
+describe("comment discovery and result associations", () => {
+  it("searches replies literally and binds search/participation to cursors", async () => {
+    const {site,owner,reader,input}=await fixture();
+    const first=await createComment(req(owner.cookie),site.slug,input);
+    const second=await createComment(req(owner.cookie),site.slug,{...input,clientRequestId:randomUUID(),body:"Another root"});
+    for(const thread of [first,second]) await replyComment(req(reader.cookie),site.slug,thread.detail.thread.id,{body:"Precise 50%_finding",clientRequestId:randomUUID()});
+    const filter={kind:"space" as const,scope:input.scope,q:"50%_",participated:true,limit:1};
+    const page=await listComments(req(reader.cookie),site.slug,filter);
+    expect(page.items).toHaveLength(1); expect(page.nextCursor).toBeTruthy();
+    await expect(listComments(req(reader.cookie),site.slug,{...filter,q:"different",cursor:page.nextCursor!})).rejects.toMatchObject({statusCode:400});
+    expect((await listComments(req(reader.cookie),site.slug,{...filter,q:"50%X"})).items).toHaveLength(0);
+    expect((await listComments(req(owner.cookie),site.slug,{...filter,limit:30})).items).toHaveLength(2);
+    await expect(listComments(req(),site.slug,filter)).rejects.toBeDefined();
+  });
+  it("isolates search across share links and omits deleted text", async () => {
+    const {site,owner,reader,input}=await fixture();
+    const tokens=[createId("token"),createId("token")];
+    const shares=[];
+    for(const token of tokens) shares.push(await createShare({id:createId("shr"),siteId:site.id,tokenHash:hashToken(token),policy:"public",passcodeHash:null,label:null,createdBy:owner.user.id,createdAnonId:null,expiresAt:null,mode:"comment",versionId:null}));
+    const a={...input.scope,entry:{kind:"share" as const,shareId:shares[0].id}};
+    const b={...input.scope,entry:{kind:"share" as const,shareId:shares[1].id}};
+    const created=await createComment(req(owner.cookie,undefined,tokens[0]),site.slug,{...input,scope:a,body:"secret phrase"});
+    expect((await listComments(req(reader.cookie,undefined,tokens[1]),site.slug,{kind:"space",scope:b,q:"secret"})).items).toHaveLength(0);
+    await expect(listComments(req(reader.cookie,undefined,tokens[1]),site.slug,{kind:"space",scope:a,q:"secret"})).rejects.toBeDefined();
+    expect((await listComments(req(owner.cookie),site.slug,{kind:"aggregate",siteId:site.id,q:"secret"})).items).toHaveLength(1);
+    const message=created.detail.messages.items[0];
+    await mutateMessage(req(owner.cookie),site.slug,created.detail.thread.id,message.id,{expectedRevision:message.revision},"delete");
+    expect((await listComments(req(owner.cookie),site.slug,{kind:"aggregate",siteId:site.id,q:"secret"})).items).toHaveLength(0);
+  });
+  it("associates editorial results with revision control and audit without resolving or moving", async () => {
+    const {site,owner,reader,input}=await fixture();
+    const created=await createComment(req(owner.cookie),site.slug,input);
+    const id=created.detail.thread.id;
+    await expect(associateCommentResult(req(reader.cookie,{}),site.slug,id,{expectedRevision:1,versionId:site.currentVersionId})).rejects.toMatchObject({statusCode:403});
+    const foreign=await fixture();
+    await expect(associateCommentResult(req(owner.cookie,{}),site.slug,id,{expectedRevision:1,versionId:foreign.site.currentVersionId})).rejects.toMatchObject({statusCode:404});
+    await associateCommentResult(req(owner.cookie,{}),site.slug,id,{expectedRevision:1,versionId:site.currentVersionId});
+    const current=await getCommentDetail(req(owner.cookie),site.slug,id);
+    expect(current.space).toEqual(created.detail.space);
+    expect(current.thread.resolution.status).toBe("open");
+    expect(current.thread.resultVersionId).toBe(site.currentVersionId);
+    expect(current.thread.resultAssociation).toMatchObject({userId:owner.user.id,actorKind:"user"});
+    expect((await getAgentContext(req(owner.cookie),site.slug,id)).threads[0].thread.resultAssociation).toEqual(current.thread.resultAssociation);
+    expect((await commentResultOptions(req(owner.cookie),site.slug,id)).versions).toHaveLength(1);
+    await expect(associateCommentResult(req(owner.cookie,{}),site.slug,id,{expectedRevision:1,versionId:null})).rejects.toMatchObject({statusCode:409});
+    const audit=await rbacQuery("SELECT * FROM rbac_audit WHERE action='comment.result.associate' AND target_id=$1",[id]);
+    expect(audit).toHaveLength(1);expect(audit[0].actor_id).toBe(owner.user.id);
+    await associateCommentResult(req(owner.cookie,{}),site.slug,id,{expectedRevision:current.thread.revision,versionId:null});
+    expect((await getCommentDetail(req(owner.cookie),site.slug,id)).thread.resultVersionId).toBeNull();
+  });
+});
+
+it("redacts inaccessible result versions and permits live edit-link editorial actions", async () => {
+  const {site,owner,reader,input}=await fixture();
+  await rbacQuery("UPDATE sites SET visibility='private' WHERE id=$1",[site.id]);
+  const fixedToken=createId("fixed"), editToken=createId("edit");
+  const fixed=await createShare({id:createId("shr"),siteId:site.id,tokenHash:hashToken(fixedToken),policy:"public",mode:"comment",passcodeHash:null,label:null,createdBy:owner.user.id,createdAnonId:null,expiresAt:null,versionId:site.currentVersionId});
+  const created=await createComment(req(reader.cookie,undefined,fixedToken),site.slug,{...input,scope:{...input.scope,entry:{kind:"share",shareId:fixed.id}}});
+  const replacement=await replaceSiteContent(site.slug,{mode:"paste",html:"<h1>Updated result</h1>"},testAudit());
+  if(!replacement || "conflict" in replacement) throw new Error("Fixture version failed");
+  await associateCommentResult(req(owner.cookie,{}),site.slug,created.detail.thread.id,{expectedRevision:1,versionId:replacement.site.currentVersionId});
+  const hidden=await getCommentDetail(req(reader.cookie,undefined,fixedToken),site.slug,created.detail.thread.id);
+  expect(hidden.thread.resultVersionId).toBeNull();expect(hidden.thread.resultAssociation).toBeNull();expect(hidden.thread.resultVersionNumber).toBeUndefined();
+  let revision=hidden.thread.revision;
+  for (const status of ["resolved", "open"] as const) {
+    const request=new Request(`${origin}/api/sites/${site.slug}/comments/${created.detail.thread.id}/status`,{method:"PATCH",headers:{cookie:reader.cookie,origin,"content-type":"application/json","x-artifact-share":fixedToken},body:JSON.stringify({expectedRevision:revision,status})});
+    const response=await updateCommentStatus(request,{params:Promise.resolve({slug:site.slug,threadId:created.detail.thread.id})});
+    expect(response.status).toBe(200);
+    const thread=await response.json();
+    expect(thread.resultVersionId).toBeNull();expect(thread.resultAssociation).toBeNull();expect(thread.resultVersionNumber).toBeUndefined();
+    expect(JSON.stringify(thread)).not.toContain(replacement.site.currentVersionId);
+    expect(thread.resolution.status).toBe(status);expect(thread.revision).toBe(++revision);
+  }
+  const edit=await createShare({id:createId("shr"),siteId:site.id,tokenHash:hashToken(editToken),policy:"public",mode:"edit",passcodeHash:null,label:null,createdBy:owner.user.id,createdAnonId:null,expiresAt:null,versionId:null});
+  const editable=await createComment(req(reader.cookie,undefined,editToken),site.slug,{...input,clientRequestId:randomUUID(),scope:{...input.scope,versionId:replacement.site.currentVersionId,entry:{kind:"share",shareId:edit.id}}});
+  expect(editable.detail.permissions.canAssociateResult).toBe(true);
+  await associateCommentResult(req(reader.cookie,{},editToken),site.slug,editable.detail.thread.id,{expectedRevision:1,versionId:replacement.site.currentVersionId});
+  const options=await commentResultOptions(req(reader.cookie,undefined,editToken),site.slug,editable.detail.thread.id);
+  expect(options.versions).toEqual([{id:replacement.site.currentVersionId,createdAt:replacement.version.createdAt,number:2}]);
+});
+
+it("loads result ordinals once per list and lazily for standalone readable results", async () => {
+  const {site,owner,input}=await fixture();
+  const created=[];
+  for(let index=0;index<3;index++) created.push(await createComment(req(owner.cookie),site.slug,{...input,clientRequestId:randomUUID()}));
+  const versions=vi.spyOn(metadata,"listVersions");
+  try {
+    await listComments(req(owner.cookie),site.slug,{kind:"space",scope:input.scope});
+    expect(versions).not.toHaveBeenCalled();
+    for(const item of created) await associateCommentResult(req(owner.cookie,{}),site.slug,item.detail.thread.id,{expectedRevision:1,versionId:site.currentVersionId});
+    versions.mockClear();
+    const editGate=vi.spyOn(authorization,"requirePermission");
+    const readGate=vi.spyOn(shareAccess,"readableVersionFilter");
+    const page=await listComments(req(owner.cookie),site.slug,{kind:"space",scope:input.scope});
+    expect(editGate).toHaveBeenCalledTimes(1);
+    expect(readGate).toHaveBeenCalledTimes(1);
+    editGate.mockRestore(); readGate.mockRestore();
+    expect(page.items).toHaveLength(3);
+    expect(page.items.every(item=>item.thread.resultVersionNumber===1)).toBe(true);
+    expect(versions).toHaveBeenCalledTimes(1);
+    versions.mockClear();
+    expect((await getCommentDetail(req(owner.cookie),site.slug,created[0].detail.thread.id)).thread.resultVersionNumber).toBe(1);
+    expect(versions).toHaveBeenCalledTimes(1);
+  } finally {versions.mockRestore();}
+});
+
+it("retains historical participation after deleting one's message", async () => {
+  const {site,owner,reader,input}=await fixture();
+  const root=await createComment(req(owner.cookie),site.slug,input);
+  await replyComment(req(reader.cookie),site.slug,root.detail.thread.id,{body:"A historical contribution",clientRequestId:randomUUID()});
+  const reply=(await getCommentDetail(req(reader.cookie),site.slug,root.detail.thread.id)).messages.items.find(message=>message.authorUserId===reader.user.id)!;
+  await mutateMessage(req(reader.cookie),site.slug,root.detail.thread.id,reply.id,{expectedRevision:reply.revision},"delete");
+  expect((await listComments(req(reader.cookie),site.slug,{kind:"space",scope:input.scope,participated:true})).items.map(item=>item.thread.id)).toEqual([root.detail.thread.id]);
+  expect((await listComments(req(reader.cookie),site.slug,{kind:"space",scope:input.scope,q:"historical"})).items).toHaveLength(0);
+});
+
+it("filters aggregate version choices by effective history permission without renumbering", async () => {
+  const {site,owner}=await fixture();
+  const updated=await replaceSiteContent(site.slug,{mode:"paste",html:"<h1>Latest visible</h1>"},testAudit());
+  if(!updated || "conflict" in updated) throw new Error("Fixture version failed");
+  await createShare({id:createId("shr"),siteId:site.id,tokenHash:hashToken(createId("token")),policy:"public",mode:"comment",passcodeHash:null,label:null,createdBy:owner.user.id,createdAnonId:null,expiresAt:null,versionId:site.currentVersionId});
+  await rbacQuery("DELETE FROM role_permissions WHERE role_id='owner' AND permission_code='site.history.read'");
+  try {
+    const response=await commentOptions(req(owner.cookie),{params:Promise.resolve({slug:site.slug})});
+    expect(response.status).toBe(200);
+    const options=await response.json();
+    expect(options.versions).toEqual([expect.objectContaining({id:updated.site.currentVersionId,number:2})]);
+    expect(options.shares[0].versionIds).toEqual([]);
+    expect(JSON.stringify(options)).not.toContain(site.currentVersionId);
+  } finally { await rbacQuery("INSERT INTO role_permissions(role_id,permission_code) VALUES('owner','site.history.read') ON CONFLICT DO NOTHING"); }
 });

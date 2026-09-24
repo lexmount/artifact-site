@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, afterEach, describe, expect, it } from "vitest";
+import { beforeAll, afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { resolve } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { Browser, Page } from "puppeteer-core";
@@ -70,6 +70,207 @@ describe.skipIf(!url)("real comment UI with the production API", () => {
     await page.screenshot({path:resolve("output/acceptance/comment-failure.png")}).catch(()=>{});
     console.error("Comment UI failure state",await page.evaluate(()=>({path:location.pathname.startsWith("/v/")?"/v/[redacted]":location.pathname,viewport:innerWidth,text:document.body.innerText.slice(0,2000),frames:[...document.querySelectorAll("iframe")].map(frame=>new URL(frame.src,location.href).pathname)})).catch(()=>null));
   });
+  it("places the text selection action at mouse release in either direction", async () => {
+    await page.goto(`${url}/s/${html.slug}`);
+    await page.waitForSelector('button[aria-label="Add comment"]');
+    const frame = (await (await page.waitForSelector(".fs-frame"))!.contentFrame())!;
+    await frame.waitForSelector('#headline');
+    await frame.evaluate(()=>document.addEventListener('pointerup',event=>{document.documentElement.dataset.release=JSON.stringify({x:event.clientX,y:event.clientY});}));
+    const points = await frame.$eval('#headline',el=>{
+      const range=document.createRange();range.selectNodeContents(el);
+      const rect=range.getBoundingClientRect();
+      return {left:rect.left+1,right:rect.right-1,y:rect.top+rect.height/2};
+    });
+    const iframe=await page.$('iframe');const outer=await iframe!.boundingBox();
+    for (const reverse of [false,true]) {
+      const from=reverse?points.right:points.left, to=reverse?points.left:points.right;
+      await page.mouse.move(outer!.x+from,outer!.y+points.y);
+      await page.mouse.down();await page.mouse.move(outer!.x+to,outer!.y+points.y,{steps:10});await page.mouse.up();
+      await frame.waitForSelector('[data-comment-selection]');
+      await new Promise(resolve=>setTimeout(resolve,150));
+      const rect=await frame.$eval('[data-comment-selection]',el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y};});
+      const released=await frame.evaluate(()=>JSON.parse(document.documentElement.dataset.release!));
+      expect(Math.abs(rect.x-released.x)).toBeLessThan(3);
+      expect(Math.abs(rect.y-(released.y+8))).toBeLessThan(3);
+    }
+  });
+
+  it("remembers update guidance acknowledgement with the account's coachmark state", async () => {
+    const key = `artifact:hint:${ownerId}:update`;
+    await page.goto(`${url}/me?intent=update`);
+    await page.evaluate(key => { localStorage.removeItem(key); sessionStorage.removeItem(key); }, key);
+    await page.reload();
+    await page.waitForSelector('.update-intent-dismiss');
+    expect(await page.$eval('.update-intent-dismiss', el => el.textContent)).toBe("Got it");
+    await page.setViewport({width:320,height:900});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.focus('.update-intent-dismiss');
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(()=>!document.querySelector('.update-intent'));
+    expect(await page.evaluate(key=>JSON.parse(localStorage.getItem(key)!).learned,key)).toBe(true);
+    expect(await page.evaluate(()=>localStorage.getItem('artifact:hint:browser:update'))).toBeNull();
+    await page.reload();
+    await page.waitForNetworkIdle({idleTime:200,concurrency:2});
+    expect(await page.$('.update-intent')).toBeNull();
+    await page.goto(`${url}/`);
+    await page.click('.update-existing-link');
+    await page.waitForNetworkIdle({idleTime:200,concurrency:2});
+    expect(await page.$('.update-intent')).toBeNull();
+    // Learning via the same event as the coachmark also dismisses the banner.
+    await page.evaluate(key=>{localStorage.removeItem(key);sessionStorage.removeItem(key);},key);
+    await page.reload();
+    await page.waitForSelector('.update-intent');
+    await page.evaluate(key=>{
+      localStorage.setItem(key,JSON.stringify({seen:1,learned:true}));
+      window.dispatchEvent(new CustomEvent('artifact:hint-learned',{detail:key}));
+    },key);
+    await page.waitForFunction(()=>!document.querySelector('.update-intent'));
+    await page.setViewport({width:1440,height:1000});
+  });
+
+  it("reduces idle polling, pauses hidden pages and coalesces foreground refreshes", async () => {
+    const pending = new Set<import("puppeteer-core").HTTPRequest>();
+    let lastActivity = 0;
+    const settled = (request: import("puppeteer-core").HTTPRequest) => { if(pending.delete(request)) lastActivity=Date.now(); };
+    const settleComments = () => vi.waitFor(()=>expect(pending.size===0 && Date.now()-lastActivity>=200).toBe(true),{timeout:10000});
+    const requests: {path:string;at:number}[] = [];
+    const count = (request: import("puppeteer-core").HTTPRequest) => {
+      const path = new URL(request.url()).pathname;
+      if (request.method() === "GET" && path.startsWith(`/api/sites/${html.slug}/comments`)) { requests.push({path,at:Date.now()}); pending.add(request); lastActivity=Date.now(); }
+    };
+    page.on("request", count);
+    page.on("requestfinished",settled);page.on("requestfailed",settled);
+    try {
+      await Promise.all([page.waitForResponse(response=>new URL(response.url()).pathname===`/api/sites/${html.slug}/comments/aggregate`),page.goto(`${url}/s/${html.slug}?comments=all`)]);
+      await page.waitForSelector('.comment-panel');
+      await settleComments();
+      const listPath = `/api/sites/${html.slug}/comments/aggregate`;
+      const before = requests.filter(r=>r.path===listPath).length;
+      await new Promise(resolve=>setTimeout(resolve,40000));
+      const polls = requests.filter(r=>r.path===listPath).length - before;
+      expect(polls).toBe(2); // 10s, then 20s, with 10s slack for sequential API latency.
+      await page.evaluate(()=>{
+        Object.defineProperty(document,"hidden",{configurable:true,value:true});
+        Object.defineProperty(document,"visibilityState",{configurable:true,value:"hidden"});
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await settleComments();
+      const hidden = requests.length;
+      await new Promise(resolve=>setTimeout(resolve,16000));
+      expect(requests.length).toBe(hidden);
+      await page.evaluate(()=>{
+        Object.defineProperty(document,"hidden",{configurable:true,value:false});
+        Object.defineProperty(document,"visibilityState",{configurable:true,value:"visible"});
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new Event("focus"));
+      });
+      await vi.waitFor(()=>expect(requests.slice(hidden).some(r=>r.path===listPath)).toBe(true),{timeout:10000});
+      await settleComments();
+      expect(requests.slice(hidden).filter(r=>r.path===listPath)).toHaveLength(1);
+      expect(requests.slice(hidden).filter(r=>r.path===`/api/sites/${html.slug}/comments/unread`)).toHaveLength(1);
+      await page.click('button[aria-label="Close comments"]');
+      await settleComments();
+      const closed = requests.filter(r=>r.path===listPath).length;
+      await new Promise(resolve=>setTimeout(resolve,11000));
+      expect(requests.filter(r=>r.path===listPath)).toHaveLength(closed);
+      await writeFile(resolve("output/acceptance/polling.json"),JSON.stringify({idlePollsOver40Seconds:polls,hiddenRequests:0,foregroundListRefreshes:1,closedListRefreshes:0},null,2));
+    } finally {
+      page.off("request",count);page.off("requestfinished",settled);page.off("requestfailed",settled);
+      await page.evaluate(()=>{Reflect.deleteProperty(document,"hidden");Reflect.deleteProperty(document,"visibilityState");});
+    }
+  }, 90000);
+
+  it("loads image-heavy replies only near the viewport and restores keyboard focus", async () => {
+    const {createComment,replyComment}=await import("@/lib/comments/service");
+    const {uploadCommentAttachment}=await import("@/lib/comments/attachments");
+    const {__resetRateLimitForTests}=await import("@/lib/ratelimit");
+    const sharp=(await import("sharp")).default;
+    const site=(await createSite({mode:"paste",html:"<h1>Image review</h1>"},{ownerId})).site;
+    const request=()=>new Request(url!+"/api/comments",{method:"POST",headers:{cookie:ownerCookie.split(";")[0],origin:url!}});
+    const scope={siteId:site.id,versionId:site.currentVersionId,entry:{kind:"main" as const}};
+    const root=await createComment(request(),site.slug,{scope,anchor:{schemaVersion:1,kind:"document",filePath:"index.html"},body:"Image-heavy discussion",clientRequestId:crypto.randomUUID()});
+    const bytes=await sharp({create:{width:100,height:60,channels:3,background:"green"}}).png().toBuffer();
+    for(let i=0;i<12;i++) {
+      __resetRateLimitForTests();
+      const image=await uploadCommentAttachment(request(),site.slug,scope,new File([new Uint8Array(bytes)],`design-${i}.png`));
+      await replyComment(request(),site.slug,root.detail.thread.id,{body:`Feedback ${i}\n`+"Detailed screenshot feedback. ".repeat(20),attachmentIds:[image.id],clientRequestId:crypto.randomUUID()});
+    }
+    let requests=0;
+    const count=(r:import("puppeteer-core").HTTPRequest)=>{if(r.url().includes(`/comments/attachments/`) && r.method()==="GET")requests++;};
+    page.on("request",count);
+    try {
+      await page.setViewport({width:390,height:844,isMobile:true,hasTouch:true});
+      await page.goto(`${url}/s/${site.slug}#comment=${root.detail.thread.id}`);
+      await page.waitForSelector('.comment-conversation .comment-image-slot');
+      await settle();
+      await page.waitForNetworkIdle({idleTime:200});
+      expect(requests).toBeLessThanOrEqual(2);
+      await page.$eval('.comment-image-slot',el=>el.scrollIntoView({block:"center"}));
+      await page.waitForSelector('.comment-image-preview');
+      await page.focus('.comment-image-preview');await page.keyboard.press("Enter");
+      await page.waitForSelector('dialog[open]');await page.keyboard.press("Escape");
+      expect(await page.evaluate(()=>document.activeElement?.classList.contains("comment-image-preview"))).toBe(true);
+      await page.$$eval('.comment-image-slot',els=>els.at(-1)!.scrollIntoView({block:"center"}));
+      await page.waitForFunction(()=>!!document.querySelector('.comment-image-slot:last-child img[alt="design-11.png"]'));
+      await page.waitForNetworkIdle({idleTime:200});
+      expect(requests).toBeLessThanOrEqual(4);
+      await writeFile(resolve("output/acceptance/image-loading.json"),JSON.stringify({totalImages:12,requestsAfterFirstAndLastImage:requests},null,2));
+      await page.screenshot({path:resolve("output/acceptance/lazy-images-mobile.png")});
+    } finally {page.off("request",count);await page.setViewport({width:1440,height:1000,isMobile:false,hasTouch:false});}
+  });
+
+  it("pages a large multi-version review without duplicates or moving the reader on refresh", async () => {
+    const {createComment}=await import("@/lib/comments/service");
+    const {__resetRateLimitForTests}=await import("@/lib/ratelimit");
+    const site=(await createSite({mode:"paste",html:"<h1>Large review</h1>"},{ownerId})).site;
+    const request=()=>new Request(url!+"/api/comments",{method:"POST",headers:{cookie:ownerCookie.split(";")[0],origin:url!}});
+    const shares=[];
+    for(let i=0;i<3;i++) {const token=createId("share");const id=createId("shr");await createShare({id,siteId:site.id,tokenHash:hashToken(token),policy:"public",mode:"comment",passcodeHash:null,label:`Review ${i}`,createdBy:ownerId,createdAnonId:null,expiresAt:null,versionId:null});shares.push(id);}
+    for(let v=0;v<3;v++) {
+      if(v) await replaceSiteContent(site.slug,{mode:"paste",html:`<h1>Large review ${v}</h1>`},testAudit());
+      const {getSiteBySlug}=await import("@/lib/db");const current=(await getSiteBySlug(site.slug))!;
+      for(let i=0;i<60;i++) {
+        __resetRateLimitForTests();
+        await createComment(request(),site.slug,{scope:{siteId:site.id,versionId:current.currentVersionId,entry:i%4===0?{kind:"main"}:{kind:"share",shareId:shares[i%3]}},anchor:{schemaVersion:1,kind:"document",filePath:"index.html"},body:`Volume review ${v}-${i}`,clientRequestId:crypto.randomUUID()});
+      }
+    }
+    const started=Date.now();
+    await page.goto(`${url}/s/${site.slug}?comments=all`);
+    await page.waitForSelector('.comment-summary');
+    expect(await page.$$('.comment-summary')).toHaveLength(30);
+    await writeFile(resolve("output/acceptance/large-review.json"),JSON.stringify({threads:180,versions:3,shares:3,firstPageMs:Date.now()-started},null,2));
+    await page.click('.comment-more');
+    await page.waitForFunction(()=>document.querySelectorAll('.comment-summary').length===60);
+    expect(await page.$$eval('.comment-summary',els=>new Set(els.map(el=>el.getAttribute("data-thread-id"))).size)).toBe(60);
+    await page.$eval('.comment-panel-content',el=>{el.scrollTop=600;});
+    const before=await page.$eval('.comment-panel-content',el=>el.scrollTop);
+    const refreshed=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/aggregate') && r.ok());
+    await page.evaluate(()=>window.dispatchEvent(new Event("focus")));await refreshed;await settle();
+    expect(await page.$eval('.comment-panel-content',el=>el.scrollTop)).toBe(before);
+    expect(await page.$$('.comment-summary')).toHaveLength(60);
+    await page.type('input[type="search"]',"Volume review 0-59");
+    await page.waitForFunction(()=>document.querySelectorAll('.comment-summary').length===1);
+    expect(await page.$eval('.comment-summary',el=>el.textContent)).toContain("Volume review 0-59");
+  },60000);
+
+  it("creates comments and uploads when randomUUID is unavailable on LAN HTTP", async () => {
+    const site=(await createSite({mode:"paste",html:"<h1>HTTP review</h1>"},{ownerId})).site;
+    const script=await page.evaluateOnNewDocument(()=>Object.defineProperty(crypto,"randomUUID",{value:undefined,configurable:true}));
+    try {
+      await begin(`/s/${site.slug}`);await click("Whole file");
+      await page.waitForSelector('textarea');
+      const sharp=(await import("sharp")).default;
+      const path=resolve("output/acceptance/http-image.png");
+      await sharp({create:{width:60,height:40,channels:3,background:"green"}}).png().toFile(path);
+      await (await page.$('input[aria-label="Attach images"]'))!.uploadFile(path);
+      await page.waitForSelector('.comment-upload-item img');
+      const heights=await page.$eval('.comment-upload-item .comment-image-slot',el=>({slot:el.getBoundingClientRect().height,preview:el.querySelector('.comment-image-preview')!.getBoundingClientRect().height}));
+      expect(heights.slot).toBe(heights.preview);
+      await submit("HTTP compatibility acceptance");
+      await page.waitForSelector('.comment-conversation .comment-image-preview img');
+    } finally {await page.removeScriptToEvaluateOnNewDocument(script.identifier);}
+  });
+
   it("groups refresh controls and places expanded filters above read tabs", async () => {
     for (const width of [1280, 390]) {
       await page.setViewport({ width, height: 900 });
@@ -107,6 +308,13 @@ describe.skipIf(!url)("real comment UI with the production API", () => {
     await page.waitForFunction(text => Array.from(document.querySelectorAll("button")).some(b => b.textContent?.trim() === text && !b.disabled), {}, text);
     await page.evaluate(text => (Array.from(document.querySelectorAll("button")).find(b => b.textContent?.trim() === text && !b.disabled) as HTMLButtonElement).click(), text);
   }
+  async function chooseDestination(value: string) {
+    // Draft recovery can finish before the authorized destination list arrives.
+    await page.waitForSelector(`.comment-destination-options button[data-value="${value}"]:not(:disabled)`);
+    await page.waitForSelector('.comment-destination-picker button[data-trigger]:not(:disabled)');
+    await page.click('.comment-destination-picker button[data-trigger]');
+    await page.click(`.comment-destination-options button[data-value="${value}"]`);
+  }
   async function chooseThread(text: string) {
     if (await page.$(".comment-conversation")) await click("All comments");
     await page.waitForFunction(text=>Array.from(document.querySelectorAll(".comment-summary")).some(el=>el.textContent?.includes(text)),{},text);
@@ -131,6 +339,103 @@ describe.skipIf(!url)("real comment UI with the production API", () => {
     await page.waitForFunction(body => Array.from(document.querySelectorAll(".comment-body")).some(el => el.textContent === body), {}, body);
     await page.waitForFunction(() => !document.querySelector(".comment-composer"));
   }
+  it("composes formatted feedback with durable images, retries uploads and previews on mobile", async () => {
+    const rich=(await createSite({mode:"paste",title:"Rich comment acceptance",html:'<!doctype html><html><body style="font:18px system-ui;padding:48px"><h1 id="headline">Quarterly artifact review</h1><p>Discuss the evidence with a screenshot.</p></body></html>'},{ownerId})).site;
+    const richToken=createId("share");await createShare({id:createId("shr"),siteId:rich.id,tokenHash:hashToken(richToken),createdBy:ownerId,createdAnonId:null,label:"Design review",mode:"comment",policy:"public",passcodeHash:null,expiresAt:null,versionId:rich.currentVersionId});
+    const frame=await begin(`/v/${richToken}`);
+    await frame.click("#headline",{offset:{x:20,y:20}});
+    await page.waitForSelector('textarea[aria-label="Comment"]');
+    await page.type('textarea[aria-label="Comment"]',"Check `status`\n[Design](https://example.com)");
+    expect(await page.$eval('.comment-format-tools button[aria-pressed]',el=>el.textContent)).toBe("Preview comment style");
+    expect(await page.$('.comment-format-tools small')).toBeNull();
+    expect(await page.$eval('button[aria-label="Code format"]',el=>el.getAttribute('title'))).toContain('field names');
+    await page.click('.comment-format-tools button[aria-pressed]');
+    expect(await page.$eval('.comment-format-tools button[aria-pressed]',el=>el.textContent)).toBe("Back to editing");
+    expect(await page.$eval('.comment-body-preview code',el=>el.textContent)).toBe("status");
+    expect(await page.$eval('.comment-body-preview a',el=>el.getAttribute("href"))).toBe("https://example.com/");
+    await page.click('.comment-format-tools button[aria-pressed]');
+    const png=(await (await import("sharp")).default({create:{width:320,height:160,channels:3,background:"#557744"}}).png().toBuffer()).toString("base64");
+    const fixture=resolve("output/acceptance/comment-image.png");await mkdir(resolve("output/acceptance"),{recursive:true});await writeFile(fixture,Buffer.from(png,"base64"));
+    let malformed=true, fail=true, delayRetry=true;
+    await page.setRequestInterception(true);
+    const intercept=(request:import("puppeteer-core").HTTPRequest)=>{
+      if(malformed&&request.method()==="POST"&&request.url().endsWith("/comments/attachments")){malformed=false;void request.respond({status:201,contentType:"application/json",body:'{"id":"../wrong","width":0}'});}
+      else if(fail&&request.method()==="POST"&&request.url().endsWith("/comments/attachments")){fail=false;void request.respond({status:400,contentType:"application/json",body:'{"error":"not shown","code":"image_invalid"}'});}
+      else if(delayRetry&&request.method()==="POST"&&request.url().endsWith("/comments/attachments")){delayRetry=false;setTimeout(()=>void request.continue(),300);}
+      else void request.continue();
+    };
+    page.on("request",intercept);
+    try {
+      const input=await page.$('input[type="file"][aria-label="Attach images"]');await input!.uploadFile(fixture);
+      await page.waitForFunction(()=>document.querySelector('.comment-upload-pending')?.textContent?.includes("Upload failed"));
+      expect(await page.$eval('.comment-composer button[type="submit"]',el=>(el as HTMLButtonElement).disabled)).toBe(true);
+      await click("Retry");
+      await page.waitForFunction(()=>document.querySelector('.comment-upload-pending')?.textContent?.includes("Image could not be decoded"));
+      expect(await page.$('.comment-upload-item img')).toBeNull();
+      await click("Retry");
+      await page.type('textarea[aria-label="Comment"]',"\nKept while uploading");
+      await page.waitForSelector('.comment-upload-item img');
+    } finally {page.off("request",intercept);await page.setRequestInterception(false);}
+    await page.click('button[aria-label="Close composer"]');
+    await page.reload({waitUntil:"domcontentloaded"});
+    await page.waitForSelector('.comment-upload-item img');
+    expect(await page.$eval('textarea',el=>(el as HTMLTextAreaElement).value)).toContain("Kept while uploading");
+    await page.setViewport({width:320,height:720,hasTouch:true});await settle();
+    expect(await page.$eval('.comment-composer',el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+    const imageBounds=await page.$eval('.comment-upload-item .comment-image-preview',el=>({width:el.getBoundingClientRect().width,height:el.getBoundingClientRect().height}));
+    expect(imageBounds.width).toBeGreaterThanOrEqual(47);expect(imageBounds.width).toBeLessThanOrEqual(58);expect(imageBounds.height).toBeGreaterThanOrEqual(36);expect(imageBounds.height).toBeLessThanOrEqual(46);
+    const targets=await page.evaluate(()=>{
+      const preview=document.querySelector('.comment-upload-item .comment-image-preview')!.getBoundingClientRect();
+      const remove=document.querySelector('.comment-upload-remove')!.getBoundingClientRect();
+      return {previewHeight:preview.height,removeWidth:remove.width,removeHeight:remove.height,overlap:preview.right>remove.left && preview.left<remove.right && preview.bottom>remove.top && preview.top<remove.bottom};
+    });
+    expect(targets.previewHeight).toBeGreaterThanOrEqual(44);
+    expect(targets.removeWidth).toBeGreaterThanOrEqual(44);
+    expect(targets.removeHeight).toBeGreaterThanOrEqual(44);
+    expect(targets.overlap).toBe(false);
+    await page.screenshot({path:resolve("output/acceptance/comments-rich-mobile.png")});
+    await click("Send");
+    await page.waitForSelector('.comment-conversation .comment-body code');
+    await page.waitForSelector('.comment-conversation .comment-image-preview img');
+    await page.click('.comment-conversation button[aria-label="Preview image"]');
+    await page.waitForSelector('dialog[open]');
+    await page.keyboard.press("Escape");
+    expect(await page.$('dialog[open]')).toBeNull();
+    expect(await page.evaluate(()=>document.activeElement?.getAttribute("aria-label"))).toBe("Preview image");
+    // Keep touch capability while resizing; changing it makes Chromium reload the page.
+    await page.setViewport({width:1440,height:1000,hasTouch:true});await settle();await page.screenshot({path:resolve("output/acceptance/comments-rich-desktop.png")});
+    await click("Reply");
+    await page.waitForSelector('textarea');
+    await page.evaluate(png=>{
+      const bytes=Uint8Array.from(atob(png),c=>c.charCodeAt(0));const data=new DataTransfer();data.items.add(new File([bytes],"pasted.png",{type:"image/png"}));
+      document.querySelector('textarea')!.dispatchEvent(new ClipboardEvent("paste",{bubbles:true,cancelable:true,clipboardData:data}));
+    },png);
+    await page.waitForSelector('.comment-upload-item img');
+    expect(await page.$eval('.comment-composer button[type="submit"]',el=>(el as HTMLButtonElement).disabled)).toBe(false);
+    await click("Send");
+    await page.waitForFunction(()=>document.querySelectorAll('.comment-conversation .comment-image-preview').length===2);
+    await page.click('.comment-message-menu summary');await click("Edit");
+    await page.waitForSelector('.comment-upload-item img');
+    await page.click('.comment-upload-remove');
+    expect(await page.$('.comment-upload-item')).toBeNull();
+    await click("Send");
+    await page.waitForFunction(()=>!document.querySelector('.comment-composer')&&document.querySelectorAll('.comment-conversation .comment-image-preview').length===1);
+    await click("Reply");await page.waitForSelector('textarea');
+    let held:import("puppeteer-core").HTTPRequest|undefined;
+    await page.setRequestInterception(true);
+    const hold=(request:import("puppeteer-core").HTTPRequest)=>{if(request.method()==="POST"&&request.url().endsWith("/comments/attachments")) held=request;else void request.continue();};
+    page.on("request",hold);
+    try {
+      await (await page.$('input[aria-label="Attach images"]'))!.uploadFile(fixture);
+      await page.waitForSelector('.comment-upload-pending');
+      expect(await page.$('.comment-upload-pending progress[aria-label="Image upload progress"]')).not.toBeNull();
+      await page.screenshot({path:resolve("output/acceptance/comment-upload-progress.png")});
+      await page.click('.comment-upload-pending button[aria-label="Remove image"]');
+      await page.waitForFunction(()=>!document.querySelector('.comment-upload-pending'));
+      expect(await page.$eval('button[aria-label="Close composer"]',el=>(el as HTMLButtonElement).disabled)).toBe(false);
+      await page.click('button[aria-label="Close composer"]');
+    } finally {if(held)await held.abort().catch(()=>{});page.off("request",hold);await page.setRequestInterception(false);}
+  });
   it("creates HTML and image anchors through the shared sandbox and opens original context", async () => {
     let frame = await begin(`/v/${shareToken}`);
     await frame.evaluate(() => { (window as unknown as { fixtureState: string }).fixtureState = "preserved"; });
@@ -338,10 +643,14 @@ describe.skipIf(!url)("real comment UI with the production API", () => {
     await page.setRequestInterception(true);
     const rejectAggregate = (request: import("puppeteer-core").HTTPRequest) => { if (request.url().includes("/comments/aggregate")) void request.respond({ status: 503, contentType: "application/json", body: '{"error":"Temporarily unavailable"}' }); else void request.continue(); };
     page.on("request", rejectAggregate);
-    await page.evaluate(()=>window.dispatchEvent(new Event("focus")));
-    await page.waitForSelector('.comment-panel [role="alert"]');
-    expect(await page.$eval('textarea[aria-label="Comment"]', el => (el as HTMLTextAreaElement).value)).toBe("Keep my unsent review");
-    page.off("request", rejectAggregate); await page.setRequestInterception(false);
+    try {
+      await Promise.all([
+        page.waitForResponse(response=>response.url().includes("/comments/aggregate") && response.status()===503),
+        page.evaluate(()=>window.dispatchEvent(new Event("focus"))),
+      ]);
+      // Background failures deliberately keep the composer quiet and preserve its draft.
+      expect(await page.$eval('textarea[aria-label="Comment"]', el => (el as HTMLTextAreaElement).value)).toBe("Keep my unsent review");
+    } finally {page.off("request", rejectAggregate); await page.setRequestInterception(false);}
     await click("Discard draft");
     expect(errors).toEqual([]);
   });
@@ -505,7 +814,7 @@ describe.skipIf(!url)("real comment UI with the production API", () => {
     await page.waitForSelector('textarea[aria-label="Comment"]');
     await page.type('textarea[aria-label="Comment"]', "Persistent create draft");
     await page.reload();
-    await page.waitForSelector('.comment-composer-floating textarea');
+    await page.waitForSelector('.comment-composer textarea');
     expect(await page.$eval("textarea", el=>(el as HTMLTextAreaElement).value)).toBe("Persistent create draft");
     const ids:string[]=[];
     let failOnce=true;
@@ -520,7 +829,7 @@ describe.skipIf(!url)("real comment UI with the production API", () => {
     page.on("request",intercept);
     try {
       await click("Send");await page.waitForSelector('.comment-composer [role="alert"]');
-      await page.reload();await page.waitForSelector('.comment-composer-floating textarea');
+      await page.reload();await page.waitForSelector('.comment-composer textarea');
       expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("Persistent create draft");
       await click("Send");await page.waitForFunction(()=>!document.querySelector(".comment-composer"));
       expect(ids).toHaveLength(2);expect(ids[1]).toBe(ids[0]);
@@ -849,10 +1158,109 @@ describe.skipIf(!url)("real comment UI with the production API", () => {
     expect(await page.$("textarea")).toBeNull();
     await page.click(".comment-draft-recovery summary");
     await page.click(".comment-draft-recovery a");
-    await page.waitForSelector(".comment-composer-floating textarea");
+    await page.waitForSelector(".comment-composer textarea");
     expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("Whole-file saved draft");
     await click("Send");await page.waitForFunction(()=>document.querySelector(".comment-body")?.textContent==="Whole-file saved draft");
     expect(await page.$(".comment-error")).toBeNull();
+  });
+
+  it("uses a compact floating composer or the existing sidebar without duplicate editors", async () => {
+    const site=(await createSite({mode:"paste",html:'<h1 style="margin:180px 100px">Select this feedback context</h1>'},{ownerId})).site;
+    await page.goto(url!+`/s/${site.slug}`);
+    await page.waitForSelector('button[aria-label="Add comment"]');
+    const frame=await (await page.$(".fs-frame"))!.contentFrame();
+    const select=async()=>{
+      await frame!.evaluate(()=>{const range=document.createRange();range.selectNodeContents(document.querySelector("h1")!);const selection=getSelection()!;selection.removeAllRanges();selection.addRange(range);document.dispatchEvent(new Event("selectionchange"));});
+      await frame!.waitForSelector("[data-comment-selection]",{visible:true});
+      await frame!.click("[data-comment-selection]");await page.waitForSelector("textarea");
+    };
+    await select();
+    expect(await page.$(".comment-panel")).toBeNull();
+    expect(await page.$$(".comment-composer")).toHaveLength(1);
+    expect(await page.$(".comment-composer-floating")).not.toBeNull();
+    expect(await page.$eval(".comment-composer-floating",el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight;})).toBe(true);
+    expect(await page.$(".comment-character-count")).toBeNull();
+    expect(await page.$('.comment-destination-picker button[data-trigger]')).toBeNull();
+    expect(await page.$eval("textarea",el=>el===document.activeElement)).toBe(true);
+    const longDraft = Array.from({length:12}, (_, i) => `Feedback line ${i}`).join("\n");
+    await page.type("textarea", longDraft);
+    await page.waitForFunction(()=>document.querySelector<HTMLTextAreaElement>("textarea")?.style.height==="240px");
+    await page.click('button[aria-label="Comments"]');
+    await page.waitForSelector(".comment-composer-inline textarea");
+    expect(await page.$eval("textarea", el=>(el as HTMLTextAreaElement).style.height)).toBe("240px");
+    await page.click('button[aria-label="Comments"]');
+    await page.waitForSelector(".comment-composer-floating textarea");
+    expect(await page.$eval("textarea", el=>(el as HTMLTextAreaElement).style.height)).toBe("240px");
+    expect(await page.$eval("textarea", el=>(el as HTMLTextAreaElement).value)).toBe(longDraft);
+    await page.setViewport({width:390,height:844});
+    await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+    // Simulate the VisualViewport callback's CSS output without shrinking layout height.
+    await page.evaluate(()=>{const node=document.querySelector<HTMLElement>(".comment-workspace")!;node.style.setProperty("--comment-viewport-height","400px");node.style.setProperty("--comment-keyboard-inset","444px");});
+    await page.evaluate(()=>Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{}))));
+    expect(await page.$eval(".comment-composer-floating",el=>{const r=el.getBoundingClientRect();return r.top>=0 && r.bottom<=400 && r.height<=376;})).toBe(true);
+    expect(await page.$eval('button[aria-label="Close composer"]',el=>el.getBoundingClientRect().top)).toBeGreaterThanOrEqual(0);
+    await page.setViewport({width:1440,height:1000});
+    await page.evaluate(()=>{const node=document.querySelector<HTMLElement>(".comment-workspace")!;node.style.removeProperty("--comment-viewport-height");node.style.removeProperty("--comment-keyboard-inset");});
+    await click("Discard draft");
+    await select();
+    const shareId=createId("shr"), pickerToken=createId("share");
+    await createShare({id:shareId,siteId:site.id,token:pickerToken,tokenHash:hashToken(pickerToken),policy:"public",mode:"comment",passcodeHash:null,label:"评审分享链接名称很长用于窄屏验收".repeat(8)+"LongUnbrokenDestinationName".repeat(8),createdBy:ownerId,createdAnonId:null,expiresAt:null,versionId:null});
+    await page.evaluate(slug=>window.dispatchEvent(new CustomEvent("artifact:shares-changed",{detail:{slug}})),site.slug);
+    await page.waitForSelector('.comment-destination-picker button[data-trigger]');
+    await page.focus('.comment-destination-help button');
+    await page.waitForSelector('.comment-destination-help [role="tooltip"]',{visible:true});
+    await page.screenshot({path:resolve("output/acceptance/destination-help.png")});
+    const beforeMenu = await page.$eval('.comment-composer',el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};});
+    await page.click('.comment-destination-picker button[data-trigger]');
+    expect(await page.$eval('.comment-composer',el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})).toEqual(beforeMenu);
+    expect(await page.$eval(`.comment-destination-options button[data-value="${shareId}"] small`,el=>el.textContent)).toContain(shareId.slice(-6));
+    const rows = await page.$$eval('.comment-destination-options > button',els=>els.map(el=>{const r=el.getBoundingClientRect();return {width:r.width,height:r.height};}));
+    expect(rows[0]).toEqual(rows[1]);
+    await page.screenshot({path:resolve("output/acceptance/destination-options.png")});
+    await page.keyboard.press("Escape");
+    await chooseDestination(shareId);
+    expect(await page.$eval('.comment-destination-picker button[data-trigger]',el=>(el as HTMLElement).dataset.value)).toBe(shareId);
+    await page.focus('.comment-destination-picker button[data-trigger]');
+    await page.keyboard.press("Enter");
+    expect(await page.evaluate(()=> (document.activeElement as HTMLElement)?.dataset.value)).toBe(shareId);
+    await page.keyboard.press("Enter");
+    expect(await page.$eval('.comment-destination-picker button[data-trigger]',el=>(el as HTMLElement).dataset.value)).toBe(shareId);
+    await page.click('.comment-destination-picker button[data-trigger]');
+    await page.waitForSelector('.comment-destination-options:popover-open');
+    await page.click('.comment-destination-picker button[data-trigger]');
+    expect(await page.$('.comment-destination-options:popover-open')).toBeNull();
+    await chooseDestination("main");
+    await page.type("textarea","Compact feedback draft");
+    await page.screenshot({path:resolve("output/acceptance/composer-floating.png")});
+    await page.click('button[aria-label="Close composer"]');
+    await page.click('button[aria-label="Comments"]');
+    await select();
+    expect(await page.$$(".comment-composer")).toHaveLength(1);
+    expect(await page.$(".comment-panel .comment-composer-inline")).not.toBeNull();
+    expect(await page.$(".comment-composer-floating")).toBeNull();
+    expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("Compact feedback draft");
+    await page.screenshot({path:resolve("output/acceptance/composer-sidebar.png")});
+    await page.setViewport({width:390,height:720});
+    await page.waitForFunction(()=>{const rect=document.querySelector("textarea")!.getBoundingClientRect();return rect.left>=0 && rect.right<=innerWidth && rect.bottom<=innerHeight;});
+    await page.evaluate(()=>Promise.all(document.getAnimations().map(animation=>animation.finished.catch(()=>{}))));
+    await page.screenshot({path:resolve("output/acceptance/composer-mobile.png")});
+    await page.click('.comment-destination-picker button[data-trigger]');
+    expect(await page.$eval('.comment-destination-options',el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight;})).toBe(true);
+    await page.keyboard.press("Escape");
+    await page.setViewport({width:320,height:720});
+    await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+    await page.waitForSelector('.comment-destination-options:popover-open',{hidden:true});
+    await page.click('.comment-destination-picker button[data-trigger]');
+    await page.waitForSelector('.comment-destination-options:popover-open');
+    const narrowRows=await page.$$eval('.comment-destination-options > button',els=>els.map(el=>{const r=el.getBoundingClientRect();return {width:r.width,height:r.height};}));
+    expect(narrowRows[0]).toEqual(narrowRows[1]);
+    expect(await page.$eval('.comment-destination-options',el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+    expect(await page.$eval(`.comment-destination-options button[data-value="${shareId}"] .comment-destination-label > span`,el=>el.scrollWidth>el.clientWidth && getComputedStyle(el).textOverflow==="ellipsis")).toBe(true);
+    await page.screenshot({path:resolve("output/acceptance/destination-mobile.png")});
+    await page.keyboard.press("Escape");
+    expect(await page.$('textarea')).not.toBeNull();
+    await click("Discard draft");
+    await page.setViewport({width:1440,height:1000});
   });
 
   it("recovers from a missing draft thread and follows subsequent hash links", async () => {
@@ -893,20 +1301,21 @@ describe.skipIf(!url)("real comment UI with the production API", () => {
     await page.waitForFunction(()=>Boolean(document.querySelector(".comment-selection")||document.querySelector("textarea")));
     if(await page.$(".comment-selection"))await click("Whole file");
     await page.type("textarea","Document draft survives upload");
+    const openUpload=async()=>{ await page.click('.fs-bar button[aria-label="More"]'); await click("Upload new version"); };
     const upload=()=>page.evaluate(bytes=>{
-      const input=document.querySelector<HTMLInputElement>('input[type="file"]')!;
+      const input=document.querySelector<HTMLInputElement>('dialog.version-upload input[type="file"]')!;
       const transfer=new DataTransfer();transfer.items.add(new File([new Uint8Array(bytes)],"draft.pdf",{type:"application/pdf"}));
       input.files=transfer.files;input.dispatchEvent(new Event("change",{bubbles:true}));
     },Array.from(buildCommentPdf(2)));
     await page.evaluate(()=>{Object.assign(window,{restoreCommentStorage:Storage.prototype.setItem});Storage.prototype.setItem=()=>{throw Error("Storage unavailable")};});
     try {
-      await upload();
-      expect(await page.$eval('input[type="file"]',el=>(el as HTMLInputElement).value)).toBe("");
-      expect(await page.$("dialog.upload-confirmation")).toBeNull();
+      await openUpload();
+      expect(await page.$("dialog.version-upload[open]")).toBeNull();
       expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("Document draft survives upload");
     } finally {await page.evaluate(()=>{Storage.prototype.setItem=(window as unknown as {restoreCommentStorage:Storage["setItem"]}).restoreCommentStorage;});}
-    await upload();await page.waitForSelector("dialog.upload-confirmation[open]");
-    await Promise.all([page.waitForResponse(r=>r.request().method()==="POST"&&r.url().includes("/versions")&&r.ok()),click("Upload")]);
+    await openUpload();await page.waitForSelector("dialog.version-upload[open]");await upload();
+    await Promise.all([page.waitForResponse(r=>r.request().method()==="POST"&&r.url().includes("/versions")&&r.ok()),click("Publish new version")]);
+    await page.waitForSelector('dialog.version-upload a');await click("Done");
     // Wait for the refreshed version controls, not network idleness: PDF loading
     // and background polling can keep requests open.
     await page.waitForFunction(()=>Array.from(document.querySelectorAll(".comment-panel option")).some(option=>option.textContent?.startsWith("v2 ·")));
@@ -956,6 +1365,219 @@ describe.skipIf(!url)("real comment UI with the production API", () => {
     await page.type("textarea","New draft stays open");await page.evaluate(()=>new Promise<void>(done=>requestAnimationFrame(()=>requestAnimationFrame(()=>done()))));
     expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("New draft stays open");
     await click("Discard draft");
+  });
+
+  it("posts selected text from main into a chosen share, preserves its draft and isolates readers", async () => {
+    const site=(await createSite({mode:"paste",html:'<h1 style="margin-top:140px">Shared selected evidence</h1><p>Keep this sentence in context.</p>'},{ownerId})).site;
+    const tokens=[createId("token"),createId("token"),createId("token")];
+    const ids=[createId("shr"),createId("shr"),createId("shr")];
+    for(let i=0;i<tokens.length;i++) await createShare({id:ids[i],siteId:site.id,tokenHash:hashToken(tokens[i]),policy:"public",mode:i===2?"view":"comment",passcodeHash:null,label:["Review A","Review B","Read only"][i],createdBy:ownerId,createdAnonId:null,expiresAt:null,versionId:site.currentVersionId});
+    await page.goto(`${url}/s/${site.slug}?comments=all`);
+    await page.waitForSelector('button[aria-label="Add comment"]');
+    const frame=await page.waitForFrame(f=>f.url().includes("/api/preview/"));
+    await frame.waitForSelector("h1");
+    await frame.$eval("h1",el=>{const range=document.createRange();range.selectNodeContents(el);getSelection()!.removeAllRanges();getSelection()!.addRange(range);});
+    await frame.waitForSelector("[data-comment-selection]");await frame.click("[data-comment-selection]");
+    await page.waitForSelector('.comment-destination-options button[data-value="'+ids[0]+'"]');
+    expect(await page.$('.comment-destination-options button[data-value="'+ids[2]+'"]')).toBeNull();
+    await chooseDestination(ids[0]);
+    await page.type("textarea","Only review A receives this");
+    await chooseDestination(ids[1]);
+    expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("");
+    await page.type("textarea","Separate B draft");
+    await page.click('button[aria-label="Choose another position"]');
+    await frame.waitForFunction(()=>document.documentElement.dataset.artifactCommentSelect === "true");
+    await frame.click("p");await page.waitForSelector("textarea");
+    expect(await page.$eval(".comment-selection-summary",el=>el.textContent)).toContain("Keep this sentence");
+    await chooseDestination(ids[0]);
+    expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("Only review A receives this");
+    expect(await page.$eval(".comment-selection-summary",el=>el.textContent)).toContain("Shared selected evidence");
+    await chooseDestination(ids[1]);
+    expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("Separate B draft");
+    expect(await page.$eval(".comment-selection-summary",el=>el.textContent)).toContain("Keep this sentence");
+    await chooseDestination(ids[0]);
+    // Enter from a real Saved drafts recovery URL, then switch away from the pinned draft.
+    const recovery = new URL(page.url());
+    recovery.searchParams.set("draft",JSON.stringify([site.currentVersionId,{kind:"share",shareId:ids[1]},"create","",""]));
+    const originalRequestId=crypto.randomUUID();
+    const blockedStorage=await page.evaluateOnNewDocument(({identity,requestId})=>{
+      if (window !== window.top) return;
+      const original=Storage.prototype.setItem;
+      for(const key of Object.keys(sessionStorage)) if(key.startsWith("artifact:comment-drafts:")) {
+        const drafts=JSON.parse(sessionStorage.getItem(key)!);
+        if(drafts[identity]) {drafts[identity].requestId=requestId;original.call(sessionStorage,key,JSON.stringify(drafts));}
+      }
+      Object.assign(window,{restoreDraftStorage:()=>{Storage.prototype.setItem=original;}});
+      Storage.prototype.setItem=function(key,value){
+        if(key.startsWith("artifact:comment-drafts:")) throw new DOMException("Quota exceeded","QuotaExceededError");
+        return original.call(this,key,value);
+      };
+    },{identity:recovery.searchParams.get("draft")!,requestId:originalRequestId});
+    try {
+      await page.goto(recovery.href);await page.waitForSelector("textarea");
+      expect(await page.$eval('.comment-destination-picker button[data-trigger]',el=>(el as HTMLElement).dataset.value)).toBe(ids[1]);
+      expect(new URL(page.url()).searchParams.get("draft")).toBe(recovery.searchParams.get("draft"));
+      expect(await page.$eval(".comment-notice",el=>el.textContent)).toContain("Keep this page open");
+    } finally { await page.removeScriptToEvaluateOnNewDocument(blockedStorage.identifier); }
+    await page.evaluate(()=>(window as unknown as {restoreDraftStorage:()=>void}).restoreDraftStorage());
+    await chooseDestination(ids[0]);
+    expect(new URL(page.url()).searchParams.has("draft")).toBe(false);
+    // The explicit recovery below selects B even though the successful switch made A newer.
+    await page.goto(recovery.href);await page.waitForSelector("textarea");
+    expect(new URL(page.url()).searchParams.has("draft")).toBe(false);
+    // Recover the older draft and immediately reload without editing or changing destination.
+    await page.reload();await page.waitForSelector("textarea");
+    expect(await page.$eval('.comment-destination-picker button[data-trigger]',el=>(el as HTMLElement).dataset.value)).toBe(ids[1]);
+    expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("Separate B draft");
+    expect(await page.$eval(".comment-selection-summary",el=>el.textContent)).toContain("Keep this sentence");
+    expect(await page.evaluate(identity=>Object.keys(sessionStorage).filter(key=>key.startsWith("artifact:comment-drafts:")).map(key=>JSON.parse(sessionStorage.getItem(key)!)[identity]?.requestId).find(Boolean),recovery.searchParams.get("draft")!)).toBe(originalRequestId);
+    await chooseDestination(ids[0]);
+    // No input or re-selection after switching: the active destination itself must persist.
+    await page.reload();await page.waitForSelector("textarea");
+    expect(await page.$eval('.comment-destination-picker button[data-trigger]',el=>(el as HTMLElement).dataset.value)).toBe(ids[0]);
+    expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("Only review A receives this");
+    expect(await page.$eval(".comment-selection-summary",el=>el.textContent)).toContain("Shared selected evidence");
+    await page.screenshot({path:resolve("output/acceptance/p0-destination-composer.png")});
+    await page.setViewport({width:390,height:844,isMobile:true,hasTouch:true});await settle();
+    const bounds=await page.$eval(".comment-composer",el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,bottom:r.bottom,width:innerWidth,height:innerHeight};});
+    expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(bounds.width);expect(bounds.bottom).toBeLessThanOrEqual(bounds.height);
+    await page.screenshot({path:resolve("output/acceptance/p0-mobile-composer.png")});
+    await page.setViewport({width:1440,height:1000});
+    const posted = page.waitForRequest(request=>request.method()==="POST" && new URL(request.url()).pathname.endsWith("/comments"));
+    await click("Send");await page.waitForFunction(()=>document.querySelector(".comment-body")?.textContent==="Only review A receives this");
+    expect(JSON.parse((await posted).postData()!).anchor.quote.exact).toBe("Shared selected evidence");
+    await page.screenshot({path:resolve("output/acceptance/p0-owner-share.png")});
+    const reader=await upsertUser({authProvider:"browser",providerSubject:createId("subject"),email:"reader@example.test",displayName:"Independent Reader",emailVerified:true});
+    const {cookie}=await mintSession(new Request(url!),reader.id);
+    const context=await browser.createBrowserContext();
+    const split=cookie.split(";")[0].indexOf("=");
+    await context.setCookie({name:cookie.slice(0,split),value:cookie.split(";")[0].slice(split+1),domain:new URL(url!).hostname,path:"/"});
+    const guest=await context.newPage();await guest.setExtraHTTPHeaders({"accept-language":"en-US"});
+    try {
+      await guest.goto(`${url}/v/${tokens[0]}?comments=1`);await guest.waitForSelector(".comment-summary");
+      expect(await guest.$eval(".comment-summary",el=>el.textContent)).toContain("Only review A receives this");
+      await guest.click(".comment-summary");
+      await guest.$eval(".comment-thread-actions button",el=>(el as HTMLButtonElement).click());
+      await guest.waitForSelector("textarea");await guest.type("textarea","Reader A reply");
+      await guest.$eval('.comment-composer button[type="submit"]',el=>(el as HTMLButtonElement).click());
+      await guest.waitForFunction(()=>document.querySelector(".comment-thread")?.textContent?.includes("Reader A reply"));
+      expect(await guest.$('.comment-destination-picker button[data-trigger]')).toBeNull();
+      for(const path of [`/v/${tokens[1]}?comments=1`,`/s/${site.slug}?comments=1`]) {
+        await guest.goto(url!+path);await guest.waitForSelector(".comment-empty");
+        expect(await guest.$eval(".comment-panel",el=>el.textContent)).not.toContain("Only review A receives this");
+      }
+    } finally {await context.close();}
+    await page.reload();await chooseThread("Only review A receives this");
+    await page.waitForFunction(()=>document.querySelector(".comment-thread")?.textContent?.includes("Reader A reply"));
+  });
+
+  it("keeps a fresh empty selection when restoring another discussion draft", async () => {
+    const site=(await createSite({mode:"paste",html:'<h1 style="margin-top:140px">New selection X</h1><p>Previous selection Y</p>'},{ownerId})).site;
+    const shareId=createId("shr"),token=createId("token");
+    await createShare({id:shareId,siteId:site.id,tokenHash:hashToken(token),policy:"public",mode:"comment",passcodeHash:null,label:"Saved review",createdBy:ownerId,createdAnonId:null,expiresAt:null,versionId:site.currentVersionId});
+    await page.goto(`${url}/s/${site.slug}?comments=all`);
+    await page.waitForSelector('button[aria-label="Add comment"]');
+    const frame=await page.waitForFrame(f=>f.url().includes("/api/preview/"));
+    const select = async (selector:string) => {
+      await frame.$eval(selector,el=>{const range=document.createRange();range.selectNodeContents(el);getSelection()!.removeAllRanges();getSelection()!.addRange(range);});
+      await frame.waitForSelector("[data-comment-selection]");await frame.click("[data-comment-selection]");await page.waitForSelector("textarea");
+    };
+    await select("p");
+    await page.waitForSelector(`.comment-destination-options button[data-value="${shareId}"]`);
+    await chooseDestination(shareId);await page.type("textarea","Saved feedback");
+    await chooseDestination("main");
+    await page.click('button[aria-label="Choose another position"]');await frame.waitForFunction(()=>document.documentElement.dataset.artifactCommentSelect === "true");await frame.click("h1");await page.waitForSelector("textarea");
+    await chooseDestination(shareId);
+    expect(await page.$eval("textarea",el=>(el as HTMLTextAreaElement).value)).toBe("Saved feedback");
+    expect(await page.$eval(".comment-selection-summary",el=>el.textContent)).toContain("New selection X");
+    const posted=page.waitForRequest(request=>request.method()==="POST" && new URL(request.url()).pathname.endsWith("/comments"));
+    await click("Send");expect(JSON.parse((await posted).postData()!).anchor.quote.exact).toBe("New selection X");
+    await page.waitForFunction(()=>document.querySelector(".comment-body")?.textContent==="Saved feedback");
+  });
+
+  it("selects real PDF text, keeps a bounded citation and locates after zoom", async () => {
+    await page.goto(`${url}/s/${pdf.slug}?comments=1`);
+    await page.waitForSelector('button[aria-label="Add comment"]');
+    const frame=await page.waitForFrame(f=>f.url().includes("/api/preview/"));
+    await frame.waitForSelector('[data-comment-text-page="1"] span');
+    await frame.$eval('[data-comment-text-page="1"] span',el=>{
+      const node=el.firstChild!, range=document.createRange();range.setStart(node,0);range.setEnd(node,6);
+      getSelection()!.removeAllRanges();getSelection()!.addRange(range);
+    });
+    await frame.waitForSelector("[data-comment-selection]");
+    await page.screenshot({path:resolve("output/acceptance/p0-pdf-text-action.png")});
+    const payload=page.waitForRequest(request=>request.method()==="POST" && new URL(request.url()).pathname.endsWith("/comments"));
+    await frame.click("[data-comment-selection]");await submit("Selected PDF words");
+    const data=JSON.parse((await payload).postData()!);
+    expect(data.anchor).toMatchObject({kind:"pdf",page:1,quote:{exact:"Page 1"},region:{kind:"rect"}});
+    expect(data.anchor.region.rect.width).toBeLessThan(.5);
+    expect(await page.$eval(".comment-location",el=>el.textContent)).toContain("Page 1");
+    const previousWidth=await frame.$eval('canvas[data-comment-page="1"]',el=>el.getBoundingClientRect().width);
+    await frame.click("#zi");
+    await frame.waitForFunction(width=>document.querySelector('canvas[data-comment-page="1"]')!.getBoundingClientRect().width>width,{},previousWidth);
+    await frame.waitForSelector('[data-comment-text-page="1"] span');
+    await page.click(".comment-location");
+    await frame.waitForSelector('[data-artifact-comment-overlay] button');
+    await page.screenshot({path:resolve("output/acceptance/p0-pdf-selection.png")});
+  });
+
+  it.each([90, 180, 270] as const)("aligns actual PDF /Rotate %i text and comment geometry", async rotation => {
+    const site = (await createSite({mode:"file",filename:"rotated.pdf",bytes:buildCommentPdf(1,rotation)},{ownerId})).site;
+    await page.goto(`${url}/s/${site.slug}?comments=1`);
+    await page.waitForSelector('button[aria-label="Add comment"]');
+    const frame = await page.waitForFrame(f=>f.url().includes("/api/preview/"));
+    await frame.waitForSelector('[data-comment-text-page="1"] span');
+    await frame.$eval('[data-comment-text-page="1"] span',el=>el.scrollIntoView({block:"center"}));
+    const measured = await frame.$eval('[data-comment-text-page="1"]',el=>{
+      const rect = el.getBoundingClientRect(), canvas = el.parentElement!.querySelector("canvas")!.getBoundingClientRect();
+      const span = el.querySelector("span")!, range = document.createRange();range.selectNodeContents(span);
+      const text = range.getBoundingClientRect();
+      getSelection()!.removeAllRanges();getSelection()!.addRange(range);
+      return {width:rect.width,height:rect.height,canvasWidth:canvas.width,canvasHeight:canvas.height,
+        x:(text.left-canvas.left)/canvas.width,y:(text.top-canvas.top)/canvas.height,
+        rotation:el.getAttribute("data-main-rotation"),transform:getComputedStyle(el).transform};
+    });
+    expect(measured.rotation).toBe(String(rotation));expect(measured.transform).not.toBe("none");
+    expect(Math.abs(measured.width-measured.canvasWidth)).toBeLessThan(2);
+    expect(Math.abs(measured.height-measured.canvasHeight)).toBeLessThan(2);
+    // The fixture draws at (60,700) in 612x792 PDF coordinates.
+    if(rotation===90){expect(measured.x).toBeGreaterThan(.8);expect(measured.y).toBeLessThan(.2);}
+    if(rotation===180){expect(measured.x).toBeGreaterThan(.5);expect(measured.y).toBeGreaterThan(.8);}
+    if(rotation===270){expect(measured.x).toBeLessThan(.2);expect(measured.y).toBeGreaterThan(.5);}
+    await frame.waitForSelector("[data-comment-selection]");
+    const posted=page.waitForRequest(request=>request.method()==="POST" && new URL(request.url()).pathname.endsWith("/comments"));
+    await frame.click("[data-comment-selection]");await submit(`Rotated ${rotation} evidence`);
+    const anchor=JSON.parse((await posted).postData()!).anchor;
+    expect(anchor).toMatchObject({kind:"pdf",page:1,quote:{exact:"Page 1 of 1"},region:{kind:"rect"}});
+    expect(anchor.region.rect.x).toBeCloseTo(60/612,1);
+    expect(anchor.region.rect.y).toBeLessThan(.2);
+    await page.click(".comment-location");await frame.waitForSelector('[data-artifact-comment-overlay] button');
+  });
+
+  it("keeps a read discussion in the unread view until explicit refresh", async () => {
+    const site=(await createSite({mode:"paste",html:"<p>Unread evidence</p>"},{ownerId})).site;
+    await page.goto(`${url}/s/${site.slug}?comments=1`);
+    await page.waitForSelector(".comment-empty");
+    // Establish the account watermark before a different user posts.
+    await page.evaluate(async site=>{
+      const response=await fetch(`/api/sites/${site.slug}/comments/unread`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({versionId:site.currentVersionId,aggregate:true,through:Date.now()})});
+      if(!response.ok)throw Error(await response.text());
+    },site);
+    const author=await upsertUser({authProvider:"browser",providerSubject:createId("subject"),email:"unread@example.test",emailVerified:true});
+    const {cookie}=await mintSession(new Request(url!),author.id);
+    const response=await fetch(`${url}/api/sites/${site.slug}/comments`,{method:"POST",headers:{cookie:cookie.split(";")[0],origin:url!,"content-type":"application/json"},body:JSON.stringify({scope:{siteId:site.id,versionId:site.currentVersionId,entry:{kind:"main"}},anchor:{kind:"document",schemaVersion:1,filePath:"index.html"},body:"Read without jumping",clientRequestId:crypto.randomUUID()})});
+    expect(response.status).toBe(201);
+    await page.reload();await page.waitForSelector(".comment-summary");await click("Unread");
+    await page.waitForSelector(".comment-summary");
+    const read=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/unread") && r.ok());
+    await page.click(".comment-summary");await read;
+    await click("All comments");await page.waitForSelector(".comment-summary");
+    const refresh=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith("/aggregate") && r.ok());
+    await page.evaluate(()=>window.dispatchEvent(new Event("focus")));await refresh;
+    await page.waitForFunction(()=>!document.querySelector(".comment-loading"));
+    expect(await page.$eval(".comment-summary",el=>el.textContent)).toContain("Read without jumping");
+    await page.click('.comment-header-actions button[aria-label="Refresh comments"]');
+    await page.waitForSelector(".comment-empty");
   });
 
   it("keeps the mobile sheet and inline reply within the viewport", async () => {
@@ -1110,6 +1732,166 @@ describe.skipIf(!url)("real comment UI with the production API", () => {
     expect(await page.$eval('.comment-emoji-menu',el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.bottom<=innerHeight;})).toBe(true);
     await page.screenshot({path:resolve("output/acceptance/comment-reactions-mobile.png")});
     expect(errors).toEqual([]);
+  });
+
+  it("removes search misses after quiet refresh even when the matched reply is beyond the first page", async () => {
+    const site=(await createSite({mode:"paste",html:"<h1>Search refresh</h1>"},{ownerId})).site;
+    await page.goto(`${url}/s/${site.slug}`,{waitUntil:"domcontentloaded"});
+    await page.waitForSelector('button[aria-label="Comments"]');
+    const fixture=await page.evaluate(async site=>{
+      const send=async(path:string,body:unknown,method="POST")=>{
+        const response=await fetch(`/api/sites/${site.slug}/comments${path}`,{method,headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+        if(!response.ok) throw new Error(await response.text());return response.json();
+      };
+      const detail=await send("",{scope:{siteId:site.id,versionId:site.currentVersionId,entry:{kind:"main"}},anchor:{kind:"document",schemaVersion:1,filePath:"index.html"},body:"Search refresh root",clientRequestId:crypto.randomUUID()});
+      for(let i=0;i<31;i++) await send(`/${detail.thread.id}/messages`,{body:`Other reply ${i}`,clientRequestId:crypto.randomUUID()});
+      const reply=await send(`/${detail.thread.id}/messages`,{body:"Unique search needle",clientRequestId:crypto.randomUUID()});
+      return {threadId:detail.thread.id,messageId:reply.id};
+    },site);
+    await page.click('button[aria-label="Comments"]');await page.waitForSelector('.comment-summary');
+    await page.type('.comment-search','Unique search needle');
+    await page.waitForFunction(()=>document.querySelector('.comment-search-match')?.textContent?.includes('Unique search needle'));
+    const mutate=async(body:unknown,method="PATCH")=>page.evaluate(async({site,fixture,body,method})=>{
+      const response=await fetch(`/api/sites/${site.slug}/comments/${fixture.threadId}/messages/${fixture.messageId}`,{method,headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+      if(!response.ok) throw new Error(await response.text());
+    },{site,fixture,body,method});
+    const refresh=async()=>{
+      const done=page.waitForResponse(response=>response.url().includes('/comments/aggregate?') && response.url().includes('q=Unique'));
+      await page.evaluate(()=>window.dispatchEvent(new Event("focus")));await done;
+    };
+    await mutate({expectedRevision:1,body:"Edited without the match"});await refresh();
+    await page.waitForFunction(()=>document.querySelectorAll('.comment-summary').length===0 && document.querySelector('.comment-panel-heading small')?.textContent==='0');
+    await mutate({expectedRevision:2,body:"Unique search needle"});
+    const cleared=page.waitForResponse(response=>response.url().includes('/comments/aggregate?') && !new URL(response.url()).searchParams.has("q"));
+    await page.$eval('.comment-search',el=>{const input=el as HTMLInputElement;const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!;set.call(input,"");input.dispatchEvent(new Event("input",{bubbles:true}));});
+    await cleared;
+    await page.type('.comment-search','Unique search needle');
+    await page.waitForFunction(()=>document.querySelector('.comment-search-match')?.textContent?.includes('Unique search needle'));
+    await page.click('.comment-summary');
+    await mutate({expectedRevision:3},"DELETE");await refresh();
+    await page.waitForFunction(()=>document.querySelector('.comment-panel-heading')?.textContent?.includes("All comments"));
+    expect(await page.$eval('.comment-panel-content',el=>el.textContent)).toContain("Search refresh root");
+    await page.$eval('.comment-panel-heading button',el=>(el as HTMLButtonElement).click());
+    await page.waitForFunction(()=>document.querySelectorAll('.comment-summary').length===0 && document.querySelector('.comment-panel-heading small')?.textContent==='0');
+  });
+
+  it("restores keyboard focus and clears active search filters", async () => {
+    await page.setViewport({width:390,height:844,isMobile:true,hasTouch:true});
+    await page.goto(`${url}/s/${html.slug}?comments=all`);
+    await page.waitForSelector('.comment-summary');
+    const id=await page.$eval('.comment-summary',el=>(el as HTMLElement).dataset.threadId);
+    await page.focus('.comment-summary');await page.keyboard.press('Enter');
+    await page.waitForSelector('.comment-conversation');
+    await page.click('.comment-panel-heading button');
+    await page.waitForFunction(expected=>(document.activeElement as HTMLElement)?.dataset.threadId===expected,{},id);
+    await page.type('.comment-search','unfindable-search-value');
+    await page.waitForSelector('.comment-filter-summary');
+    await page.waitForFunction(()=>document.querySelector('.comment-empty')?.textContent?.includes('Try another keyword'));
+    await click('Clear filters');
+    await page.waitForSelector('.comment-summary');
+    expect(await page.$eval('.comment-search',el=>(el as HTMLInputElement).value)).toBe('');
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:resolve('output/acceptance/comment-experience-mobile.png')});
+    await page.setViewport({width:1440,height:1000});
+  });
+
+  it("searches replies, filters participation and associates a result without moving the discussion", async () => {
+    await page.setViewport({width:1440,height:1000});
+    const site=(await createSite({mode:"paste",html:"<h1>Discovery acceptance</h1>"},{ownerId})).site;
+    await page.goto(`${url}/s/${site.slug}`,{waitUntil:"domcontentloaded"});
+    await page.waitForSelector('button[aria-label="Comments"]');
+    const thread=await page.evaluate(async ({site})=>{
+      const response=await fetch(`/api/sites/${site.slug}/comments`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({scope:{siteId:site.id,versionId:site.currentVersionId,entry:{kind:"main"}},anchor:{kind:"document",schemaVersion:1,filePath:"index.html"},body:"Root feedback",clientRequestId:crypto.randomUUID()})});
+      const detail=await response.json();
+      await fetch(`/api/sites/${site.slug}/comments/${detail.thread.id}/messages`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({body:"Unique reply needle",clientRequestId:crypto.randomUUID()})});
+      return detail;
+    },{site});
+    await page.click('button[aria-label="Comments"]');
+    await page.waitForSelector('.comment-summary');
+    await page.type('.comment-search','Unique reply needle');
+    await page.waitForFunction(()=>document.querySelector('.comment-search-match')?.textContent?.includes('Unique reply needle'));
+    expect(await page.$eval('.comment-search-match mark',el=>el.textContent)).toBe('Unique reply needle');
+    expect(await page.$eval('.comment-filter-summary',el=>el.textContent)).toContain('Unique reply needle');
+    await page.click('button[aria-label="Clear search"]');
+    expect(await page.$eval('.comment-search',el=>document.activeElement===el && (el as HTMLInputElement).value==='')).toBe(true);
+    await page.type('.comment-search','Unique reply needle');
+    await page.waitForFunction(()=>document.querySelector('.comment-search-match mark')?.textContent==='Unique reply needle');
+
+    await click('I participated');
+    await page.waitForSelector('.comment-summary');
+    await page.screenshot({path:resolve('output/acceptance/comment-discovery-search.png')});
+    await page.click('.comment-summary');
+    await page.waitForSelector('.comment-result summary');
+    await page.click('.comment-result summary');
+    await page.waitForSelector('.comment-result select option[value="'+site.currentVersionId+'"]');
+    let refreshedLists=0;
+    const countRefresh=(request:import("puppeteer-core").HTTPRequest)=>{ if(request.url().startsWith(`${url}/api/sites/${site.slug}/comments/aggregate?`)) refreshedLists++; };
+    page.on("request",countRefresh);
+    await page.select('.comment-result select',site.currentVersionId);
+    await page.waitForFunction(()=>document.querySelector('.comment-result')?.textContent?.includes('Addressed in v1'));
+    await new Promise(resolve=>setTimeout(resolve,350));
+    expect(refreshedLists).toBe(1);
+    page.off("request",countRefresh);
+    // A rejected mutation must recover a list refresh that its start superseded.
+    let releaseList: (()=>Promise<void>) | undefined;
+    let ready!: ()=>void;
+    const held=new Promise<void>(resolve=>{ready=resolve;});
+    let recovered!: ()=>void;
+    const recovery=new Promise<void>(resolve=>{recovered=resolve;});
+    await page.setRequestInterception(true);
+    const intercept=async(request:import("puppeteer-core").HTTPRequest)=>{
+      if(request.url().endsWith(`/comments/${thread.thread.id}/result`) && request.method()==="PATCH") { await request.respond({status:409,contentType:"application/json",body:JSON.stringify({error:"Thread changed"})}); return; }
+      if(request.url().startsWith(`${url}/api/sites/${site.slug}/comments/aggregate?`)) {
+        if(!releaseList) {
+          const response=await fetch(request.url(),{headers:{cookie:ownerCookie.split(";")[0]}});
+          const body=await response.text();
+          releaseList=()=>request.respond({status:response.status,contentType:"application/json",body});ready();return;
+        }
+        recovered();
+      }
+      await request.continue();
+    };
+    page.on("request",intercept);
+    try {
+      await page.evaluate(()=>window.dispatchEvent(new Event("focus")));
+      await held;
+      await page.select('.comment-result select','');
+      await recovery;
+      await releaseList!();
+      await page.waitForFunction(()=>document.querySelector('.comment-result')?.textContent?.includes('Addressed in v1'));
+    } finally {page.off("request",intercept);await page.setRequestInterception(false);}
+    const state=await page.evaluate(async ({slug,id})=>(await fetch(`/api/sites/${slug}/comments/${id}`)).json(),{slug:site.slug,id:thread.thread.id});
+    expect(state.thread.resolution.status).toBe('open');expect(state.space.versionId).toBe(site.currentVersionId);
+    await page.screenshot({path:resolve('output/acceptance/comment-discovery-result.png')});
+    await page.setViewport({width:390,height:844});await settle();
+    expect(await page.$eval('.comment-panel',el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+    await page.screenshot({path:resolve('output/acceptance/comment-discovery-mobile.png')});
+  });
+
+  it("loads result choices on disclosure when aggregate options fail", async () => {
+    const site=(await createSite({mode:"paste",html:"<h1>Result fallback</h1>"},{ownerId})).site;
+    const api=`${url}/api/sites/${site.slug}/comments`;
+    await fetch(api,{method:"POST",headers:{cookie:ownerCookie.split(";")[0],origin:url!,"content-type":"application/json"},body:JSON.stringify({scope:{siteId:site.id,versionId:site.currentVersionId,entry:{kind:"main"}},anchor:{kind:"document",schemaVersion:1,filePath:"index.html"},body:"Fallback discussion",clientRequestId:crypto.randomUUID()})});
+    let resultRequests=0;
+    await page.setRequestInterception(true);
+    const intercept=async(request:import("puppeteer-core").HTTPRequest)=>{
+      if(request.url()===`${api}/options`) {await request.respond({status:503,contentType:"application/json",body:'{"error":"Temporary failure"}'});return;}
+      if(request.url().startsWith(api) && request.url().endsWith('/result') && request.method()==='GET') resultRequests++;
+      await request.continue();
+    };
+    page.on('request',intercept);
+    try {
+      await page.goto(`${url}/s/${site.slug}`,{waitUntil:'domcontentloaded'});
+      await page.waitForSelector('button[aria-label="Comments"]');
+      await page.click('button[aria-label="Comments"]');
+      await page.waitForSelector('.comment-summary');await page.click('.comment-summary');
+      await page.waitForSelector('.comment-result summary');
+      expect(resultRequests).toBe(0);
+      await page.click('.comment-result summary');
+      await page.waitForSelector(`.comment-result option[value="${site.currentVersionId}"]`);
+      expect(resultRequests).toBe(1);
+      expect(await page.$eval(`.comment-result option[value="${site.currentVersionId}"]`,el=>el.textContent)).toBe('v1');
+    } finally {page.off('request',intercept);await page.setRequestInterception(false);}
   });
 
 });

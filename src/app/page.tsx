@@ -8,6 +8,7 @@ import Link from "next/link";
 // unlisted sites, and handing down the bare public directory would hide your own unlisted site
 // from your own recent shelf. So the query gets the viewer, and the exception stays server-side.
 import { headers } from "next/headers";
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import AppShell from "@/components/app-shell";
 import Uploader from "@/components/uploader";
@@ -18,9 +19,22 @@ import HomeRecent from "@/components/home-recent";
 import { listSites, listViewerFromRequest } from "@/lib/sites";
 import { resolvePublicBase } from "@/lib/publish-skill";
 import { forwardedProto } from "@/lib/http";
-import { getT } from "@/lib/i18n-server";
+import { getLocale, getT } from "@/lib/i18n-server";
+import { marketingMetadata } from "@/lib/marketing-metadata";
+import { platformCopy } from "@/lib/platform-copy";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata(): Promise<Metadata> {
+  const [h, locale, t] = await Promise.all([headers(), getLocale(), getT()]);
+  return marketingMetadata({
+    base: resolvePublicBase(h),
+    path: "/",
+    locale,
+    title: t(platformCopy.title),
+    description: t(platformCopy.description),
+  });
+}
 
 /** The one word in the title that carries the green: translations place it wherever their grammar puts it. */
 const SLOT = "\u0000";
@@ -51,7 +65,7 @@ export default async function Home() {
           {/* Two lines on purpose: the first is what you bring, the second what it becomes. */}
           <h1>{t("Turn your work")}<br />{slot(t("into a {link} to share and collaborate.", { link: SLOT }), <span className="hl">{t("link")}</span>)}</h1>
           <p className="deck">{t("HTML, folders, PDFs and Office documents all become shareable links.")}</p>
-          <Uploader compact />
+          <Uploader compact footerAction={<Link className="agent-connect-link update-existing-link" href="/me?intent=update">{t("Update an existing artifact →")}</Link>} />
         </div>
         <HeroMotion />
       </section>

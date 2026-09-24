@@ -11,7 +11,8 @@ export async function handleOidcCallback(request: Request): Promise<NextResponse
   const params = new URL(request.url).searchParams;
   const claims = await completeLogin(request, params.get("code") ?? "", params.get("state") ?? "");
 
-  // Keyed on (provider, subject) only — never the email, which an attacker could pre-register.
+  // Normally keyed on (provider, subject). During this temporary cutover, an unknown subject may
+  // adopt the earliest same-provider account whose address was also verified by the IdP.
   const user = await upsertUser({
     authProvider: "oidc",
     providerSubject: claims.subject,
@@ -19,6 +20,8 @@ export async function handleOidcCallback(request: Request): Promise<NextResponse
     emailVerified: claims.emailVerified,
     displayName: claims.displayName,
     avatarUrl: claims.avatarUrl,
+    // Requires one active subject per verified email in the new IdP and the old app retired.
+    migrateVerifiedEmail: true,
   });
 
   // A disabled account is refused here, before a session exists. The reason is shown: the person

@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { commentAggregateQuerySchema, commentListQuerySchema, commentPaginationSchema, createCommentSchema, editCommentSchema, previewCommentEventSchema } from "@/lib/comments/contracts";
 import { parseCreateComment } from "@/lib/comments/validation";
-import { canActOnComment, describeCommentPermissions, sameCommentScope, type CommentAccessFacts } from "@/lib/comments/permissions";
+import { canActOnComment as act, describeCommentPermissions as describeResolved, sameCommentScope, type CommentAccessFacts } from "@/lib/comments/permissions";
+
+import { ROLE_PERMISSIONS } from "@/lib/rbac";
+// Pure policy tests supply catalog facts; production resolves them from the database.
+function resolvedFacts(f:CommentAccessFacts):CommentAccessFacts {
+  const role=f.managementRole??f.accountRole;
+  return {...f,permissions:role?ROLE_PERMISSIONS[role]:[]};
+}
+function describeCommentPermissions(f:CommentAccessFacts){return describeResolved(resolvedFacts(f));}
+function canActOnComment(...args:Parameters<typeof act>){return act(resolvedFacts(args[0]),args[1],args[2]);}
 
 const scope = { siteId: "s1", versionId: "v1", entry: { kind: "main" as const } };
 const input = { scope, clientRequestId: "39dd477b-3025-4e3b-8fe9-61d0162950e5", anchor: { kind: "document", schemaVersion: 1, filePath: "index.html" }, body: " Review this " };
-const facts: CommentAccessFacts = { scope, userId: "u1", canReadArtifact: true, canReadMainArtifact: true, canWriteArtifactDiscussion: true, accountRole: null, managementRole: null, mainPolicy: "login", shareMode: null };
+const facts: CommentAccessFacts = { scope, userId: "u1", canReadArtifact: true, canReadMainArtifact: true, canWriteArtifactDiscussion: true, accountRole: null, managementRole: null, mainPolicy: "login", shareMode: null, permissions: [] };
 const shareScope = { ...scope, entry: { kind: "share" as const, shareId: "sh1" } };
 
 describe("comment input and preview contracts", () => {
@@ -54,6 +63,8 @@ describe("comment input and preview contracts", () => {
   it("rejects unsupported preview protocols, versions and payloads", () => {
     const event = { protocol: "artifact-comments", schemaVersion: 1, channelId: input.clientRequestId, scope, event: { type: "selected", anchor: input.anchor } };
     expect(previewCommentEventSchema.parse(event).event.type).toBe("selected");
+    expect(previewCommentEventSchema.safeParse({...event,event:{...event.event,position:{x:50,y:100}}}).success).toBe(true);
+    for (const x of [NaN, Infinity, "50"]) expect(previewCommentEventSchema.safeParse({...event,event:{...event.event,position:{x,y:100}}}).success).toBe(false);
     for (const invalid of [{ ...event, schemaVersion: 2 }, { ...event, protocol: "other" }, { ...event, event: { type: "selected", anchor: input.anchor, body: "injected" } }]) expect(() => previewCommentEventSchema.parse(invalid)).toThrow();
     expect(previewCommentEventSchema.safeParse({ ...event, event: { type: "located", threadId: "t1", outcome: "missing" } }).success).toBe(true);
   });

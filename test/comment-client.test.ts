@@ -1,3 +1,4 @@
+import { commentMutationEndpoint } from "@/components/comments/comment-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { commentHeaders, commentRequest, CommentRequestError, mergeThreads, commentPollDelay, discoverCommentPermissions } from "../src/components/comments/comment-client";
 import type { CommentThreadDetail } from "../src/lib/comments/contracts";
@@ -120,4 +121,18 @@ describe("permission discovery", () => {
     stop(); resolve("late"); await Promise.resolve();
     expect(accept).not.toHaveBeenCalled();
   });
+});
+
+it("distinguishes unavailable attachments from revision conflicts without exposing server details", async () => {
+  vi.stubGlobal("fetch",vi.fn().mockResolvedValue(new Response(JSON.stringify({error:"Wording can change",code:"image_unavailable"}),{status:409})));
+  await expect(commentRequest("/comments")).rejects.toMatchObject({status:409,reason:"image_unavailable"});
+  vi.stubGlobal("fetch",vi.fn().mockResolvedValue(new Response(JSON.stringify({error:"internal private detail"}),{status:409})));
+  await expect(commentRequest("/comments")).rejects.toMatchObject({status:409,reason:undefined,message:"Comment request failed (409)"});
+});
+
+it("invalidates only committed discussion mutations, not draft images or read receipts",()=>{
+  const endpoint="/api/sites/example/comments";
+  for(const path of ["", "/thread/messages", "/thread/messages/message", "/thread/messages/message/reactions", "/thread/status", "/thread/result"]) expect(commentMutationEndpoint(endpoint+path,"POST")).toBe(endpoint);
+  for(const path of ["/attachments", "/attachments/image", "/unread", "/options"]) expect(commentMutationEndpoint(endpoint+path,"DELETE")).toBeNull();
+  expect(commentMutationEndpoint(endpoint+"/thread/messages","GET")).toBeNull();
 });
