@@ -1,6 +1,7 @@
 {
   "name": "@artifact-site/cli",
   "version": "0.3.0",
+  "mcpName": "io.github.lexmount/artifact-site",
   "description": "Command-line client for artifact-site: publish, update, search, share and export sites.",
   "license": "(Apache-2.0 OR MIT)",
   "repository": {
@@ -27,6 +28,7 @@
   "files": [
     "bin",
     "dist",
+    "src/mcp-tools.json",
     "README.md",
     "LICENSE-APACHE",
     "LICENSE-MIT"
@@ -44,6 +46,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
     "commander": "^15.0.0",
     "fflate": "^0.8.3",
     "zod": "^4.5.4"

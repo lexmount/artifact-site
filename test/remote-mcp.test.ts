@@ -894,3 +894,33 @@ it("keeps CLI, MCP and HTTP personal folders and public lookup consistent", asyn
     expect(await exec("find")).toBe(3);
   } finally { vi.unstubAllEnvs(); }
 });
+
+it("forwards the CLI's local stdio server (artifact-site mcp) to the real /mcp handler", async () => {
+  const { createLocalMcpServer } = await import("../cli/src/mcp");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const a = await identity("local-mcp");
+  const seen: (string | null)[] = [];
+  const route: typeof fetch = async (input, init) => { const request = new Request(input, init); seen.push(request.headers.get("authorization")); return request.method === "POST" ? mcp(request) : mcpGet(); };
+  const open = async (token: string) => {
+    const { server, close } = await createLocalMcpServer({ baseUrl: origin, token, version: "test", log: () => {}, fetch: route });
+    const c = new Client({ name: "local", version: "1" }); const [x, y] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(x), c.connect(y)]);
+    return { c, close: async () => { await c.close(); await close(); } };
+  };
+  const { c, close } = await open(a.token);
+  expect(c.getInstructions()).toMatch(/^Artifact Site is the connected remote library/);
+  expect((await c.listTools()).tools.map(t => t.name).sort()).toEqual(mcpTools.map(([name]) => name).sort());
+  const created = await call(c, "publish", { html: "<html><body>Local MCP</body></html>", share: false });
+  expect(created.error).toBe(false);
+  expect((await call(c, "find")).data.owned.some((s: { slug: string }) => s.slug === created.data.slug)).toBe(true);
+  expect(JSON.stringify((await c.readResource({ uri: "artifact-site://skill" })).contents[0])).toContain(origin);
+  expect(seen.length).toBeGreaterThan(0); expect(seen.every(h => h === `Bearer ${a.token}`)).toBe(true);
+  await close();
+  // A revoked token: a tool error that says to sign in again, not a crashed server.
+  expect((await revoke(new Request(`${origin}/api/me/tokens/${a.id}`, { method: "DELETE", headers: a.headers }), { params: Promise.resolve({ id: a.id }) })).status).toBe(200);
+  const revoked = await open(a.token);
+  const refused = await revoked.c.callTool({ name: "artifact_site_find", arguments: {} });
+  expect(refused.isError).toBe(true);
+  expect((refused.content as { text: string }[])[0].text).toMatch(/rejected the token.*artifact-site login/);
+  await revoked.close();
+});

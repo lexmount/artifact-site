@@ -1,8 +1,12 @@
-# Tag `vX.Y.Z` → the hosted MCP endpoint listed in the official MCP Registry
-# (https://registry.modelcontextprotocol.io) as `io.github.lexmount/artifact-site`, version X.Y.Z.
-# server.json at the repository root is the listing; its version is taken from package.json at
-# publish time. Authentication is the GitHub Actions OIDC token of this repository, which the
-# registry maps to the io.github.lexmount/* namespace, so no token is stored here.
+# Tag `vX.Y.Z` → the hosted MCP endpoint and the local `npx @artifact-site/cli mcp` package listed in
+# the official MCP Registry (https://registry.modelcontextprotocol.io) as `io.github.lexmount/artifact-site`,
+# version X.Y.Z. server.json at the repository root is the listing; its version is taken from
+# package.json and its npm package version from cli/package.json at publish time. The registry checks
+# that npm package carries the same name as `mcpName`, so scripts/await-cli-on-npm.sh waits until
+# release.yml has published a version that does — and fails at once when the tagged version is already
+# on npm without it, which means cli/package.json was not bumped. Authentication is the GitHub Actions
+# OIDC token of this repository, which the registry maps to the io.github.lexmount/* namespace, so no
+# token is stored here.
 # A version can be published once; to re-run for an existing tag, use "Run workflow" on that tag.
 name: MCP Registry
 
@@ -30,8 +34,11 @@ jobs:
       - name: Set the listing version from package.json
         run: |
           version="$(jq -r .version package.json)"
-          jq --arg v "$version" '.version = $v' server.json > server.tmp && mv server.tmp server.json
-          echo "publishing version $version"
+          cli="$(jq -r .version cli/package.json)"
+          jq --arg v "$version" --arg c "$cli" '.version = $v | .packages[0].version = $c' server.json > server.tmp && mv server.tmp server.json
+          echo "publishing version $version (npm package @artifact-site/cli@$cli)"
+      - name: Wait for the npm package to carry mcpName (release.yml publishes it from the same tag)
+        run: scripts/await-cli-on-npm.sh
       - name: Install mcp-publisher
         run: |
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \

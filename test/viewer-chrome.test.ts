@@ -530,3 +530,21 @@ describe("home page hero", () => {
     expect(text.match(/[.。]/g)).toHaveLength(1);
   });
 });
+
+
+describe("pin tooltip focus input", () => {
+  // Exercise the actual JSX handler so restoring unconditional focus help regresses this test.
+  const pin = block(viewer, 'className="btn icon-only header-pin"', 'onClick={togglePinned}');
+  const handler = pin.match(/onFocus=\{([^\n]+)\}/)?.[1];
+  it.each([false, true])("shows focus help only for focus-visible: %s", (focusVisible) => {
+    expect(handler).toBeDefined();
+    const shown: unknown[] = [];
+    const button = { matches: (selector: string) => {
+      expect(selector).toBe(":focus-visible");
+      return focusVisible;
+    } };
+    const focus = new Function("showPinTip", `return (${handler});`)((target: unknown) => shown.push(target));
+    focus({ currentTarget: button });
+    expect(shown).toEqual(focusVisible ? [button] : []);
+  });
+});

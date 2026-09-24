@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { analyticsPage, initializeAnalytics, setAnalyticsUser, track, trackPage, analyticsRequest, syncAnalyticsIdentity } from "@/lib/analytics";
+import { analyticsCampaign, analyticsPage, initializeAnalytics, setAnalyticsUser, track, trackPage, analyticsRequest, syncAnalyticsIdentity } from "@/lib/analytics";
 import { config, __resetWarnedForTests } from "@/lib/config";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); __resetWarnedForTests(); });
 
-function browser() {
-  const w = { location: { href: "https://app.example.com/v/SECRET?token=PRIVATE#secret", hostname: "app.example.com" }, dataLayer: [] as unknown[], gtag: undefined };
+function browser(href = "https://app.example.com/v/SECRET?token=PRIVATE#secret") {
+  const w = { location: { href, hostname: "app.example.com" }, dataLayer: [] as unknown[], gtag: undefined };
   vi.stubGlobal("window", w);
   vi.stubGlobal("document", { referrer: "https://other.example.com/v/SECRET?token=PRIVATE" });
   return w;
@@ -107,4 +107,67 @@ it("only counts HTTP or network request failures, not preflight or post-save exc
   expect(failures()).toHaveLength(1);
   await expect(analyticsRequest("update", () => Promise.reject(new TypeError("Network failed")))).rejects.toThrow();
   expect(failures()).toHaveLength(2);
+});
+
+describe("campaign attribution", () => {
+  const commands = (w: { dataLayer: unknown[] }) => w.dataLayer.map((x) => Array.from(x as ArrayLike<unknown>));
+  const pageViews = (w: { dataLayer: unknown[] }) =>
+    commands(w).filter((x) => x[1] === "page_view").map((x) => x[2] as Record<string, string>);
+  function land(href: string) {
+    const w = browser(href);
+    initializeAnalytics("G-TEST123", ["app.example.com"]);
+    trackPage();
+    return w;
+  }
+
+  it("normalizes the three allowlisted tags into a fixed order", () => {
+    expect(analyticsCampaign("https://app.example.com/?utm_campaign=Launch&utm_medium=social&utm_source=%20HN%20"))
+      .toBe("utm_source=hn&utm_medium=social&utm_campaign=launch");
+    expect(analyticsCampaign("https://app.example.com/?utm_source=a&utm_source=b")).toBe("utm_source=a");
+    expect(analyticsCampaign("https://app.example.com/")).toBe("");
+    expect(analyticsCampaign("not a url")).toBe("");
+  });
+
+  it("adds the tags to the landing page view", () => {
+    const w = land("https://app.example.com/?utm_source=HN&utm_medium=social&utm_campaign=launch");
+    expect(pageViews(w)).toEqual([expect.objectContaining({
+      page_location: "https://app.example.com/?utm_source=hn&utm_medium=social&utm_campaign=launch",
+      page_referrer: "https://other.example.com/",
+    })]);
+  });
+
+  it("keeps the route label and drops every other query parameter", () => {
+    const w = land("https://app.example.com/s/some-private-slug?utm_source=x&edit_token=SECRET"
+      + "&utm_term=termmarker&utm_content=contentmarker&share=sharemarker&gclid=gclidmarker");
+    expect(pageViews(w)[0].page_location).toBe("https://app.example.com/s/artifact?utm_source=x");
+    expect(JSON.stringify(commands(w))).not.toMatch(/some-private-slug|SECRET|edit_token|marker|utm_term|utm_content|gclid/);
+  });
+
+  it("drops invalid values one by one and keeps the valid ones", () => {
+    const long = land(`https://app.example.com/?utm_source=${"a".repeat(41)}&utm_medium=email&utm_campaign=spring%20sale`);
+    expect(pageViews(long)[0].page_location).toBe("https://app.example.com/?utm_medium=email");
+    const odd = land(`https://app.example.com/?utm_source=%3Cscript%3E&utm_medium=${encodeURIComponent("微信")}&utm_campaign=${"b".repeat(40)}`);
+    expect(pageViews(odd)[0].page_location).toBe(`https://app.example.com/?utm_campaign=${"b".repeat(40)}`);
+  });
+
+  it("leaves the landing URL untouched when no tag survives", () => {
+    const w = land("https://app.example.com/explore?utm_source=%3Cscript%3E&utm_medium=&utm_term=launch");
+    expect(pageViews(w)[0].page_location).toBe("https://app.example.com/explore");
+  });
+
+  it("never lets later page views, events, referrers or the global page context carry the tags", () => {
+    const w = land("https://app.example.com/?utm_source=hn&utm_medium=social&utm_campaign=launch");
+    track("ui_click", { button_name: "upload" });
+    w.location.href = "https://app.example.com/explore?utm_source=again";
+    trackPage();
+    track("share_link_copy", { share_type: "canonical" });
+    const all = commands(w);
+    const afterLanding = all.slice(all.findIndex((x) => x[1] === "page_view") + 1);
+    expect(afterLanding.map((x) => (x[0] === "event" ? x[1] : x[0]))).toEqual(["ui_click", "set", "page_view", "share_link_copy"]);
+    expect(JSON.stringify(afterLanding)).not.toMatch(/utm_|again/);
+    expect(JSON.stringify(all.filter((x) => x[0] === "set"))).not.toMatch(/utm_/);
+    expect(pageViews(w)[1]).toMatchObject({
+      page_location: "https://app.example.com/explore", page_referrer: "https://app.example.com/",
+    });
+  });
 });

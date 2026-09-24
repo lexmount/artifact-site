@@ -8,7 +8,7 @@ type Events = {
   artifact_operation_failed: { operation: "publish" | "update"; error_code: "operation_failed" };
   share_link_copy: { share_type: "canonical" | "share_link" };
 };
-type State = { loaded?: boolean; id: string; lastPath?: string; referrer: string; userId: string | null };
+type State = { loaded?: boolean; id: string; lastPath?: string; referrer: string; userId: string | null; campaign?: string };
 declare global {
   interface Window {
     dataLayer?: unknown[];
@@ -36,6 +36,17 @@ export function analyticsPage(href: string) {
   return { page_location: url.origin + route, page_title: title, page_type: type };
 }
 
+const campaignKeys = ["utm_source", "utm_medium", "utm_campaign"] as const;
+/** Allowlisted campaign tags from a landing URL, normalized and in a fixed order; "" if none survive. */
+export function analyticsCampaign(href: string): string {
+  let params: URLSearchParams;
+  try { params = new URL(href).searchParams; } catch { return ""; }
+  return campaignKeys.flatMap((key) => {
+    const value = params.get(key)?.trim().toLowerCase() ?? "";
+    return /^[a-z0-9._-]{1,40}$/.test(value) ? [`${key}=${value}`] : [];
+  }).join("&");
+}
+
 function send(...args: unknown[]) {
   try {
     // Bound the pre-load queue if the external script is blocked.
@@ -48,7 +59,8 @@ export function initializeAnalytics(id: string, hosts: string[]): boolean {
   if (window.artifactAnalytics) return window.artifactAnalytics.id === id;
   let referrer = "";
   try { referrer = new URL(document.referrer).origin + "/"; } catch { /* Direct visit. */ }
-  window.artifactAnalytics = { id, referrer, userId: null };
+  // Read once per page load; trackPage attaches the tags to the landing page_view only.
+  window.artifactAnalytics = { id, referrer, userId: null, campaign: analyticsCampaign(window.location.href) };
   window.dataLayer ??= [];
   // Google's command queue uses the Arguments shape.
   // eslint-disable-next-line prefer-rest-params
@@ -76,8 +88,12 @@ export function trackPage() {
   // Compare real paths locally so visits to two artifacts count separately. Never send them.
   if (state.lastPath === path) return;
   const page = analyticsPage(window.location.href);
+  // GA4 attributes the session from the landing hit, so campaign tags go on that page_view alone.
+  // The global page context and later referrers stay route-only, or every later event inherits them.
+  const landing = state.campaign ? { ...page, page_location: `${page.page_location}?${state.campaign}` } : page;
+  state.campaign = undefined;
   send("set", { ...page, page_referrer: state.referrer });
-  send("event", "page_view", { ...page, page_referrer: state.referrer });
+  send("event", "page_view", { ...landing, page_referrer: state.referrer });
   state.lastPath = path;
   state.referrer = page.page_location;
 }

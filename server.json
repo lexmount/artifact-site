@@ -14,5 +14,37 @@
       "type": "streamable-http",
       "url": "https://artifact-site.app.lexmount.com/mcp"
     }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@artifact-site/cli",
+      "version": "0.3.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "ARTIFACT_SITE_URL",
+          "description": "Address of your artifact-site deployment, e.g. https://artifact-site.app.lexmount.com. Optional after `artifact-site login`.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "ARTIFACT_SITE_TOKEN",
+          "description": "Personal token from /for-agents#mcp on your deployment. Optional after `artifact-site login`; without it the server lists its tools and every call explains how to sign in.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
   ]
 }

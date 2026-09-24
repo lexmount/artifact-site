@@ -5,7 +5,24 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- `artifact-site mcp` (CLI): a local stdio relay to the deployment's `/mcp`, for clients and
+  directories that only start local commands. It uses `ARTIFACT_SITE_URL`/`ARTIFACT_SITE_TOKEN` or
+  the saved login; signed out, it still lists the tools from a bundled copy (generated from the
+  server, checked in CI). The MCP Registry listing now carries the npm package next to the remote
+  endpoint.
+- `ARTIFACT_GLAMA_CLAIM` serves Glama's HTTP ownership challenge at `/.well-known/glama.json`, so an
+  operator can claim their deployment's MCP connector listing on glama.ai. Unset, nothing is served.
+- GA4 keeps **campaign attribution**: the landing page view carries `utm_source`, `utm_medium` and
+  `utm_campaign` when each is lowercase `[a-z0-9._-]` of at most 40 characters, so links shared in
+  chat apps or email no longer count as direct traffic. Later events and every other query
+  parameter stay redacted.
+
+### Fixed
+
+- Fix the viewer pin icon shrinking and add localized mouse-hover/keyboard-focus help without sticky tooltips after touch taps.
+- Align work-list sorting beside search and keep Explore counts right-aligned, with a stacked mobile layout.
 
 ## 0.3.0 — 2026-09-24
 

@@ -5,7 +5,7 @@ the HTTP API documented at `/for-agents.md` and stores personal credentials per 
 `~/.config/artifact-site/tokens/<host>`.
 
 Remote MCP offers the same artifact operations directly from the platform, without installing
-this binary. Clients that implement MCP authorization (ChatGPT, Claude) sign in through the
+this binary (`artifact-site mcp` also serves them locally over stdio, see [Local MCP](#local-mcp-stdio)). Clients that implement MCP authorization (ChatGPT, Claude) sign in through the
 server's own OAuth consent page; others configure its URL and a Bearer credential; see
 [MCP setup](../docs/MCP.md).
 
@@ -118,7 +118,50 @@ ChatGPT, Claude and other clients that implement MCP authorization connect with 
 alone and sign in through the server's consent page. For other clients, open `/for-agents#mcp`
 on your deployment to create a personal token and copy the remote configuration. See
 [the remote MCP guide](../docs/MCP.md) for tools, file transfers and migration.
-The former `artifact-site mcp` stdio command has been removed. CLI commands remain available.
+
+## Local MCP (stdio)
+
+For clients and directories that only start local MCP servers, `artifact-site mcp` runs one over
+stdio. It implements no tools itself: every request is forwarded to your server's `/mcp` with this
+CLI's credential, and tool names, schemas, results and server instructions come back unchanged.
+
+```bash
+artifact-site mcp [--base <url>]
+npx -y @artifact-site/cli mcp
+```
+
+The server address and token are resolved like every other command: `--base` >
+`ARTIFACT_SITE_URL` > the address saved by `login`; `ARTIFACT_SITE_TOKEN` >
+`~/.config/artifact-site/tokens/<host>`. Create a personal token at `/for-agents#mcp` on your
+deployment, or run `artifact-site login` once on this machine.
+
+Without an address or token the server still starts and lists its 26 tools (a copy bundled with
+the package); each call then returns a tool error explaining how to sign in. A rejected token
+(HTTP 401/403) or an unreachable server is reported as a tool error too, and the process keeps
+running. stdout carries only JSON-RPC; diagnostics go to stderr.
+
+Claude Desktop (`claude_desktop_config.json`) and Cursor (`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "artifact-site": {
+      "command": "npx",
+      "args": ["-y", "@artifact-site/cli", "mcp"],
+      "env": {
+        "ARTIFACT_SITE_URL": "https://artifact-site.app.lexmount.com",
+        "ARTIFACT_SITE_TOKEN": "ahp_..."
+      }
+    }
+  }
+}
+```
+
+The configuration holds a credential: keep it in private user settings. If the CLI is already
+signed in on this machine, omit `env` (or keep only `ARTIFACT_SITE_URL`).
+
+`cli/src/mcp-tools.json`, the bundled list, is generated from the server's registrations with
+`npm run generate:mcp-tools` at the repository root; a test fails when it is out of date.
 
 ## Development
 

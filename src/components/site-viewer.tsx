@@ -11,7 +11,7 @@ import CommentWorkspace from "@/components/comments/anchored-workspace";
 // (inline-editable title · meta · copy-link · save-as-new-site · version history · sharing · edit · device toggle ·
 // open-in-new) floats over it, revealed on demand. The iframe never gets allow-same-origin — the
 // served HTML already carries its own sandbox CSP.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ComponentProps } from "react";
+import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, useSyncExternalStore, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import VisibilityChip from "@/components/visibility-chip";
@@ -109,6 +109,26 @@ export default function SiteViewer(props: {
   const router = useRouter();
   const t = useT();
   const locale = useLocale();
+  const pinTipId = useId();
+  const [pinTip, setPinTip] = useState<{ left: number; top: number } | null>(null);
+  const showPinTip = (button: HTMLButtonElement) => {
+    const rect = button.getBoundingClientRect();
+    // 252px reserves the tooltip CSS max-width (240px) plus its 12px viewport inset.
+    setPinTip({ left: Math.max(12, Math.min(rect.left, window.innerWidth - 252)), top: rect.bottom + 8 });
+  };
+  useEffect(() => {
+    if (!pinTip) return;
+    const hide = () => setPinTip(null);
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") hide(); };
+    window.addEventListener("resize", hide);
+    window.addEventListener("scroll", hide, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("resize", hide);
+      window.removeEventListener("scroll", hide, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [pinTip]);
   const [device, setDevice] = useState<Device>("desktop");
   const [title, setTitle] = useState(props.title);
   const [officialVersion, setOfficialVersion] = useState(props.officialVersionId ?? null);
@@ -491,7 +511,11 @@ export default function SiteViewer(props: {
             </div>
             <button type="button" className="btn icon-only header-pin" aria-pressed={barPinned}
               aria-label={barPinned ? t("Unpin action bar") : t("Pin action bar")}
-              title={barPinned ? t("Unpin action bar") : t("Pin action bar so it stays visible")}
+              aria-describedby={pinTip && barOpen ? pinTipId : undefined}
+              onPointerEnter={(event) => { if (isHoverPointer(event.pointerType)) showPinTip(event.currentTarget); }}
+              onPointerLeave={() => setPinTip(null)}
+              onFocus={(event) => { if (event.currentTarget.matches(":focus-visible")) showPinTip(event.currentTarget); }}
+              onBlur={() => setPinTip(null)}
               onClick={togglePinned}><Pin size={14} aria-hidden="true" /></button>
             {/* The bar carries the two things an owner does most — edit and share — as the design draws them:
                 an outline button and a black one, then everything else behind "···". */}
@@ -579,6 +603,13 @@ export default function SiteViewer(props: {
         >
           {barOpen ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
         </button>
+
+      {pinTip && barOpen && portalHost && createPortal(
+        <div id={pinTipId} role="tooltip" className="header-pin-tooltip" style={pinTip}>
+          {barPinned ? t("Allows the action bar to hide automatically") : t("Keeps the action bar visible")}
+        </div>,
+        portalHost,
+      )}
 
       {/* The login gate is portaled to body as well: the CSS says it (z-index 80) sits above the drawers (70), but
           `.fs-viewer` is position:fixed and therefore a stacking context of its own — an 80 left inside it cannot

@@ -105,6 +105,19 @@ export const config = {
       return ["http:", "https:"].includes(url.protocol) ? [url.hostname] : [];
     } catch { return []; }
   },
+  /**
+   * Glama's HTTP ownership challenge for this deployment's listed MCP connector, served at
+   * /.well-known/glama.json. Per installation and runtime-only, like the GA ID: an image must never
+   * answer another operator's claim. Empty (the default) serves nothing.
+   */
+  get glamaClaim(): string {
+    const claim = (process.env.ARTIFACT_GLAMA_CLAIM || "").trim();
+    if (claim && !/^glama_claim_[A-Za-z0-9_-]+$/.test(claim)) {
+      warnOnce("Invalid ARTIFACT_GLAMA_CLAIM; /.well-known/glama.json disabled.");
+      return "";
+    }
+    return claim;
+  },
   get previewSigningSecret(): string { return process.env.PREVIEW_SIGNING_SECRET?.trim() || ""; },
   /** Root of all on-disk state: sites/<siteId>/<versionId>/… (and the test suite's sqlite file). */
   get dataDir(): string {

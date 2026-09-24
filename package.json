@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "generate:mcp-tools": "UPDATE_MCP_TOOLS=1 vitest run test/mcp-tools-manifest.test.ts",
     "check:commit-msg": "node scripts/check-commit-msg.mjs",
     "check:readme": "node scripts/check-readme-links.mjs",
     "test:pg:rbac": "vitest run test/share-education-api.test.ts test/comment-attachments.test.ts test/authorization-upgrade.integration.test.ts test/authorization-cleanup.test.ts test/role-bindings.test.ts test/authorization-api.test.ts test/admin.test.ts test/quota.test.ts test/settings.test.ts test/site-text.test.ts test/rbac.test.ts test/rbac-convergence.test.ts test/permission-audit-regressions.test.ts test/comment-access.test.ts test/comments-service.test.ts test/official-version.test.ts test/official-api.test.ts test/comments-anchored.test.ts test/publish-recovery.test.ts test/publish-client-recovery.test.ts test/directory.test.ts test/notifications.test.ts test/comment-mentions.test.ts"

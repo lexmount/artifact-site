@@ -117,7 +117,7 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 
 - **Skill**: `npx skills add lexmount/artifact-site` — [エージェントスキル](../skills/artifact-site/SKILL.md)をインストールし、サーバーの URL をエージェントに伝えます。
 - **CLI**: `npm install -g @artifact-site/cli` — Node 24 以上が必要です。コマンド例は以下をご覧ください。
-- **MCP**: `https://your-server/mcp` — ChatGPT、Claude などの MCP クライアントから、サーバーの OAuth サインインで接続します。CLI のインストールは不要です。
+- **MCP**: `https://your-server/mcp` — ChatGPT、Claude などの MCP クライアントから、サーバーの OAuth サインインで接続します。CLI のインストールは不要です。ローカル MCP サーバーしか起動できないクライアントは、代わりに CLI の `artifact-site mcp` を使えます。
 
 **CLI と MCP での公開は、デフォルトで公開共有リンクを作成します。** 共有しない場合は `--share none`（CLI）または `share: false`（MCP）を使ってください。
 

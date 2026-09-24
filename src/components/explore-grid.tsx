@@ -19,7 +19,7 @@ export default function ExploreGrid({ sites, directory }: { sites: SiteSummary[]
   const shown = directory ? sites : query ? sites.filter((s) => s.title.toLowerCase().includes(query)) : sites;
   return (
     <>
-      <div className="work-tools">
+      <div className="work-tools explore-tools">
         <label className="searchbox">
           <Search size={16} aria-hidden="true" />
           <input type="search" value={q} onChange={(e) => {setQ(e.target.value);if(directory)navigation.change("q",e.target.value,250);}} placeholder={t("Search site titles")} aria-label={t("Search site titles")} />
