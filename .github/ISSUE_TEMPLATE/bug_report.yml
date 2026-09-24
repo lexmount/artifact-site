@@ -11,7 +11,7 @@ body:
     attributes:
       label: Version
       description: Image tag, git commit, or `npm ls` line for `@artifact-site/cli`
-      placeholder: ghcr.io/lexmount/artifact-site:0.3.0
+      placeholder: ghcr.io/lexmount/artifact-site:0.4.0
     validations:
       required: true
   - type: dropdown

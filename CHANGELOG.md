@@ -5,6 +5,18 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.4.0 — 2026-09-24
+
+A local MCP server: `npx @artifact-site/cli mcp` starts a stdio relay to your deployment's `/mcp`,
+so clients and directories that only launch local commands can publish, search, read and update
+artifacts too; the MCP Registry now lists the npm package next to the hosted endpoint. Campaign
+tags survive analytics redaction, and operators can claim their MCP connector on Glama.
+
+**Upgrading.** A drop-in upgrade: no database migrations and no required configuration changes.
+`ARTIFACT_GLAMA_CLAIM` is a new optional setting.
+
 ### Added
 
 - `artifact-site mcp` (CLI): a local stdio relay to the deployment's `/mcp`, for clients and
