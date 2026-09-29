@@ -4,9 +4,7 @@ import { createPortal } from "react-dom";
 import { Lock } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 import { drawerHost } from "@/components/version-history";
-import { acknowledgeShareEducation, readAcknowledgements, shouldShowShareEducation, isShareEducationStorageKey, SHARE_LINK_CREATED_EVENT } from "@/lib/share-education";
-
-function storage(): Storage | null { try { return window.localStorage; } catch { return null; } }
+import { claimShareEducation, dismissShareEducationForever, educationStorage, readShareEducation, shareEducationCompleted, isShareEducationStorageKey, SHARE_EDUCATION_CHANGED_EVENT } from "@/lib/share-education";
 
 export default function PrivateShareEducation({ slug, anchor, onCreate, onOpenChange }: {
   slug: string;
@@ -15,31 +13,32 @@ export default function PrivateShareEducation({ slug, anchor, onCreate, onOpenCh
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT();
-  const [lesson, setLesson] = useState<{scope: string; step: number} | null>(null);
+  const [lesson, setLesson] = useState(false);
   const dismissed = useRef(false);
   const panel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let alive = true;
-    let generation = 0;
-    const sync = async () => {
-      const current = ++generation;
-      try {
-        const response = await fetch("/api/me/share-education", { cache: "no-store" });
-        if (!response.ok) return;
-        const history = await response.json() as {scope: string; linksCreated: number};
-        if (!alive || dismissed.current || current !== generation) return;
-        const count = readAcknowledgements(storage(), history.scope, slug);
-        setLesson(shouldShowShareEducation(count, history.linksCreated) ? {scope: history.scope, step: count + 1} : null);
-      } catch { /* Optional guidance must not block sharing. */ }
+    const storage = educationStorage("localStorage");
+    // Defer the claim until Strict Mode's disposable effect has cleaned up.
+    void Promise.resolve().then(async () => {
+      const isActive = () => alive && !dismissed.current;
+      if (!isActive()) return;
+      const claimed = await claimShareEducation(storage, educationStorage("sessionStorage"), slug, Date.now(), isActive);
+      if (claimed && isActive() && !shareEducationCompleted(readShareEducation(storage))) setLesson(true);
+    });
+    const sync = () => {
+      if (shareEducationCompleted(readShareEducation(storage))) {
+        dismissed.current = true;
+        setLesson(false);
+      }
     };
-    void sync();
-    const onStorage = (event: StorageEvent) => { if (isShareEducationStorageKey(event.key)) void sync(); };
-    window.addEventListener(SHARE_LINK_CREATED_EVENT, sync);
+    const onStorage = (event: StorageEvent) => { if (isShareEducationStorageKey(event.key)) sync(); };
+    window.addEventListener(SHARE_EDUCATION_CHANGED_EVENT, sync);
     window.addEventListener("storage", onStorage);
-    return () => { alive = false; window.removeEventListener(SHARE_LINK_CREATED_EVENT, sync); window.removeEventListener("storage", onStorage); };
+    return () => { alive = false; window.removeEventListener(SHARE_EDUCATION_CHANGED_EVENT, sync); window.removeEventListener("storage", onStorage); };
   }, [slug]);
   useEffect(() => {
-    onOpenChange(lesson !== null);
+    onOpenChange(lesson);
     return () => onOpenChange(false);
   }, [lesson, onOpenChange]);
   useLayoutEffect(() => {
@@ -61,13 +60,18 @@ export default function PrivateShareEducation({ slug, anchor, onCreate, onOpenCh
   }, [anchor, lesson]);
   const host = drawerHost(typeof document === "undefined" ? null : document);
   if (!lesson || !host) return null;
-  const dismiss = () => { dismissed.current = true; setLesson(null); };
+  const dismiss = () => { dismissed.current = true; setLesson(false); };
   return createPortal(<div ref={panel} className="private-share-education" role="note">
-    <div className="private-share-education-head"><span className="private-share-education-icon"><Lock size={14} aria-hidden="true" /></span><b>{t("This is a private site")}</b><span>{t("Reminder")} {lesson.step}/3</span></div>
-    <p>{t("Use a share link to invite more people. Existing members and people with valid share links may already have access.")}</p>
+    <div className="private-share-education-head"><span className="private-share-education-icon"><Lock size={14} aria-hidden="true" /></span><b>{t("Private site — use a share link")}</b></div>
+    <p>{t("This page address /s/{slug} is only accessible to people who already have permission. To share with others, copy or create a share link in Sharing settings.", { slug })}</p>
     <div className="private-share-education-actions">
-      <button type="button" className="btn primary sm" onClick={() => { dismiss(); onCreate(); }}>{t("New share link")}</button>
-      <button type="button" className="btn sm" onClick={() => { acknowledgeShareEducation(storage(), lesson.scope, slug); dismiss(); anchor.current?.focus(); }}>{t("Got it")}</button>
+      <button type="button" className="btn primary sm" onClick={() => { dismiss(); onCreate(); }}>{t("Go to sharing")}</button>
+      <button type="button" className="btn sm" onClick={() => { dismiss(); anchor.current?.focus(); }}>{t("Got it")}</button>
+      <button type="button" className="btn sm ghost private-share-education-opt-out" onClick={() => {
+        dismissShareEducationForever(educationStorage("localStorage"));
+        window.dispatchEvent(new Event(SHARE_EDUCATION_CHANGED_EVENT));
+        dismiss(); anchor.current?.focus();
+      }}>{t("Don't remind me again")}</button>
     </div>
   </div>, host);
 }

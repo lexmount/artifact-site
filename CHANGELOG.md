@@ -5,7 +5,25 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
-Nothing yet.
+### Changed
+
+- Cloud-version links in the README and all translations now point to the current hosted address.
+
+- Share-link creation stays collapsed unless explicitly opened with New share link.
+  Quick-sharing guidance describes detailed settings and reflects current site address visibility.
+  Pending or failed visibility refreshes do not present cached access scope as current; failed reads offer retry.
+  Quick-sharing dialogs reposition after content changes to stay within short desktop viewports.
+
+- Private-site guidance stays visible until dismissed, explains the restricted `/s/` address,
+  and opens quick sharing. Reminders appear at most once per site per tab session and once
+  every 24 hours per browser, ending after three successful share-link copies or an explicit
+  "Don't remind me again" choice. Creating links and copying passcodes/site addresses do not count.
+  Cross-tab claims and copy counts use transactional browser storage, and opt-out is stored independently.
+  Successful copy feedback and button availability do not wait for background guidance updates.
+  Browsers without usable Web Locks or IndexedDB skip automatic guidance; sharing remains available.
+- A toolbar immersive-preview action opens the viewed version in a new tab without platform
+  controls, retaining the preview's access checks and sandbox CSP. At widths up to 480px,
+  toolbar metadata and actions use two rows to keep version and action controls reachable.
 
 ## 0.4.0 — 2026-09-24
 

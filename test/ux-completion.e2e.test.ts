@@ -1,3 +1,4 @@
+import { SHARE_EDUCATION_DATABASE } from "@/lib/share-education";
 import { mkdir } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Browser } from "puppeteer-core";
@@ -103,7 +104,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("UX completion brow
       await context.close();
     }
   });
-  it("dismisses guidance once per visit, preserves three acknowledgements, and contains the mobile sheet", async () => {
+  it("dismisses guidance with one acknowledgement and contains the mobile sheet", async () => {
     const user = await upsertUser({authProvider:"ux-test", providerSubject:createId("subject"), email:`${createId("user")}@example.com`, emailVerified:true});
     const {cookie} = await mintSession(new Request(base!), user.id);
     const headers = {cookie:cookie.split(";")[0], origin:base!, "content-type":"application/json"};
@@ -116,18 +117,13 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("UX completion brow
     await context.setCookie({name, value, domain:new URL(base!).hostname, path:"/"});
     const page = await context.newPage();
     await page.setViewport({width:1280,height:800});
-    for (let visit = 1; visit <= 3; visit++) {
-      await page.goto(`${base}/s/${site.slug}?lang=en`, {waitUntil:"domcontentloaded"});
-      await page.waitForSelector(".private-share-education");
-      expect(await page.$eval(".private-share-education-head", el => el.textContent)).toContain(`${visit}/3`);
-      expect(await page.$eval(".private-share-education", el => el.parentElement?.className)).not.toBe("fs-bar");
-      await page.click(".private-share-education-actions button:last-child");
-      await page.waitForSelector(".private-share-education", {hidden:true});
-    }
-    await Promise.all([
-      page.waitForResponse(response => response.url().includes("/api/me/share-education")),
-      page.reload({waitUntil:"domcontentloaded"}),
-    ]);
+    await page.goto(`${base}/s/${site.slug}?lang=en`, {waitUntil:"networkidle2"});
+    await page.waitForSelector(".private-share-education");
+    expect(await page.$eval(".private-share-education-head", el => el.textContent)).toContain("Private site — use a share link");
+    expect(await page.$eval(".private-share-education", el => el.parentElement?.className)).not.toBe("fs-bar");
+    await page.click(".private-share-education-actions button:nth-child(2)");
+    await page.waitForSelector(".private-share-education", {hidden:true});
+    await page.reload({waitUntil:"networkidle2"});
     expect(await page.$(".private-share-education")).toBeNull();
     await page.setViewport({width:390,height:844});
     await page.click('[data-analytics-button="share"]');
@@ -200,18 +196,22 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("UX completion brow
     await page.waitForSelector('.fs-handle[aria-expanded="false"]');
     await page.click(".comment-rail-toggle");
     await page.waitForSelector('.comment-rail[data-collapsed="false"]');
-    // Server history, rather than the current browser's acknowledgement count, suppresses teaching.
+    // Creating links does not complete browser-local copy education.
     let shareUrl = "";
     for (let n = 0; n < 3; n++) {
       const response = await fetch(`${base}/api/sites/${site.slug}/shares`, {method:"POST", headers, body:JSON.stringify({policy:"public"})});
       expect(response.status).toBe(201);
       shareUrl = (await response.json()).url;
     }
-    await page.evaluate(() => localStorage.clear());
-    const history = page.waitForResponse(response => response.url().includes("/api/me/share-education"));
+    await page.evaluate(async database => {
+      localStorage.clear(); sessionStorage.clear();
+      await new Promise<void>((resolve,reject) => {
+        const request=indexedDB.deleteDatabase(database);
+        request.onsuccess=()=>resolve(); request.onerror=()=>reject(request.error);
+      });
+    }, SHARE_EDUCATION_DATABASE);
     await page.reload({waitUntil:"networkidle2"});
-    expect((await (await history).json()).linksCreated).toBe(3);
-    expect(await page.$(".private-share-education")).toBeNull();
+    await page.waitForSelector(".private-share-education");
     await page.goto(shareUrl, {waitUntil:"networkidle2"});
     await page.waitForFunction(() => {
       const logo = document.querySelector<HTMLImageElement>(".viewer-brand-logo img");

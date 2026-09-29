@@ -341,7 +341,8 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
           await page.evaluate(() => Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async(value:string)=>{document.documentElement.dataset.copiedUrl=value;}}}));
           await page.click(`${selector} button`);
           expect(await page.evaluate(() => document.documentElement.dataset.copiedUrl)).toBe(share.url);
-          expect(await page.$eval(`${selector} button`, e => e.textContent)).toContain(locale === "en" ? "Copied" : "已复制");
+          // Copy completion also waits for the browser-wide education lock.
+          await page.waitForFunction((selector, label) => document.querySelector(`${selector} button`)?.textContent?.includes(label), {}, selector, locale === "en" ? "Copied" : "已复制");
           const target = context.waitForTarget(t => t.type() === "page" && t.url() === share.url);
           await page.focus(`${selector} a`);
           await page.keyboard.press("Enter");

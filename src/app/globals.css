@@ -1693,7 +1693,12 @@ fieldset.share-link-controls { border: 0; padding: 0; margin: 12px 0 0; min-widt
 .fs-handle:hover svg { opacity: .96; }
 .fs-handle:focus-visible { outline: 1px solid color-mix(in srgb, CanvasText 76%, transparent); outline-offset: 1px; box-shadow: 0 0 0 3px color-mix(in srgb, Canvas 58%, transparent), 0 1px 4px rgb(23 26 23 / .14); }
 .fs-handle:focus-visible svg { opacity: 1; }
-.fs-bar .btn.header-pin { flex: 0 0 36px; width: 36px; height: 36px; padding: 0; justify-content: center; }
+.fs-bar .btn.header-pin, .fs-bar .btn.header-immersive { flex: 0 0 36px; width: 36px; height: 36px; padding: 0; justify-content: center; }
+@media (max-width: 480px) {
+  .fs-chrome .fs-bar:has(.header-immersive) { grid-template-columns: auto minmax(0, 1fr); row-gap: 6px; }
+  .fs-chrome .fs-bar:has(.header-immersive) .header-mid { overflow: visible; }
+  .fs-chrome .fs-bar:has(.header-immersive) .controls { grid-column: 1 / -1; justify-self: stretch; justify-content: flex-end; }
+}
 .fs-bar .btn.header-pin[aria-pressed="true"] { background: var(--green); border-color: color-mix(in srgb, var(--focus) 28%, var(--line)); }
 
 .fs-bar .header-pin svg { width: 14px; height: 14px; flex-shrink: 0; }
@@ -1711,10 +1716,11 @@ fieldset.share-link-controls { border: 0; padding: 0; margin: 12px 0 0; min-widt
 
 .private-share-education { position: fixed; z-index: 65; width: min(360px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow-y: auto; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); box-shadow: 0 2px 8px rgb(23 26 23 / .12); font-family: var(--font-ui); }
 .private-share-education-head { display: flex; align-items: center; gap: 9px; font-size: 14px; }
-.private-share-education-head > span:last-child { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.private-share-education-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--green); color: var(--focus); }
-.private-share-education p { margin: 10px 0 14px; color: var(--muted); font-size: 13px; line-height: 1.55; }
-.private-share-education-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.private-share-education-icon { flex-shrink: 0; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--green); color: var(--focus); }
+.private-share-education p { overflow-wrap: anywhere; margin: 10px 0 14px; color: var(--ink-soft); font-size: 13px; line-height: 1.55; }
+.private-share-education-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.private-share-education-opt-out { margin-left: auto; color: var(--ink-soft); }
+@media (pointer: coarse) { .private-share-education-actions .btn { min-height: 44px; } }
 
 .share-quick { margin: 0; padding: 0; max-width: none; color: var(--ink); }
 .share-quick::backdrop { background: transparent; }
@@ -1732,6 +1738,7 @@ fieldset.share-link-controls { border: 0; padding: 0; margin: 12px 0 0; min-widt
 .share-quick-private svg { flex: none; margin-top: 2px; }
 .share-quick-manual { display: grid; gap: 7px; margin: -4px 20px 16px; padding: 10px 12px; background: var(--hover); color: var(--muted); font-size: 12px; }
 .share-quick-manual input { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+.share-quick-visibility-error { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 0 20px; }
 .share-quick-foot { display: flex; align-items: center; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); background: var(--hover); }
 .share-quick-foot > div { display: grid; margin-right: auto; }
 .share-quick-foot b { font-size: 13px; }

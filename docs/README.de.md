@@ -34,7 +34,7 @@ Heute stehen unzählige KI-Agenten zur Auswahl, doch ihre Ergebnisse verteilen s
 
 Sie können artifact-site selbst hosten oder die von Lexmount gehostete Cloud-Version nutzen.
 
-> **[Cloud-Version nutzen](https://artifact-site.app.lexmount.com/)** – von Lexmount gehostet, ohne eigene Bereitstellung. Ziehen Sie eine Datei hinein, um sie zu veröffentlichen und einen teilbaren Link zu erhalten. Laden Sie Dateien ohne Anmeldung hoch oder **melden Sie sich mit Google oder GitHub an**, um Ihre Sites zu behalten, in Ordnern zu organisieren und festzulegen, wer jeden Link öffnen darf.
+> **[Cloud-Version nutzen](https://yours.lexmount.com/artifact-site)** – von Lexmount gehostet, ohne eigene Bereitstellung. Ziehen Sie eine Datei hinein, um sie zu veröffentlichen und einen teilbaren Link zu erhalten. Laden Sie Dateien ohne Anmeldung hoch oder **melden Sie sich mit Google oder GitHub an**, um Ihre Sites zu behalten, in Ordnern zu organisieren und festzulegen, wer jeden Link öffnen darf.
 >
 > Anonyme Uploads laufen nach einigen Tagen ab.
 
@@ -88,7 +88,7 @@ Gehostete Seiten laufen in einer Sandbox und können die Anmeldesitzung der Plat
 
 ## Schnellstart (lokale Installation)
 
-Sie können die [Cloud-Version](https://artifact-site.app.lexmount.com/) ohne Installation nutzen. Für eine lokale Installation führen Sie die folgenden drei Befehle aus. Sie benötigen Git, Make, Bash, Docker 24+ und das Compose-Plugin 2.24+. Unter macOS nutzen Sie Docker Desktop; unter Windows führen Sie die Befehle in WSL2 mit aktivierter WSL-Integration von Docker Desktop aus. Node, eine Domain oder ein Identitätsanbieter sind nicht erforderlich.
+Sie können die [Cloud-Version](https://yours.lexmount.com/artifact-site) ohne Installation nutzen. Für eine lokale Installation führen Sie die folgenden drei Befehle aus. Sie benötigen Git, Make, Bash, Docker 24+ und das Compose-Plugin 2.24+. Unter macOS nutzen Sie Docker Desktop; unter Windows führen Sie die Befehle in WSL2 mit aktivierter WSL-Integration von Docker Desktop aus. Node, eine Domain oder ein Identitätsanbieter sind nicht erforderlich.
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site

@@ -17,23 +17,30 @@ import PrivateShareEducation from "@/components/private-share-education";
 import QuickShareOptions from "@/components/quick-share-options";
 import { errorText, readShares, reusableQuickShare, VISIBILITY_LABEL } from "@/components/share-model";
 import type { Visibility } from "@/lib/types";
-import { recordShareLinkCreated } from "@/lib/share-education";
+import { copyShareLink } from "@/lib/share-education";
 
 
 
 /** Writes are cookie-authenticated, so the server checks Origin exactly on each one. */
 const writeHeaders = () => ({ "content-type": "application/json", origin: window.location.origin });
 
-export default function SharePanel({ slug, visibility: initialVisibility, onOpenChange }: {
+export default function SharePanel({ slug, visibility: initialVisibility, onOpenChange, onEducationOpenChange }: {
   slug: string;
   visibility: Visibility;
   /** While the drawer is open the parent must stop auto-collapsing the action bar — see the drawerHost comment in version-history. */
   onOpenChange?: (open: boolean) => void;
+  onEducationOpenChange?: (open: boolean) => void;
 }) {
   const t = useT();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
+  const [visibilityStatus, setVisibilityStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [visibilityRetry, setVisibilityRetry] = useState(0);
+  function openQuick() {
+    setVisibilityStatus("loading");
+    setQuickOpen(true);
+  }
   const [educationOpen, setEducationOpen] = useState(false);
   const [educationDismissed, setEducationDismissed] = useState(false);
   const [quickBusy, setQuickBusy] = useState<"public" | "login" | null>(null);
@@ -58,6 +65,7 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
   }, [t]);
   const close = useCallback(() => { if (canLeave()) setOpen(false); }, [canLeave]);
   // Links, site membership and external visit data are separate peer tasks.
+  const [startCreating, setStartCreating] = useState(false);
   const [tab, setTab] = useState<"links" | "site" | "views">("links");
   // Starts true: the drawer only mounts its body when open, and the first thing it does is fetch.
   const [loading, setLoading] = useState(true);
@@ -72,6 +80,7 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
     setEducationDismissed(true);
     setEducationOpen(false);
     setQuickOpen(false);
+    setStartCreating(nextTab === "links");
     setTab(nextTab);
     setOpen(true);
   }, []);
@@ -97,7 +106,7 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
   }, [open, close]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !quickOpen) return;
     // Every setState happens in an async continuation, never synchronously in the effect body —
     // the latter is what react-hooks/set-state-in-effect flags, since it forces a second render
     // pass before paint. `alive` drops results from a drawer the user already closed.
@@ -108,22 +117,32 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
         if (!response.ok) throw new Error("Sharing settings unavailable");
         const s = await response.json();
         if (!alive) return;
-        if (s.visibility) setVisibility(s.visibility);
+        if (!["private", "public", "unlisted"].includes(s.visibility)) throw new Error("Invalid visibility");
+        setVisibility(s.visibility);
+        setVisibilityStatus("ready");
         setSiteId(s.siteId ?? "");
       } catch {
-        if (alive) setError(t("Failed to load sharing settings"));
+        if (alive) {
+          setVisibilityStatus("error");
+          if (open) setError(t("Failed to load sharing settings"));
+        }
       } finally {
         if (alive) setLoading(false);
       }
     })();
     return () => { alive = false; };
-  }, [open, slug, t]);
+  }, [open, quickOpen, visibilityRetry, slug, t]);
 
   // Tell the parent the drawer is open. Report a close on unmount too, so the parent never keeps the "a drawer is open" lock forever.
   useEffect(() => {
     onOpenChange?.(open || quickOpen || educationOpen);
     return () => onOpenChange?.(false);
   }, [open, quickOpen, educationOpen, onOpenChange]);
+
+  useEffect(() => {
+    onEducationOpenChange?.(educationOpen);
+    return () => onEducationOpenChange?.(false);
+  }, [educationOpen, onEducationOpenChange]);
 
   useLayoutEffect(() => {
     if (!quickOpen) return;
@@ -142,6 +161,9 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
       panel.style.top = `${Math.max(margin, Math.min(anchor.bottom + 8, window.innerHeight - panel.offsetHeight - margin))}px`;
     };
     position();
+    // Async visibility, errors and copy feedback can change the dialog height.
+    const observer = new ResizeObserver(position);
+    observer.observe(dialog);
     // Start at the primary task, with Close as a fallback while a copy request is pending.
     const initialFocus = dialog.querySelector<HTMLElement>(".share-quick-options button:not(:disabled)")
       ?? dialog.querySelector<HTMLElement>("button[aria-label]");
@@ -149,6 +171,7 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
     window.addEventListener("resize", position);
     window.addEventListener("scroll", position, true);
     return () => {
+      observer.disconnect();
       dialog.close();
       window.removeEventListener("resize", position);
       window.removeEventListener("scroll", position, true);
@@ -174,10 +197,9 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
         const body = await res.json().catch(() => ({})) as { url?: string; error?: string };
         if (!res.ok || !body.url) throw new Error(body.error ?? t("Failed to create"));
         url = body.url;
-        recordShareLinkCreated();
       }
       try {
-        await navigator.clipboard.writeText(url);
+        await copyShareLink(url);
       } catch {
         setQuickManualUrl(url);
         return;
@@ -209,7 +231,7 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
   }
   function goPrivate() {
     if (!canLeave()) return;
-    setTab("site"); stageSite({visibility: "private"});
+    setStartCreating(false); setTab("site"); stageSite({visibility: "private"});
   }
   useEffect(() => {
     if (!open || !siteDraft) return;
@@ -239,8 +261,8 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
 
   return (
     <>
-      <button ref={quickButtonRef} className="btn primary" data-analytics-button="share" aria-haspopup="dialog" aria-expanded={quickOpen || open} onClick={() => { setEducationDismissed(true); setEducationOpen(false); setQuickOpen(value => !value); }}><Share2 size={14} /> {t("Sharing")}</button>
-      {visibility === "private" && !educationDismissed && <PrivateShareEducation slug={slug} anchor={quickButtonRef} onCreate={() => openAdvanced("links")} onOpenChange={setEducationOpen} />}
+      <button ref={quickButtonRef} className="btn primary" data-analytics-button="share" aria-haspopup="dialog" aria-expanded={quickOpen || open} onClick={() => { setEducationDismissed(true); setEducationOpen(false); if (quickOpen) setQuickOpen(false); else openQuick(); }}><Share2 size={14} /> {t("Sharing")}</button>
+      {initialVisibility === "private" && visibility === "private" && !educationDismissed && <PrivateShareEducation slug={slug} anchor={quickButtonRef} onCreate={() => { setEducationDismissed(true); setEducationOpen(false); openQuick(); }} onOpenChange={setEducationOpen} />}
       {quickOpen && host && createPortal(
           <dialog ref={quickDialogRef} className="share-quick" aria-label={t("Sharing")}
             onCancel={(event) => { event.preventDefault(); setQuickOpen(false); }}
@@ -255,10 +277,11 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
             }}>
             <header className="share-quick-head"><div><b>{t("Sharing")}</b><span>{t("Quick sharing")}</span></div><button type="button" className="btn sm ghost" aria-label={t("Close")} onClick={() => setQuickOpen(false)}><X size={14} /></button></header>
             <QuickShareOptions busy={quickBusy} copied={quickCopied} onCopy={createQuickLink} />
-            {visibility === "private" && <p className="share-quick-private"><Lock size={13} /> {t("This private site stays private at its site address. A quick link grants separate access to whoever receives it.")}</p>}
+            {visibilityStatus === "ready" && visibility === "private" && <p className="share-quick-private"><Lock size={13} /> {t("This private site stays private at its site address. A quick link grants separate access to whoever receives it.")}</p>}
+            {visibilityStatus === "error" && <p className="share-error share-quick-visibility-error" role="alert">{t("Could not confirm current site address visibility.")} <button type="button" className="btn sm" onClick={() => { setVisibilityStatus("loading"); setVisibilityRetry(value => value + 1); }}>{t("Try again")}</button></p>}
             {quickError && <p className="share-error" role="alert">{quickError}</p>}
             {quickManualUrl && <div className="share-quick-manual" role="status"><span>{t("The link is ready, but automatic copy failed. Copy it manually:")}</span><input readOnly value={quickManualUrl} onFocus={(event) => event.currentTarget.select()} aria-label={t("Share link")} /></div>}
-            <footer className="share-quick-foot"><div><b>{t("Need more sharing settings?")}</b><span>{t("Create a custom link or adjust site permissions.")}</span></div><button type="button" className="btn primary sm" onClick={() => openAdvanced("links")}>{t("New share link")}</button><button type="button" className="btn sm" onClick={() => openAdvanced("site")}>{t("Permission settings")}</button></footer>
+            <footer className="share-quick-foot"><div><b>{t("Need more detailed sharing settings?")}</b><span>{t("Create share links, change site address visibility (currently {visibility}), or add site collaborators.", { visibility: visibilityStatus === "ready" ? t(visibility === "private" ? "Private" : "Public") : t(visibilityStatus === "loading" ? "Checking…" : "Unconfirmed") })}</span></div><button type="button" className="btn primary sm" onClick={() => openAdvanced("links")}>{t("New share link")}</button><button type="button" className="btn sm" onClick={() => openAdvanced("site")}>{t("Permission settings")}</button></footer>
           </dialog>, host,
       )}
       {open && host && createPortal(
@@ -279,16 +302,16 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
               </div>
             </header>
             <div className="drawer-tabs" role="tablist" aria-label={t("Sharing")}>
-              <button type="button" role="tab" aria-selected={tab === "links"} onClick={() => { if (tab !== "links" && canLeave()) {setTab("links"); setNotice(null); setError(null); } }}>{t("Share links")}</button>
-              <button type="button" role="tab" aria-selected={tab === "site"} onClick={() => { if (tab !== "site" && canLeave()) {setTab("site"); setNotice(null); setError(null); } }}>{t("People and the site")}</button>
-              <button type="button" role="tab" aria-selected={tab === "views"} onClick={() => { if (tab !== "views" && canLeave()) {setTab("views"); setNotice(null); setError(null); } }}>{t("View history")}</button>
+              <button type="button" role="tab" aria-selected={tab === "links"} onClick={() => { if (tab !== "links" && canLeave()) {setStartCreating(false); setTab("links"); setNotice(null); setError(null); } }}>{t("Share links")}</button>
+              <button type="button" role="tab" aria-selected={tab === "site"} onClick={() => { if (tab !== "site" && canLeave()) {setStartCreating(false); setTab("site"); setNotice(null); setError(null); } }}>{t("People and the site")}</button>
+              <button type="button" role="tab" aria-selected={tab === "views"} onClick={() => { if (tab !== "views" && canLeave()) {setStartCreating(false); setTab("views"); setNotice(null); setError(null); } }}>{t("View history")}</button>
             </div>
             <div className="drawer-body share-body">
               {loading && <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}
               {error && <p className="drawer-error" role="alert">{error}</p>}
               {notice && <p className="share-warn" role="status">{notice}</p>}
 
-              {tab === "links" && <ShareLinks slug={slug} visibility={visibility} onRequestPrivate={goPrivate} onDirtyChange={onDirtyChange} />}
+              {tab === "links" && <ShareLinks initialCreating={startCreating} slug={slug} visibility={visibility} onRequestPrivate={goPrivate} onDirtyChange={onDirtyChange} />}
 
               {tab === "views" && <ShareViews slug={slug} />}
 

@@ -34,7 +34,7 @@
 
 你可以自行部署 artifact-site，也可以直接使用由 Lexmount 托管的云端版。
 
-> **[使用云端版](https://artifact-site.app.lexmount.com/)** — 由 Lexmount 托管，无需自行部署。拖入文件即可发布并获取分享链接。你可以免登录上传，也可以**使用 Google 或 GitHub 登录**，长期保留作品、用文件夹整理，并控制谁能打开每个链接。
+> **[使用云端版](https://yours.lexmount.com/artifact-site)** — 由 Lexmount 托管，无需自行部署。拖入文件即可发布并获取分享链接。你可以免登录上传，也可以**使用 Google 或 GitHub 登录**，长期保留作品、用文件夹整理，并控制谁能打开每个链接。
 >
 > 匿名发布的内容会在几天后过期。
 
@@ -88,7 +88,7 @@ Claude Artifacts 和 ChatGPT Sites 将创作与托管分享结合起来。artifa
 
 ## 快速开始（本地部署）
 
-也可以直接使用[云端版](https://artifact-site.app.lexmount.com/)，无需安装。本地部署执行下面三条命令，需要 Git、Make、Bash、Docker 24+ 和 Compose 插件 2.24+。macOS 可使用 Docker Desktop；Windows 请在 WSL2 中执行，并启用 Docker Desktop 的 WSL 集成。无需安装 Node，也无需配置域名或登录服务。
+也可以直接使用[云端版](https://yours.lexmount.com/artifact-site)，无需安装。本地部署执行下面三条命令，需要 Git、Make、Bash、Docker 24+ 和 Compose 插件 2.24+。macOS 可使用 Docker Desktop；Windows 请在 WSL2 中执行，并启用 Docker Desktop 的 WSL 集成。无需安装 Node，也无需配置域名或登录服务。
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site

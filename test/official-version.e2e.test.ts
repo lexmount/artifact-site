@@ -301,7 +301,8 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     await page.waitForFunction(selector => document.querySelector(selector)?.textContent?.includes("Official v2"), {}, `${row} .version-choice`);
     expect(new URL(page.url()).pathname).toBe("/me");
     await shot("my-sites-desktop");
-    await page.click(`${row} .version-choice`);
+    // Saving the designation refreshes the row; locate it again if the DOM is replaced.
+    await page.locator(`${row} .version-choice`).click();
     await page.waitForFunction(() => [...document.querySelectorAll('.more-menu:not([hidden]) a')].some(el => el.textContent === "View official version"));
     expect(await page.$eval('.more-menu:not([hidden]) a', el => el.getAttribute("href"))).toContain(fixture.second.versionId);
     await clickText("Remove official designation");
@@ -334,7 +335,7 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     await page.setViewport({ width: 1440, height: 960 });
   }, 60000);
 
-  it("keeps version controls in one toolbar row and confirms against the visible revision", async () => {
+  it("keeps responsive version controls reachable and confirms against the visible revision", async () => {
     await page.setViewport({ width: 1440, height: 960 });
     await page.goto(base!, { waitUntil: "networkidle2" });
     const fixture = await page.evaluate(async () => {
@@ -384,10 +385,35 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     await page.waitForSelector(".official-version-trigger.is-official");
     await page.click('.official-feedback button');
     await shot("compact-official-desktop");
-    for (const width of [820, 390]) {
+    for (const width of [820, 480, 390, 320]) {
       await page.setViewport({ width, height: 844 });
       await page.waitForSelector(".official-version-trigger", { visible: true });
-      expect(await page.$eval(".fs-bar", el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(72);
+      // Height observation and the handle's slide must settle after crossing the row breakpoint.
+      await page.waitForFunction(() => {
+        const bar = document.querySelector(".fs-bar")!.getBoundingClientRect();
+        const handle = document.querySelector(".fs-handle")!.getBoundingClientRect();
+        return Math.abs(handle.top - bar.bottom) < 1;
+      });
+      // At <=480px, metadata and actions occupy separate rows so every control stays reachable.
+      expect(await page.$eval(".fs-bar", el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(width <= 480 ? 112 : 72);
+      const layout = await page.evaluate(() => {
+        const version = document.querySelector(".official-version-trigger")!.getBoundingClientRect();
+        const controls = document.querySelector(".fs-bar .controls")!.getBoundingClientRect();
+        const actions = [...document.querySelectorAll<HTMLElement>(".fs-bar .controls > a, .fs-bar .controls > button")]
+          .filter(el => el.getBoundingClientRect().width > 0);
+        return {
+          versionBottom: version.bottom, controlsTop: controls.top,
+          unreachableActions: actions.flatMap(el => {
+            const r = el.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return r.left >= 0 && r.right <= innerWidth && r.width > 0 && r.height > 0 && el.contains(hit)
+              ? [] : [{label:el.getAttribute("aria-label") ?? el.textContent, left:r.left, right:r.right, hit:hit?.className, top:r.top}];
+          }),
+        };
+      });
+      if (width <= 480) expect(layout.controlsTop).toBeGreaterThanOrEqual(layout.versionBottom);
+      if (layout.unreachableActions.length) await shot(`blocked-controls-${width}`);
+      expect(layout.unreachableActions, `toolbar actions must remain reachable at ${width}px`).toEqual([]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.click(".official-version-trigger");
       const bounds = await page.$eval('.more-menu:not([hidden])', el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right }; });
@@ -395,6 +421,7 @@ describe.skipIf(!base)("official version browser acceptance", () => {
       expect(bounds.right).toBeLessThanOrEqual(width);
       await shot(`compact-menu-${width}`);
       await page.keyboard.press("Escape");
+      await page.waitForSelector('.more-menu:not([hidden])', {hidden:true});
     }
     await page.setViewport({ width: 1440, height: 960 });
     await page.click(".official-version-trigger");
