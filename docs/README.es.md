@@ -34,7 +34,7 @@ Hoy hay muchísimos agentes de IA entre los que elegir, pero sus resultados qued
 
 Puedes alojar artifact-site por tu cuenta o usar la versión en la nube alojada por Lexmount.
 
-> **[Usa la versión en la nube](https://artifact-site.app.lexmount.com/)** — alojada por Lexmount, sin necesidad de desplegarla por tu cuenta. Arrastra y suelta un archivo para publicarlo y obtener un enlace para compartir. Sube archivos sin iniciar sesión o **inicia sesión con Google o GitHub** para conservar tus sitios, organizarlos en carpetas y controlar quién puede abrir cada enlace.
+> **[Usa la versión en la nube](https://yours.lexmount.com/artifact-site)** — alojada por Lexmount, sin necesidad de desplegarla por tu cuenta. Arrastra y suelta un archivo para publicarlo y obtener un enlace para compartir. Sube archivos sin iniciar sesión o **inicia sesión con Google o GitHub** para conservar tus sitios, organizarlos en carpetas y controlar quién puede abrir cada enlace.
 >
 > Las subidas anónimas caducan a los pocos días.
 
@@ -88,7 +88,7 @@ Las páginas alojadas se ejecutan en un entorno aislado y no pueden usar la sesi
 
 ## Inicio rápido (despliegue local)
 
-También puedes usar la [versión en la nube](https://artifact-site.app.lexmount.com/) sin instalar nada. Para desplegarlo localmente, ejecuta los tres comandos siguientes. Necesitas Git, Make, Bash, Docker 24+ y el plugin de Compose 2.24+. En macOS, usa Docker Desktop; en Windows, ejecuta los comandos dentro de WSL2 con la integración WSL de Docker Desktop activada. No necesitas instalar Node ni configurar un dominio o proveedor de identidad.
+También puedes usar la [versión en la nube](https://yours.lexmount.com/artifact-site) sin instalar nada. Para desplegarlo localmente, ejecuta los tres comandos siguientes. Necesitas Git, Make, Bash, Docker 24+ y el plugin de Compose 2.24+. En macOS, usa Docker Desktop; en Windows, ejecuta los comandos dentro de WSL2 con la integración WSL de Docker Desktop activada. No necesitas instalar Node ni configurar un dominio o proveedor de identidad.
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site

@@ -56,4 +56,4 @@ PUBLISH_E2E_URL="$base" PUBLISH_E2E_TOKEN=image-mcp-acceptance-token VIEWER_E2E_
 
 # Seed identities only in this disposable database, then exercise real role-aware browser pages.
 pg_port="$(docker port "$pg" 5432/tcp | awk -F: '{print $NF}')"
-RBAC_E2E_ADMIN_TOKEN=image-mcp-acceptance-token RBAC_E2E_URL="$base" ARTIFACT_DB_DRIVER=postgres ARTIFACT_DATABASE_URL="postgres://test:test@127.0.0.1:$pg_port/test?sslmode=disable" npx vitest run test/rbac.e2e.test.ts test/navigation-performance.e2e.test.ts test/ux-completion.e2e.test.ts
+SHARE_EDUCATION_E2E_URL="$base" RBAC_E2E_ADMIN_TOKEN=image-mcp-acceptance-token RBAC_E2E_URL="$base" ARTIFACT_DB_DRIVER=postgres ARTIFACT_DATABASE_URL="postgres://test:test@127.0.0.1:$pg_port/test?sslmode=disable" npx vitest run test/rbac.e2e.test.ts test/navigation-performance.e2e.test.ts test/ux-completion.e2e.test.ts test/share-education.e2e.test.ts

@@ -34,7 +34,7 @@
 
 artifact-site はセルフホストすることも、Lexmount がホストするクラウド版を利用することもできます。
 
-> **[クラウド版を利用する](https://artifact-site.app.lexmount.com/)** — Lexmount がホストするため、自分でデプロイする必要はありません。ファイルをドラッグ＆ドロップするだけで公開され、共有リンクを取得できます。サインインせずにアップロードすることも、**Google または GitHub でサインイン**して、サイトを保存し、フォルダーで整理し、各リンクを開ける人を管理することもできます。
+> **[クラウド版を利用する](https://yours.lexmount.com/artifact-site)** — Lexmount がホストするため、自分でデプロイする必要はありません。ファイルをドラッグ＆ドロップするだけで公開され、共有リンクを取得できます。サインインせずにアップロードすることも、**Google または GitHub でサインイン**して、サイトを保存し、フォルダーで整理し、各リンクを開ける人を管理することもできます。
 >
 > 匿名でアップロードした内容は数日で期限切れになります。
 
@@ -88,7 +88,7 @@ Web プロジェクトはアップロード前に静的ファイルへビルド�
 
 ## クイックスタート（ローカル環境）
 
-インストール不要の[クラウド版](https://artifact-site.app.lexmount.com/)を利用できます。ローカルにデプロイするには、以下の 3 コマンドを実行します。Git、Make、Bash、Docker 24 以上、Compose プラグイン 2.24 以上が必要です。macOS では Docker Desktop を、Windows では Docker Desktop の WSL 連携を有効にした WSL2 を使って実行してください。Node、ドメイン、認証プロバイダーの設定は不要です。
+インストール不要の[クラウド版](https://yours.lexmount.com/artifact-site)を利用できます。ローカルにデプロイするには、以下の 3 コマンドを実行します。Git、Make、Bash、Docker 24 以上、Compose プラグイン 2.24 以上が必要です。macOS では Docker Desktop を、Windows では Docker Desktop の WSL 連携を有効にした WSL2 を使って実行してください。Node、ドメイン、認証プロバイダーの設定は不要です。
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site

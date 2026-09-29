@@ -16,7 +16,7 @@ import {
   shareConflictCode, readListedGrants, readMinted, readShares, relTime, removePerson, shareStateOf,
 } from "@/components/share-model";
 import type { SharePolicy, Visibility } from "@/lib/types";
-import { recordShareLinkCreated } from "@/lib/share-education";
+import { copyShareLink } from "@/lib/share-education";
 
 /** All write routes are cookie-authenticated; the server checks Origin exactly on every one. */
 const writeHeaders = () => ({ "content-type": "application/json", origin: window.location.origin });
@@ -41,7 +41,7 @@ function CopyButton({ value, label, passcode = false }: { value: string; label: 
         void (async () => {
           setFailed(false);
           setDone(false);
-          try { await navigator.clipboard.writeText(value); } catch { setFailed(true); return; }
+          try { if (passcode) await navigator.clipboard.writeText(value); else await copyShareLink(value); } catch { setFailed(true); return; }
           track("share_link_copy", { share_type: "share_link" });
           setDone(true);
           window.setTimeout(() => setDone(false), 1600);
@@ -55,8 +55,9 @@ function CopyButton({ value, label, passcode = false }: { value: string; label: 
   );
 }
 
-export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirtyChange }: {
+export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirtyChange, initialCreating = false }: {
   slug: string;
+  initialCreating?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
   visibility: Visibility;
   /** The "switch to private" button in the warning — the visibility dropdown in the upper half is what actually persists it. */
@@ -81,7 +82,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
   const [asOf, setAsOf] = useState(0);
 
   // The create form. Defaults to "Signed-in users" — the most common intent, and tighter than public.
-  const [creating, setCreating] = useState(true);
+  const [creating, setCreating] = useState(initialCreating);
   const [policy, setPolicy] = useState<SharePolicy>("login");
   const [mode,setMode] = useState<"view"|"comment"|"edit">("view");
   const [versionId,setVersionId] = useState("");
@@ -140,7 +141,6 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
 
       const fresh = readMinted(body, window.location.origin);
       if (!fresh) throw new Error(t("The share was created, but the link could not be read from the response. Revoke it and create a new one."));
-      recordShareLinkCreated();
       const shareId = fresh.shareId;
       setMinted(fresh);
       if (shareId) setHeld((h) => ({ ...h, [shareId]: { url: fresh.url, passcode: fresh.passcode } }));

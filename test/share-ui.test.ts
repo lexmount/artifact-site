@@ -158,7 +158,8 @@ describe("quick sharing is idempotent", () => {
     expect(panel).toContain('fetch(`/api/sites/${slug}/shares`, { cache: "no-store" })');
     expect(panel).toContain("reusableQuickShare(readShares(listBody), policy, Date.now())");
     expect(panel).toContain("expiresInDays: 30");
-    expect(panel.indexOf("recordShareLinkCreated();")).toBeLessThan(panel.indexOf("navigator.clipboard.writeText(url)"));
+    expect(panel).toContain("await copyShareLink(url)");
+    expect(panel).not.toContain("recordShareLinkCreated");
     expect(panel).toContain("setQuickManualUrl(url)");
   });
 });
@@ -494,8 +495,7 @@ describe("the two hard-constraint notices must actually render", () => {
 });
 
 describe("defaults and options for a new share link", () => {
-  it("opens the new-link editor first and keeps it before the existing-link list", () => {
-    expect(links).toContain("useState(true)");
+  it("keeps the expanded new-link editor before the existing-link list", () => {
     expect(links.indexOf('className="share-new is-active"')).toBeLessThan(links.indexOf('className="share-links"'));
     expect(links).toContain('onClick={openCreate}');
     expect(links).toContain('firstCreateField.current?.focus()');

@@ -3,6 +3,7 @@ import { siteFetch as fetch } from "@/lib/share-context";
 import { useSitePermissions } from "@/lib/site-permissions";
 
 
+import ImmersivePreview from "@/components/immersive-preview";
 import PreviewNavigation from "@/components/preview-navigation";
 import CommentWorkspace from "@/components/comments/anchored-workspace";
 
@@ -261,7 +262,7 @@ export default function SiteViewer(props: {
     if (next) revealBar();
   }, [barPinned, revealBar]);
   /** Explicit collapse (clicking the handle) — bypasses focusHeld, otherwise focus still sitting on the handle after the click would keep the bar open forever. */
-  const collapseBar = useCallback(() => { cancelHide(); setBarOpen(false); }, [cancelHide]);
+  const collapseBar = useCallback(() => { cancelHide(); if (openDrawers.current.has("share-education")) return; setBarOpen(false); }, [cancelHide]);
 
   const setDrawerOpen = useCallback((id: string, open: boolean) => {
     const drawers = openDrawers.current;
@@ -272,6 +273,7 @@ export default function SiteViewer(props: {
     else if (effect === "hide" && modeAutoHides(barMode) && !barPinned) scheduleHide();
   }, [revealBar, scheduleHide, barMode, barPinned]);
   const onHistoryOpen = useCallback((open: boolean) => setDrawerOpen("history", open), [setDrawerOpen]);
+  const onEducationOpen = useCallback((open: boolean) => setDrawerOpen("share-education", open), [setDrawerOpen]);
   const onSharingOpen = useCallback((open: boolean) => setDrawerOpen("sharing", open), [setDrawerOpen]);
   const onMenuOpen = useCallback((open: boolean) => setDrawerOpen("menu", open), [setDrawerOpen]);
   const onVersionsOpen = useCallback((open: boolean) => setDrawerOpen("versions", open), [setDrawerOpen]);
@@ -509,6 +511,7 @@ export default function SiteViewer(props: {
                 );
               })}
             </div>
+            <ImmersivePreview slug={slug} versionId={viewedVersion} />
             <button type="button" className="btn icon-only header-pin" aria-pressed={barPinned}
               aria-label={barPinned ? t("Unpin action bar") : t("Pin action bar")}
               aria-describedby={pinTip && barOpen ? pinTipId : undefined}
@@ -523,7 +526,7 @@ export default function SiteViewer(props: {
             {!mayEdit && permissions.needsLogin && kind !== "document" && (
               <LockedAction label={t("Edit")} icon={<Pencil size={14} />} hint={t("Sign in required")} onOpen={() => openGate("edit")} />
             )}
-            {permissions.canManageSharing && <SharePanel key={slug} slug={slug} visibility={props.visibility} onOpenChange={onSharingOpen} />}
+            {permissions.canManageSharing && <SharePanel key={slug} slug={slug} visibility={props.visibility} onOpenChange={onSharingOpen} onEducationOpenChange={onEducationOpen} />}
             {!permissions.canManageSharing && permissions.needsLogin && (
               <LockedAction label={t("Sharing settings")} icon={<Share2 size={14} />} hint={t("Sign in required")} onOpen={() => openGate("share")} />
             )}

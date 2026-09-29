@@ -32,7 +32,7 @@ There are now so many AI agents to choose from, but their output is scattered ac
 
 You can self-host artifact-site or use the cloud version hosted by Lexmount.
 
-> **[Use the cloud version](https://artifact-site.app.lexmount.com/)** — hosted by Lexmount, with no deployment required. Drag and drop a file to publish it and get a shareable link. Upload without signing in, or **sign in with Google or GitHub** to keep your sites, organize them in folders and control who can open each link.
+> **[Use the cloud version](https://yours.lexmount.com/artifact-site)** — hosted by Lexmount, with no deployment required. Drag and drop a file to publish it and get a shareable link. Upload without signing in, or **sign in with Google or GitHub** to keep your sites, organize them in folders and control who can open each link.
 >
 > Anonymous uploads expire after a few days.
 
@@ -86,7 +86,7 @@ Hosted pages run in a sandbox and cannot use the platform's login session. Exter
 
 ## Quick start (local deployment)
 
-You can use the [cloud version](https://artifact-site.app.lexmount.com/) without installing anything. To deploy locally, run the three commands below. You need Git, Make, Bash, Docker 24+ and the Compose plugin 2.24+. On macOS, use Docker Desktop; on Windows, run the commands inside WSL2 with Docker Desktop’s WSL integration enabled. No Node installation, domain or identity provider is needed.
+You can use the [cloud version](https://yours.lexmount.com/artifact-site) without installing anything. To deploy locally, run the three commands below. You need Git, Make, Bash, Docker 24+ and the Compose plugin 2.24+. On macOS, use Docker Desktop; on Windows, run the commands inside WSL2 with Docker Desktop’s WSL integration enabled. No Node installation, domain or identity provider is needed.
 
 ```bash
 git clone https://github.com/lexmount/artifact-site.git && cd artifact-site
