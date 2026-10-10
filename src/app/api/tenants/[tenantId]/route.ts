@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { assertSessionCurrent } from "@/lib/authorized-commit";
 import { rbacTransaction, rbacQuery } from "@/lib/db";
 import { requireAdminWrite } from "@/lib/admin";
@@ -10,8 +11,12 @@ export async function PATCH(request: Request, context: Context) {
   try {
     if (!csrfSafe(request)) throw new AuthError("Cross-site request rejected");
     const { tenantId } = await context.params;
-    const body = await request.json();
     const session = await requireTenantManager(request, tenantId);
+    const body = z.object({ name: z.string().optional(), disabled: z.boolean().optional(), id: z.unknown().optional(), slug: z.unknown().optional() }).strict().parse(await request.json());
+    if (body.id !== undefined || body.slug !== undefined)
+      return json({ error: "The workspace identifier cannot be changed" }, 400);
+    if (body.disabled === true && ["init", "anonymous"].includes(tenantId))
+      return json({ error: "System workspaces cannot be disabled" }, 400);
     if (body.disabled !== undefined) await requireAdminWrite(request);
     if (body.disabled !== undefined && typeof body.disabled !== "boolean")
       return json({ error: "disabled must be boolean" }, 400);
@@ -25,6 +30,8 @@ export async function PATCH(request: Request, context: Context) {
     await rbacTransaction(async (q) => {
       await assertSessionCurrent(q, session);
       await requireTenantManager(request,tenantId,session);
+      if (body.disabled !== undefined) await requireAdminWrite(request);
+      const [before] = await q("SELECT name,disabled_at FROM tenants WHERE id=$1", [tenantId]);
       if (body.name !== undefined)
         await q("UPDATE tenants SET name=$1 WHERE id=$2", [
           body.name.trim(),
@@ -41,7 +48,7 @@ export async function PATCH(request: Request, context: Context) {
         session?.userId ?? null,
         "tenant.update",
         tenantId,
-        "settings changed",
+        JSON.stringify({ before, after: { name: body.name ?? before.name, disabled: body.disabled ?? (before.disabled_at != null) } }),
       );
     });
     return json({ ok: true });

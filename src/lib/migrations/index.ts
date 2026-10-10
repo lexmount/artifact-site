@@ -1,3 +1,4 @@
+import * as tenantSlugs from "./0017-tenant-slugs";
 import * as mainDiscussionReaders from "./0014-main-discussion-readers";
 import * as mentions from "./0013-comment-mentions";
 import * as notifications from "./0012-notifications";
@@ -23,7 +24,7 @@ export async function migrateNumbered(q: RbacQuery, dialect: "postgres" | "sqlit
   if (!(await q("SELECT id FROM schema_migrations WHERE id='0007-role-bindings'")).length) {
     await bootstrapAuthorization(q, dialect);
   }
-  for (const migration of [{ id: "0001-comments", up, statements }, { id: "0002-comment-review-indexes", ...reviewIndexes }, { id: "0003-share-token-source", ...shareRecovery }, { id: "0004-share-revision", ...shareRevision }, { id: "0005-rbac-constraints", ...rbacConstraints }, { id: "0006-comment-engagement", ...engagement }, { id: "0007-role-bindings", ...bindings }, { id: "0008-site-members-view", ...siteMembersView }, { id: "0009-authorization-cleanup", ...cleanupAuthorization }, { id: "0010-comment-attachments", ...attachments }, { id: "0011-comment-results", ...commentResults }, { id: "0012-notifications", ...notifications }, { id: "0013-comment-mentions", ...mentions }, { id: "0014-main-discussion-readers", ...mainDiscussionReaders }]) {
+  for (const migration of [{ id: "0001-comments", up, statements }, { id: "0002-comment-review-indexes", ...reviewIndexes }, { id: "0003-share-token-source", ...shareRecovery }, { id: "0004-share-revision", ...shareRevision }, { id: "0005-rbac-constraints", ...rbacConstraints }, { id: "0006-comment-engagement", ...engagement }, { id: "0007-role-bindings", ...bindings }, { id: "0008-site-members-view", ...siteMembersView }, { id: "0009-authorization-cleanup", ...cleanupAuthorization }, { id: "0010-comment-attachments", ...attachments }, { id: "0011-comment-results", ...commentResults }, { id: "0012-notifications", ...notifications }, { id: "0013-comment-mentions", ...mentions }, { id: "0014-main-discussion-readers", ...mainDiscussionReaders }, { id: "0017-tenant-slugs", ...tenantSlugs }]) {
     const { id, up, statements } = migration;
     const checksum = createHash("sha256")
       .update(statements.join("\n"))

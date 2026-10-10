@@ -402,12 +402,12 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       for (const width of [1200, 390]) {
         await page.setViewport({ width, height: 900 });
         await page.goto(`${base}/tenants`, { waitUntil: "networkidle0" });
-        await page.waitForSelector('input[aria-label="Email address"]');
+        await page.waitForSelector('input[aria-label="Existing user email"]');
         expect(await page.$eval("h1", (el) => el.textContent)).toBe(
           "Workspaces",
         );
         expect(
-          await page.$('select[aria-label="Workspace role"]'),
+          await page.$('select[aria-label="Tenant role"]'),
         ).not.toBeNull();
         await page.screenshot({
           path: `test-results/rbac-workspaces-${width}.png`,

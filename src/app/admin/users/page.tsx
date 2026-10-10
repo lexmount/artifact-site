@@ -1,15 +1,17 @@
 "use client";
 
 // Users: every account with its live site count and stored bytes; disable / re-enable.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Search } from "lucide-react";
 import MoreMenu from "@/components/more-menu";
 import { useLocale, useT } from "@/components/locale-provider";
 import { adminFetch, formatBytes, formatWhen } from "@/components/admin/format";
 import ReasonDialog from "@/components/admin/reason-dialog";
+import DefaultTenantDialog from "@/components/admin/default-tenant-dialog";
+import type { TenantRow } from "@/components/admin/tenant-types";
 import type { AdminUserRow } from "@/lib/types";
 
-type Row = Omit<AdminUserRow, "providerSubject"> & { isAdmin: boolean };
+type Row = Omit<AdminUserRow, "providerSubject"> & { isAdmin: boolean; memberships: { id: string; name: string }[] };
 type Sort = "recent" | "storage" | "sites";
 const PAGE = 50;
 
@@ -17,18 +19,26 @@ export default function AdminUsersPage() {
   const t = useT();
   const locale = useLocale();
   const [q, setQ] = useState("");
+  const [search, setSearch] = useState("");
+  const requestSequence = useRef(0);
+  useEffect(() => { const timer = setTimeout(() => setSearch(q), 300); return () => clearTimeout(timer); }, [q]);
   const [sort, setSort] = useState<Sort>("recent");
   const [disabledOnly, setDisabledOnly] = useState(false);
   const [offset, setOffset] = useState(0);
   const [data, setData] = useState<{ users: Row[]; total: number; quota: { sites: number; bytes: number } } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [target, setTarget] = useState<Row | null>(null);
+  const [tenantTarget, setTenantTarget] = useState<Row | null>(null);
+  const [tenants, setTenants] = useState<TenantRow[]>([]);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { adminFetch<{ tenants: TenantRow[] }>("/api/tenants").then(d => setTenants(d.tenants)).catch(e => setError(e.message)); }, []);
 
   const load = useCallback(() => {
-    const params = new URLSearchParams({ q, sort, limit: String(PAGE), offset: String(offset) });
+    const sequence = ++requestSequence.current;
+    const params = new URLSearchParams({ q: search, sort, limit: String(PAGE), offset: String(offset) });
     if (disabledOnly) params.set("disabled", "1");
-    adminFetch<{ users: Row[]; total: number; quota: { sites: number; bytes: number } }>(`/api/admin/users?${params}`).then(setData).catch((e: Error) => setError(e.message));
-  }, [q, sort, disabledOnly, offset]);
+    return adminFetch<{ users: Row[]; total: number; quota: { sites: number; bytes: number } }>(`/api/admin/users?${params}`).then(result => { if (sequence === requestSequence.current) { setData(result); setError(null); } }).catch((e: Error) => { if (sequence === requestSequence.current) setError(e.message); });
+  }, [search, sort, disabledOnly, offset]);
   useEffect(() => { load(); }, [load]);
 
   return (
@@ -51,19 +61,21 @@ export default function AdminUsersPage() {
         </label>
         {data && <span className="admin-count">{t("{n} accounts", { n: String(data.total) })}</span>}
       </div>
-      {error && <p className="drawer-error" role="alert">{error}</p>}
+      {saved && <p role="status">{t("Default publishing tenant updated")}</p>}
+      {error && <p className="drawer-error" role="alert">{t(error)}</p>}
       {!data && !error && <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}
       {data && (
         <div className="admin-tablewrap">
           <table className="admin-table">
             <thead>
-              <tr><th>{t("User")}</th><th>{t("E-mail")}</th><th className="num">{t("Sites")}</th><th className="num">{t("Storage")}</th><th>{t("Last sign-in")}</th><th>{t("Status")}</th><th></th></tr>
+              <tr><th>{t("User")}</th><th>{t("E-mail")}</th><th>{t("Default publishing tenant")}</th><th className="num">{t("Sites")}</th><th className="num">{t("Storage")}</th><th>{t("Last sign-in")}</th><th>{t("Status")}</th><th></th></tr>
             </thead>
             <tbody>
               {data.users.map((u) => (
                 <tr key={u.id} className={u.disabledAt ? "is-disabled" : undefined}>
                   <td>{u.displayName ?? "—"}</td>
                   <td><code>{u.email ?? "—"}</code>{u.email && !u.emailVerified && <span className="admin-pill warn">{t("unverified")}</span>}</td>
+                  <td>{tenants.find(row => row.id === u.tenantId)?.name ?? "—"}{tenants.find(row => row.id === u.tenantId)?.disabledAt && <span className="admin-pill off">{t("Disabled")}</span>}</td>
                   <td className={`num${data.quota.sites && u.siteCount >= data.quota.sites ? " at-cap" : ""}`}>{u.siteCount}{data.quota.sites ? ` / ${data.quota.sites}` : ""}</td>
                   <td className={`num${data.quota.bytes && u.byteTotal >= data.quota.bytes ? " at-cap" : ""}`}>{formatBytes(u.byteTotal)}{data.quota.bytes ? ` / ${formatBytes(data.quota.bytes)}` : ""}</td>
                   <td>{formatWhen(u.lastLoginAt, locale)}</td>
@@ -71,6 +83,7 @@ export default function AdminUsersPage() {
                     ? <span className="admin-pill off" title={u.disabledReason ?? undefined}>{t("Disabled")}{u.disabledReason ? ` · ${u.disabledReason}` : ""}</span>
                     : <span className="admin-pill ok">{t("Active account")}</span>}</td>
                   <td className="actions">
+                    <button className="btn sm" disabled={!tenants.length} onClick={() => { setTenantTarget(u); setSaved(false); }}>{t("Change default tenant")}</button>
                     {u.isAdmin
                       ? <span className="admin-pill" title={t("Listed in ARTIFACT_ADMIN_EMAILS; remove the address there first.")}>{t("Administrator")}</span>
                       : (
@@ -83,7 +96,7 @@ export default function AdminUsersPage() {
                   </td>
                 </tr>
               ))}
-              {data.users.length === 0 && <tr><td colSpan={7} className="empty">{t("No accounts match.")}</td></tr>}
+              {data.users.length === 0 && <tr><td colSpan={8} className="empty">{t("No accounts match.")}</td></tr>}
             </tbody>
           </table>
           {data.total > PAGE && (
@@ -95,6 +108,7 @@ export default function AdminUsersPage() {
           )}
         </div>
       )}
+      {tenantTarget && <DefaultTenantDialog user={tenantTarget} tenants={tenants} onClose={() => setTenantTarget(null)} onSaved={async () => { await load(); setSaved(true); }}/>}
       <ReasonDialog
         open={target != null}
         title={target?.disabledAt ? t("Re-enable {who}?", { who: target?.email ?? target?.displayName ?? "" }) : t("Disable {who}?", { who: target?.email ?? target?.displayName ?? "" })}

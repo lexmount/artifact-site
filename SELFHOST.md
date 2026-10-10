@@ -99,6 +99,35 @@ Leave section four of `.env` empty and the service has no accounts: anyone can v
 
 ## Administration
 
+
+### Tenant administration
+
+Use **Administration → Tenant management** to create tenants, edit their names, enable or
+disable them, and manage existing users as members or administrators. Tenant names can repeat;
+English identifiers are globally unique (case-insensitive), use 2–63 lowercase letters, digits
+or hyphens starting with a letter, and cannot be changed after creation. The server generates
+opaque internal IDs. Existing tenant IDs are preserved and become their initial identifiers.
+The `init` and `anonymous` identifiers are reserved; system tenants cannot be disabled.
+Platform administrators can re-enable an `init` tenant disabled before this protection was introduced.
+
+**Administration → Users → Change default tenant** changes the destination for future publishing
+requests that omit an explicit tenant. It adds missing membership as an ordinary member, preserves
+an existing role, and leaves all previous memberships, roles, artifacts and shares unchanged.
+Disabled accounts can also have their default changed before old membership is removed; their
+disabled state and revoked credentials remain unchanged. The default change itself is not a transfer
+or an offboarding operation. Explicit tenant IDs remain supported by API and
+MCP clients; old-artifact updates and already-started uploads retain their original tenant.
+An account's default must be changed before removing that membership. Disabling a tenant blocks
+its artifact access and publishing without automatically changing users' defaults. Member removal
+also requires ownership handover and must preserve an active administrator.
+
+`POST /api/tenants` accepts `name`, `slug`, and `adminEmail` (or `adminUserId`) and returns the
+generated `id` and normalized `slug`. Use the internal `id`, not `slug`, in existing tenant API
+paths and publishing parameters. `PATCH /api/admin/users/:id/tenant` accepts `{ "tenantId": "…" }`.
+Both operations require platform administrator credentials; browser writes require same-origin
+CSRF validation. Default changes record the previous and next IDs and whether membership was
+added in the tenant audit trail.
+
 Name administrators by sign-in e-mail (`ARTIFACT_ADMIN_EMAILS=you@example.net,ops@example.net`) and they get the administration console at `/admin` (an entry appears in the account menu) and its API: users with their site count and storage, disabling an account (sign-in refused, sessions and agent tokens revoked), taking a site down (served to its owner only; visitors get 410), deleting and restoring sites, and running maintenance. Every act is recorded. Administrators can also open any site the console lists, private ones included, to judge a report — reading only, never editing as the owner, and every such opening of non-public content is written to the same log, so "staff can access your data" means on purpose and on the record — and the owner can check: every site's More menu has "Administrator activity", the owner's view of that log (what happened and when, with the reason; not who). `PUBLISH_API_TOKEN` as a Bearer remains an administrator for scripts.
 
 A deleted site is soft-deleted: its files stay `ARTIFACT_DELETED_RETENTION_DAYS` (30 by default) so it can be restored, then a purge removes them. The purge runs on its own about once an hour on any replica that sees traffic, or on demand from the console.

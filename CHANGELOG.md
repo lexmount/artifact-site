@@ -5,6 +5,12 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Return refreshed tenant member lists to the first page so removing the last member on a page does not hide remaining members.
+
+- Allow administrators to change disabled accounts' publishing defaults without restoring access, and to re-enable a legacy disabled `init` tenant.
+
+- Add tenant administration with generated internal IDs, unique English identifiers, member roles, and default publishing tenant changes that preserve existing memberships and artifacts.
+
 - Centralize publication transactions and reader projections behind a deployment integration boundary; default publishing and access behavior remain unchanged.
 
 - Declare the mounted favicon in the initial document head so browsers do not request a root-level icon during streamed navigation.
