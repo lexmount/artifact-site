@@ -1,3 +1,4 @@
+import { mainSharingActive, mainSharingRole } from "@/lib/sharing-defaults";
 import { publicationPolicy } from "@/lib/publication-policy";
 import { receiptShare, sessionReceiptShare } from "@/lib/notifications/receipts";
 import { databaseRoleAllows, everyoneRole } from "@/lib/role-bindings";
@@ -98,7 +99,7 @@ export async function authorizePreview(
           return null;
       }
     } else if (
-      site.visibility === "private" ||
+      site.visibility === "private" || !(await mainSharingActive(site)) ||
       site.takenDownAt ||
       !readerVersionAllowed(site, grant.versionId)
     ) {
@@ -116,6 +117,7 @@ export async function authorizePreview(
       if (
         !(member && (readerVersionAllowed(site,grant.versionId) || await databaseRoleAllows(member,"site.history.read"))) &&
         !(await everyoneRole(site.id) && !site.takenDownAt && readerVersionAllowed(site,grant.versionId)) &&
+        !(readerVersionAllowed(site, grant.versionId) && await mainSharingRole(site, grant.userId)) &&
         !manager &&
         !(
           grant.operator &&
@@ -147,7 +149,7 @@ export async function authorizePreview(
   const independentlyReadable=(await readableVersionFilter(request,site,session))(versionId);
   const receipt=!independentlyReadable && !shareTokenFromRequest(request) ? await sessionReceiptShare(site,versionId,session):null;
   if(!independentlyReadable && !receipt)return null;
-  if (site.visibility !== "private" && !site.takenDownAt && versionId === site.currentVersionId && !share && await publicationPolicy.allowsVersion(site, versionId))
+  if (site.visibility !== "private" && await mainSharingActive(site) && !site.takenDownAt && versionId === site.currentVersionId && !share && await publicationPolicy.allowsVersion(site,versionId))
     return { versionId, key: null };
   // Version filtering is side-effect free; this entry point owns the administrative read audit.
   const access = await readAccess(request, site, session);

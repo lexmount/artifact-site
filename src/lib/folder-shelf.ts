@@ -29,6 +29,7 @@ export interface Shelf {
   rename(id: string, name: string): Promise<ShelfOutcome>;
   remove(id: string): Promise<ShelfOutcome>;
   assign(slug: string, folderId: string | null): Promise<ShelfOutcome>;
+  reload(): Promise<ShelfOutcome>;
 }
 
 async function call(path: string, init: RequestInit): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
@@ -167,6 +168,6 @@ export function useShelf(userId: string | null, initial?: FolderState): Shelf {
     mode: onAccount ? "account" : "local",
     state: onAccount ? accountState! : local,
     loading: Boolean(userId) && !onAccount,
-    create, rename, remove, assign,
+    create, rename, remove, assign, reload,
   };
 }

@@ -147,6 +147,7 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
           <Link className="auth-menu-item" role="menuitem" href="/me" onClick={closeMenu}>
             <User2 size={14} /> {t("My sites")}
           </Link>
+          <Link className="auth-menu-item" role="menuitem" href="/me/sharing" onClick={closeMenu}><User2 size={14}/>{t("Sharing preferences")}</Link>
           <Link className="auth-menu-item" role="menuitem" href="/notifications" onClick={closeMenu}>
             <Bell size={14} /> {t("Notification center")}
           </Link>

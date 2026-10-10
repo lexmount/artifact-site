@@ -1,3 +1,4 @@
+import { mainSharingActiveSql } from "@/lib/sharing-sql";
 import "server-only";
 import { config } from "@/lib/config";
 import { rbacQuery, toSite, toSummary, listFolders } from "@/lib/db";
@@ -38,7 +39,7 @@ export async function readDirectory(
   const owner = `s.owner_id=$1 AND EXISTS (SELECT 1 FROM authorization_tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=s.tenant_id AND m.user_id=$1 AND u.disabled_at IS NULL)`;
   const scope =
     query.scope === "public"
-      ? `COALESCE(s.visibility,'public')='public' AND s.taken_down_at IS NULL`
+      ? `COALESCE(s.visibility,'public')='public' AND s.taken_down_at IS NULL AND ${mainSharingActiveSql}`
       : query.scope === "owned"
         ? `(${owner})`
         : `EXISTS (SELECT 1 FROM authorization_site_members c WHERE c.site_id=s.id AND c.subject_type<>'everyone' AND c.user_id=$1)`;

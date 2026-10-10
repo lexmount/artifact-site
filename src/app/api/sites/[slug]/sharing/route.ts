@@ -28,7 +28,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
       ) : [];
       summary = { canManageMembers: canManageGrants, members: rows.slice(0, 3).map(row => ({ id: row.id, name: row.name })), moreMembers: rows.length > 3 };
     }
-    const response = json({ siteId: view.site.id, visibility: view.site.visibility, url: siteUrl(slug), ...summary }, 200);
+    const response = json({ siteId: view.site.id, mainAudience: (await (await import("@/lib/sharing-defaults")).getSiteSharing(view.site)).policy.audience, visibility: view.site.visibility, url: siteUrl(slug), ...summary }, 200);
     response.headers.set("cache-control", "private, no-store");
     return response;
   } catch (error) {
@@ -46,7 +46,12 @@ export async function PUT(request: Request, context: { params: Promise<{ slug: s
 
     const { visibility } = sharingSchema.parse(await request.json());
 
-    await withPermissionCommit(request,view.site.id,"site.sharing.manage", q => q("UPDATE sites SET visibility=$1,updated_at=$2 WHERE id=$3",[visibility,Date.now(),view.site.id]));
+    await withPermissionCommit(request,view.site.id,"site.sharing.manage", async (q, site) => {
+      const { markSharingManual } = await import("@/lib/sharing-defaults");
+      site = await markSharingManual(q, site);
+      await q("UPDATE sites SET visibility=$1,updated_at=$2 WHERE id=$3", [visibility, Date.now(), site.id]);
+      await markSharingManual(q, site, { audience: visibility === "unlisted" ? "anyone" : visibility });
+    });
     await recordSiteAudit(view.site.id, "share", apiAuditContext(request, actor)); // best-effort, non-atomic
     return json({ visibility, url: siteUrl(slug), independentLinksUnchanged: true }, 200);
   } catch (error) {

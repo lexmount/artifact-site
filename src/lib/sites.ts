@@ -123,12 +123,6 @@ async function insertSiteRetryingSlug(base: Omit<InsertSiteInput, "slug">, versi
   throw new Error("Could not assign a unique slug to the site");
 }
 
-/** Degree of openness: public is the loosest, private the strictest. Of two sources, take the stricter. */
-const OPENNESS: Record<Visibility, number> = { public: 0, unlisted: 1, private: 2 };
-function stricter(a: Visibility, b: Visibility): Visibility {
-  return OPENNESS[a] >= OPENNESS[b] ? a : b;
-}
-
 /**
  * Turn a chunked-upload session into a version — the same bookkeeping as createSite, but **without
  * handling any content**.
@@ -555,14 +549,14 @@ export async function forkSite(
   }
   const version: InsertVersionInput = { id: versionId, siteId, entry: current.entry, fileCount, byteSize, source: "fork" };
   const audit = ctx ? { ...auditRow(ctx, siteId, versionId, "fork"), sourceSiteId: source.id } : undefined;
-  // Take the stricter of "the source site" and "this deployment's default for new sites", and fix it
+  // Take the stricter of the source's effective main access and the deployment default, and fix it
   // at INSERT time. Two reasons:
   //   · The fork is a new site, and on the public internet a new site should be private — otherwise
   //     forking becomes a back door around the deployment's posture, the copy would also land in the
   //     home directory, and the person who pressed "Save as new site" never chose "public".
   //   · Inserting first and calling updateSiteSharing afterwards leaves a window in which the copy of a
   //     private source is public. A single write leaves no window.
-  const visibility = stricter(source.visibility, policy.defaultVisibility);
+  const visibility = await (await import("@/lib/sharing-defaults")).forkVisibilityCeiling(source, policy.defaultVisibility);
   await insertSiteRetryingSlug({ tenantId: await creationTenant(owner.ownerId ?? null,owner.tenantId), id: siteId, title: `${source.title} (copy)`, kind: source.kind, editToken: owner.ownerId ? "" : editToken, anonOwnerId: owner.anonOwnerId ?? null, ownerId: owner.ownerId ?? null, visibility }, version, audit);
   scheduleTextIndex(siteId, versionId);
   return { site: (await getSite(siteId))!, version: (await getVersion(versionId))! };

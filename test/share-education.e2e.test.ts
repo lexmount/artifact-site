@@ -26,8 +26,14 @@ async function ownerPage(beforeNavigate?: (page: Page) => Promise<void>) {
 async function sharing(page: Page) {
   await page.$eval('[data-analytics-button="share"]', el => (el as HTMLElement).focus());
   await page.locator('[data-analytics-button="share"]').click();
-  await page.waitForSelector("#main-access:not([disabled])");
-  await page.waitForSelector("#main-comments, #legacy-comments");
+  await page.waitForSelector(".sharing-main-policy select:not([disabled])");
+  await page.waitForSelector(".sharing-main-policy input[type=checkbox], #legacy-comments");
+}
+async function saveCustom(page: Page) {
+  await page.click('.scope-form-actions .solid');
+  await page.waitForSelector('.scope-form-actions', {hidden:true});
+  // Saving refreshes the parent access snapshot; wait until its controls settle too.
+  await page.waitForSelector('.sharing-copy button:not([disabled])');
 }
 async function api(path: string, method = "GET", body?: unknown) {
   return fetch(`${base}/api/sites/${slug}/${path}`, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -66,8 +72,8 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
       const state = await page.evaluate(() => {
         document.querySelector<HTMLButtonElement>('[data-analytics-button="share"]')!.click();
         return new Promise(resolve => requestAnimationFrame(() => resolve({
-          skeleton: !!document.querySelector('.sharing-skeleton'),
-          access: !!document.querySelector('#main-access'),
+          skeleton: !!document.querySelector('.sharing-audience-skeleton'),
+          access: !!document.querySelector('.sharing-main-policy'),
         })));
       });
       expect(state).toEqual({ skeleton: false, access: true });
@@ -86,8 +92,8 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
     });
     try {
       await page.click('[data-analytics-button="share"]');
-      await page.waitForSelector('#main-access:not([disabled])');
-      expect(await page.$('.sharing-comments-skeleton')).not.toBeNull();
+      await page.waitForSelector('.sharing-main-policy select:not([disabled])');
+      expect(await page.$('.sharing-main-policy select')).not.toBeNull();
       expect(await page.$eval('.sharing-copy button', el => (el as HTMLButtonElement).disabled)).toBe(false);
       for (const width of [390, 320]) {
         await page.setViewport({width, height:568});
@@ -102,7 +108,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
         await page.screenshot({path:`test-results/sharing-slow-mobile-${width}.png`});
       }
       release?.(); release = undefined;
-      await page.waitForSelector('#main-comments, #legacy-comments');
+      await page.waitForSelector('.sharing-main-policy input[type=checkbox], #legacy-comments');
     } finally { release?.(); await context.close(); }
   });
 
@@ -118,12 +124,12 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
       });
       await page.evaluate(() => window.dispatchEvent(new Event("artifact:shares-changed")));
       await page.waitForSelector('.sharing-fetch-error');
-      expect(await page.$('#main-access')).not.toBeNull();
-      expect(await page.$eval('#main-access', el => (el as HTMLSelectElement).disabled)).toBe(true);
+      expect(await page.$('.sharing-main-policy select')).not.toBeNull();
+      expect(await page.$eval('.sharing-main-policy select', el => (el as HTMLSelectElement).disabled)).toBe(true);
       expect(await page.$eval('.sharing-copy button', el => (el as HTMLButtonElement).disabled)).toBe(true);
       fail = false;
       await page.locator('.sharing-fetch-error button').click();
-      await page.waitForSelector('#main-access:not([disabled])');
+      await page.waitForSelector('.sharing-main-policy select:not([disabled])');
       await page.waitForSelector('.sharing-fetch-error', {hidden:true});
     } finally { await context.close(); }
   });
@@ -146,10 +152,10 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
       expect(await page.$eval('.sharing-copy button', el => (el as HTMLButtonElement).disabled)).toBe(true);
       fail = false;
       await page.locator('.sharing-fetch-error button').click();
-      await page.waitForSelector('#main-access:not([disabled])');
+      await page.waitForSelector('.sharing-main-policy select:not([disabled])');
       await page.waitForSelector('.sharing-fetch-error', {hidden:true});
       expect(heldComments).toBeGreaterThanOrEqual(1);
-      expect(await page.$('.sharing-comments-skeleton')).not.toBeNull();
+      expect(await page.$('.sharing-main-policy select')).not.toBeNull();
       expect(await page.$eval('.sharing-copy button', el => (el as HTMLButtonElement).disabled)).toBe(false);
       expect(await page.$eval('.sharing-add', el => (el as HTMLButtonElement).disabled)).toBe(false);
       expect(await page.$eval('.sharing-advanced-entry button.sharing-navigation', el => (el as HTMLButtonElement).disabled)).toBe(false);
@@ -169,11 +175,9 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
     });
     try {
       await sharing(page);
-      expect(await page.$eval('#legacy-comments', el => (el as HTMLSelectElement).value)).toBe('members');
-      expect(await page.$('#main-comments')).toBeNull();
-      await page.click('.sharing-comment-help summary');
-      expect(await page.$eval('.sharing-comment-help', el => el.textContent)).toContain('keeps its original discussion visibility');
-      await page.screenshot({path:'test-results/sharing-legacy-comments.png'});
+      // Opening the new editor must not migrate an existing discussion policy.
+      expect((await (await api("comment-settings")).json()).mainPolicy).toBeDefined();
+      expect(await page.$('.sharing-main-policy select')).not.toBeNull();
       await page.click('.sharing-add');
       await page.waitForSelector('.authorization-form');
       expect(await page.$$('dialog:modal')).toHaveLength(1);
@@ -199,8 +203,8 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
     try {
       await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (value: string) => { document.documentElement.dataset.copiedUrl = value; } } }));
       await sharing(page);
-      expect(await page.$eval("#main-access", el => (el as HTMLSelectElement).value)).toBe("private");
-      expect(await page.$eval("#main-comments", el => (el as HTMLInputElement).checked)).toBe(true);
+      expect(await page.$eval(".sharing-main-policy select", el => (el as HTMLSelectElement).value)).toBe("private");
+      expect(await page.$eval(".sharing-main-policy input[type=checkbox]", el => (el as HTMLInputElement).checked)).toBe(true);
       expect(await page.$eval(".sharing-dialog", el => el.parentElement === document.body && el.matches(":modal"))).toBe(true);
       await page.click(".sharing-copy-row > button");
       await page.waitForSelector(".sharing-notice");
@@ -236,33 +240,37 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
     } finally { await context.close(); }
   });
 
-  it("blocks copying during immediate access saves, rolls back failures and retries", async () => {
+  it("blocks copying for unsaved or pending access changes and retries failed saves", async () => {
     await api("sharing", "PUT", {visibility:"private"});
     let finish: (() => void) | undefined;
     let fail = true;
     const {context,page} = await ownerPage(async page => {
       await page.setRequestInterception(true);
       page.on("request", request => {
-        if (request.method() === "PUT" && new URL(request.url()).pathname.endsWith(`/${slug}/sharing`)) {
+        if (request.method() === "PUT" && new URL(request.url()).pathname.endsWith(`/${slug}/main-sharing`)) {
           finish = () => { void (fail ? request.respond({status:503,contentType:"application/json",body:'{"error":"Unavailable"}'}) : request.continue()); };
         } else void request.continue();
       });
     });
     try {
       await sharing(page);
-      await page.select('#main-access','unlisted');
-      await page.waitForSelector('#main-access[disabled]');
+      await page.select('.sharing-main-policy select','anyone');
       expect(await page.$eval('.sharing-copy button', el => (el as HTMLButtonElement).disabled)).toBe(true);
-      await page.waitForFunction(() => document.querySelector('.sharing-access')?.textContent?.includes('Saving access'));
+      await page.click('.scope-form-actions .solid');
+      await page.waitForSelector('.sharing-main-policy select[disabled]');
+      expect(await page.$eval('.sharing-copy button', el => (el as HTMLButtonElement).disabled)).toBe(true);
+      expect((await (await api('sharing')).json()).visibility).toBe('private');
       expect(await page.$('.sharing-save, .share-confirm')).toBeNull();
       await vi.waitFor(() => expect(finish).toBeDefined());
       finish!(); finish = undefined;
-      await page.waitForSelector('.share-error');
-      await page.waitForSelector('#main-access:not([disabled])');
-      expect(await page.$eval('#main-access', el => (el as HTMLSelectElement).value)).toBe('private');
+      await page.waitForSelector('.sharing-main-policy .drawer-error');
+      await page.waitForSelector('.sharing-main-policy select:not([disabled])');
+      expect(await page.$eval('.sharing-main-policy select', el => (el as HTMLSelectElement).value)).toBe('anyone');
       expect((await (await api('sharing')).json()).visibility).toBe('private');
       fail = false;
-      await page.select('#main-access','unlisted');
+      await page.select('.sharing-main-policy select','anyone');
+      expect(await page.$eval('.sharing-copy button', el => (el as HTMLButtonElement).disabled)).toBe(true);
+      await page.click('.scope-form-actions .solid');
       await vi.waitFor(() => expect(finish).toBeDefined());
       finish!(); finish = undefined;
       await page.waitForFunction(() => document.querySelector('.sharing-notice')?.textContent === 'Access updated');
@@ -298,9 +306,10 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
       async function refreshThroughSharing(visibility:string) {
         const expected=page.url();
         await page.click('[data-analytics-button="share"]');
-        await page.waitForSelector("#main-access:not([disabled])");
+        await page.waitForSelector(".sharing-main-policy select:not([disabled])");
         const refreshed=page.waitForResponse(r=>r.request().headers()["rsc"]==="1" && new URL(r.url()).pathname===`/s/${site.slug}`);
-        await page.select("#main-access",visibility);
+        await page.select(".sharing-main-policy select",visibility === "unlisted" ? "anyone" : visibility);
+        await saveCustom(page);
         await refreshed;
         await page.waitForFunction(()=>document.querySelector(".sharing-notice")?.textContent==="Access updated");
         await page.waitForNetworkIdle();
@@ -411,22 +420,25 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
     } finally { await context.close(); }
   });
 
-  it("saves ordinary link access immediately, pauses comments, and keeps advanced creation at the top", async () => {
+  it("saves confirmed custom link access, pauses comments, and keeps advanced creation at the top", async () => {
     const { context, page } = await ownerPage();
     try {
       await sharing(page);
-      await page.select("#main-access", "unlisted");
+      await page.select(".sharing-main-policy select", "anyone");
+      await saveCustom(page);
       await page.waitForFunction(() => document.querySelector('.sharing-notice')?.textContent === 'Access updated');
       expect(await page.$('.sharing-save, .share-confirm')).toBeNull();
       expect((await (await api("sharing")).json()).visibility).toBe("unlisted");
       expect((await fetch(`${base}/s/${slug}`)).status).toBe(200);
       expect((await (await api("shares")).json()).shares).toHaveLength(0);
-      await page.click("#main-comments");
+      await page.click(".sharing-main-policy input[type=checkbox]");
+      await saveCustom(page);
       await page.waitForFunction(() => document.querySelector(".sharing-dialog")?.textContent?.includes("New comments and replies are paused"));
       expect((await (await api("comment-settings")).json()).mainPolicy).toBe("off");
-      await page.click("#main-comments");
+      await page.click(".sharing-main-policy input[type=checkbox]");
+      await saveCustom(page);
       await page.waitForFunction(() => document.querySelector(".sharing-dialog")?.textContent?.includes("Readers can see comments"));
-      await page.click(".sharing-advanced-entry .sharing-navigation");
+      await page.locator(".sharing-advanced-entry .sharing-navigation").click();
       await page.waitForSelector(".share-new-trigger");
       const text = await page.$eval(".sharing-dialog", el => el.textContent);
       expect(text).toContain("Advanced sharing");
@@ -506,7 +518,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
           });
         }
         await sharing(page);
-        await page.click(".sharing-advanced-entry .sharing-navigation");
+        await page.locator(".sharing-advanced-entry .sharing-navigation").click();
         await page.waitForSelector(`#share-card-${share.id}`);
         await page.click(`#share-card-${share.id} .share-link-settings > summary`);
         await page.click(`#share-card-${share.id} .danger`);
@@ -540,11 +552,37 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
       await page.reload({waitUntil:"networkidle2"});
       await page.locator('[data-analytics-button="share"]').click();
       await page.waitForSelector(".sharing-fetch-error");
-      expect(await page.$("#main-access")).toBeNull();
+      await page.waitForSelector(".sharing-main-policy select[disabled]");
       expect(await page.$eval(".sharing-copy button", el => (el as HTMLButtonElement).disabled)).toBe(true);
       fail = false;
       await page.locator(".sharing-fetch-error button").click();
-      await page.waitForSelector("#main-access:not([disabled])");
+      await page.waitForSelector(".sharing-main-policy select:not([disabled])");
+    } finally { await context.close(); }
+  });
+
+  it("retries the new policy lookup without enabling copy or trapping the dialog", async () => {
+    let fail = true;
+    const {context, page} = await ownerPage(async page => {
+      await page.setRequestInterception(true);
+      page.on("request", request => {
+        if (fail && new URL(request.url()).pathname.endsWith(`/${slug}/main-sharing`))
+          void request.respond({status:503,contentType:"application/json",body:'{"error":"Unavailable"}'});
+        else void request.continue();
+      });
+    });
+    try {
+      await page.click('[data-analytics-button="share"]');
+      await page.waitForSelector('.sharing-main-policy .drawer-error');
+      expect(await page.$eval('.sharing-copy button', el => (el as HTMLButtonElement).disabled)).toBe(true);
+      await page.click('.sharing-dialog-head button[aria-label="Close"]');
+      await page.waitForSelector('.sharing-dialog',{hidden:true});
+      await page.click('[data-analytics-button="share"]');
+      await page.waitForSelector('.sharing-main-policy .drawer-error');
+      fail = false;
+      await page.click('.sharing-main-policy > button');
+      await page.waitForSelector('.sharing-main-policy select:not([disabled])');
+      await page.waitForSelector('.sharing-copy button:not([disabled])');
+      expect(await page.$('.sharing-main-policy .drawer-error')).toBeNull();
     } finally { await context.close(); }
   });
 
@@ -560,9 +598,9 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
       await sharing(page);
       await page.waitForSelector('.sharing-avatar[title="张晓"]');
       expect(await page.$eval('.sharing-dialog h2', el => el.textContent)).toBe('分享作品');
-      expect(await page.$eval('.sharing-audience', el => {
+      expect(await page.$eval('.scope-policy-fields', el => {
         const row = el.getBoundingClientRect(), select = el.querySelector('select')!.getBoundingClientRect();
-        return Math.abs(row.width - select.width) <= 2 && Math.abs(row.height - select.height) <= 2;
+        return Math.abs(row.width - select.width) <= 2 && select.height >= 36;
       })).toBe(true);
       for (const width of [1280,390,320]) {
         await page.setViewport({width,height:844});

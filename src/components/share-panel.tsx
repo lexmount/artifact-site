@@ -1,4 +1,6 @@
 "use client";
+import { AUDIENCE_LABELS } from "@/lib/sharing-policy";
+import DocumentSharingSettings from "@/components/sharing/document-settings";
 import { appPath, appFetch } from "@/lib/app-path";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
@@ -84,10 +86,13 @@ function SharePanelContent({ slug, visibility: initialVisibility, onOpenChange, 
     }
     lastTab.current = tab;
   }, [open, tab, addMember]);
+  const mainState = useRef({editing:false,busy:false});
+  const [mainBlocked, setMainBlocked] = useState(false);
+  const onMainState = useCallback((editing:boolean,busy:boolean,unavailable:boolean) => { mainState.current={editing,busy}; setMainBlocked(editing || busy || unavailable); },[]);
   const linkDirty = useRef(false);
   const accessPending = selection !== null;
   const busyRef = useRef(false);
-  const canLeave = () => !dialogRef.current?.querySelector("dialog[open]") && !busy && !authorizationState.current.busy && (!(linkDirty.current || authorizationState.current.editing) || window.confirm(t("Discard unsaved sharing changes? Saved settings will stay unchanged.")));
+  const canLeave = () => !dialogRef.current?.querySelector("dialog[open]") && !busy && !mainState.current.busy && !authorizationState.current.busy && (!(mainState.current.editing || linkDirty.current || authorizationState.current.editing) || window.confirm(t("Discard unsaved sharing changes? Saved settings will stay unchanged.")));
   const close = () => { if (canLeave()) { setSelection(null); linkDirty.current = false; setOpen(false); } };
 
   useEffect(() => { onOpenChange?.(open); return () => onOpenChange?.(false); }, [open, onOpenChange]);
@@ -188,6 +193,7 @@ function SharePanelContent({ slug, visibility: initialVisibility, onOpenChange, 
             </div>
             <button className="sharing-navigation sharing-add" disabled={!sharing?.canManageMembers || snapshot.sharingError} onClick={() => { if (navigate("members")) setAddMember(true); }}><span><UserPlus size={17}/>{t("Add members")}</span><ChevronRight size={17}/></button>
           </section>
+          {identity !== "anonymous" ? <DocumentSharingSettings slug={slug} disabled={!ready || snapshot.sharingError} onStateChange={onMainState} onSaved={() => { setNotice(t("Access updated")); void resource.load(true); router.refresh(); }}/> : <>
           <section className="sharing-section sharing-access">
             <h3>{t("Link sharing")}</h3>
             {ready ? <>
@@ -214,6 +220,7 @@ function SharePanelContent({ slug, visibility: initialVisibility, onOpenChange, 
               </>}
             </div> : !snapshot.commentsUnavailable && <div className="sharing-skeleton sharing-comments-skeleton" role="status" aria-label={t("Loading comment settings")}><span/></div>}
           </section>
+          </>}
             <div className="sharing-advanced-entry">
               <div className="sharing-advanced-label"><b id={`${helpId}-label`}>{t("Advanced sharing")}</b><span className="sharing-help" onMouseEnter={() => setHelpOpen(true)} onMouseLeave={() => setHelpOpen(false)}><button ref={helpTrigger} type="button" className="btn sm ghost" aria-label={t("About advanced sharing")} aria-describedby={helpOpen ? helpId : undefined} onFocus={() => setHelpOpen(true)} onBlur={() => setHelpOpen(false)} onClick={() => setHelpOpen(true)} onKeyDown={event => { if (event.key === "Escape" && helpOpen) { event.preventDefault(); event.stopPropagation(); setHelpOpen(false); } }}><Info size={14}/></button></span></div>
               <small id={`${helpId}-description`}>{t("Manage / create advanced share links")}</small>
@@ -224,12 +231,12 @@ function SharePanelContent({ slug, visibility: initialVisibility, onOpenChange, 
           {tab === "views" && <ShareViews slug={slug}/>}
           {tab === "links" && ready && <fieldset className="sharing-subpanel" disabled={snapshot.sharingError}>
             <ShareLinks slug={slug} visibility={visibility} onDirtyChange={value => { linkDirty.current = value; }} onRequestPrivate={() => { if (canLeave()) { linkDirty.current = false; setTab("main"); void saveAccess("private"); } }}/>
-            <p className="sharing-description"><Link2 size={13}/> {t("Main link access")}: {t(ACCESS_LABEL[visibility])}</p>
+            <p className="sharing-description"><Link2 size={13}/> {t("Main link access")}: {t(sharing?.mainAudience ? AUDIENCE_LABELS[sharing.mainAudience] : ACCESS_LABEL[visibility])}</p>
           </fieldset>}
       </div>
       {tab === "main" && <footer className="sharing-copy">
         <div className="sharing-copy-row"><input id="main-link" aria-label={t("Artifact link")} value={url} readOnly onFocus={event => event.currentTarget.select()}/>
-          <button className="btn solid" disabled={busy || !url || !ready || snapshot.sharingError} onClick={() => void copy()}><Copy size={15}/>{t("Copy link")}</button></div>
+          <button className="btn solid" disabled={busy || mainBlocked || !url || !ready || snapshot.sharingError} onClick={() => void copy()}><Copy size={15}/>{t("Copy link")}</button></div>
       </footer>}
       {helpOpen && tab === "main" && <span ref={helpTip} id={helpId} role="tooltip" className="sharing-tooltip">{t("Advanced links can specify audiences and expiry. Comments and replies are isolated by link.")}</span>}
     </dialog>, document.body)}

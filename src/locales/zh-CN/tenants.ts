@@ -1,6 +1,12 @@
 import type { Messages } from "@/lib/i18n";
 export const tenants: Messages = {
   "All statuses": "全部状态",
+  "Could not load tenant settings access.": "无法检查租户设置权限。",
+  "Could not check for unclaimed artifacts.": "无法检查待认领作品。",
+  "Retry tenant settings access": "重新检查租户设置权限",
+  "Retry checking unclaimed artifacts": "重新检查待认领作品",
+  "Checking tenant settings access…": "正在检查租户设置权限…",
+  "Checking for unclaimed artifacts…": "正在检查待认领作品…",
   "Account not found": "账号不存在",
   "This account will remain disabled. Sign-in and revoked credentials will not be restored.": "该账号将保持停用，登录权限及已撤销的凭证不会恢复。",
   "Tenant role": "角色",
@@ -53,7 +59,6 @@ export const tenants: Messages = {
   "Back to tenants": "返回租户列表",
   "Tenant details": "租户详情",
   "Basic settings": "基本设置",
-  "Selecting a workspace here does not change your default publishing tenant.": "此处选择工作空间仅用于查看，不会改变默认发布租户。",
   "Default publishing tenant": "默认发布租户",
   "Change default publishing tenant": "修改默认发布租户",
   "Change default tenant": "修改默认租户",

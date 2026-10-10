@@ -5,6 +5,26 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Show recoverable account-page errors when tenant access or browser-artifact checks fail, with independent retries that preserve other available account actions.
+
+- Show collection sharing beside the All sites heading with a shared-state icon badge. Replace the account Workspaces entry with role-appropriate tenant settings, and separate explicit browser-artifact claiming into a default-tenant confirmation page.
+
+- Preserve folder icons with a shared-link badge, expose folder actions beside the heading, and confirm renames in a cancellable dialog. Clarify folder-sharing visibility effects in English and Simplified Chinese.
+
+- Keep personal-site rows stable while sharing summaries load, use compact access labels, and omit default-source notices in the list.
+
+
+- Keep scope-sharing confirmation buttons separate from scrolling permission previews. Simplify default document sharing, show personal preferences only for the default publishing tenant, group tenant defaults under Settings, open tenant details from list rows, and align sharing icons. Updated English and Simplified Chinese UI.
+
+- Keep copies of revoked-scope documents private, including when sharing changes during the copy.
+
+
+- Keep revoked scope access closed when legacy comment settings or ownership changes create a manual override. Allow tenant and signed-in readers to load sandboxed preview resources while enforcing live permission revocation and version restrictions.
+
+- Preserve fork privacy under sharing defaults and scope rules, and retain requested official designation. Stopping a scope invalidates unavailable followers without changing their document settings; restored documents stay closed until an authorized manager resumes following. Block link copying while custom sharing edits are unsaved or saving, and allow retrying settings-load failures.
+
+- Add tenant and per-tenant personal sharing defaults for new documents, with folder and all-owned-sites sharing, permission previews, manual overrides, current-default restoration, and access-filtered collection links. Independent links and direct grants remain separate; explicit document stop-all revokes them. The new controls support English and Simplified Chinese.
+
 - Return refreshed tenant member lists to the first page so removing the last member on a page does not hide remaining members.
 
 - Allow administrators to change disabled accounts' publishing defaults without restoring access, and to re-enable a legacy disabled `init` tenant.

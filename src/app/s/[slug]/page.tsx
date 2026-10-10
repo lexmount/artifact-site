@@ -108,10 +108,10 @@ export default async function ViewerPage({
   params, searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ published?: string; version?: string; presentation?: string }>;
+  searchParams: Promise<{ published?: string; version?: string; presentation?: string; collection?: string }>;
 }) {
   const { slug } = await params;
-  const { published, version: requestedVersion, presentation } = await searchParams;
+  const { published, version: requestedVersion, presentation, collection } = await searchParams;
   // One rebuilt Request and one session resolution for the whole request — generateMetadata, the
   // gate, the permission flags and the view log all see the same reader (see pageContext). The
   // viewer Request variant carries the address / agent / prefetch headers logSiteOpen reads; the
@@ -160,6 +160,8 @@ export default async function ViewerPage({
       />
       <SiteViewer
         key={view.version.id}
+        collectionToken={collection && /^[A-Za-z0-9_-]{32}$/.test(collection) ? collection : undefined}
+        mainAudience={(await (await import("@/lib/sharing-defaults")).getSiteSharing(view.site)).policy.audience}
         viewedVersionId={view.version.id}
         latestVersionId={view.site.currentVersionId}
         pinnedVersionId={requestedVersion}

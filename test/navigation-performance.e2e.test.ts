@@ -60,6 +60,12 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.setViewport({ width: 1440, height: 1000 });
       await page.setCookie({ name, value: value.join("="), url: base! });
       await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
+      let summaryRequest: HTTPRequest | undefined;
+      await page.setRequestInterception(true);
+      page.on("request", request => {
+        if (!summaryRequest && new URL(request.url()).pathname === '/api/me/sharing/summary') summaryRequest = request;
+        else void request.continue();
+      });
       const paths: string[] = [];
       const errors: string[] = [];
       page.on("request", (r) => paths.push(new URL(r.url()).pathname));
@@ -69,6 +75,9 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       expect(await page.$$(".mini iframe")).toHaveLength(0);
       await page.focus('input[type="search"]');
       const rowBefore = await page.$eval('.site-row', e => ({width:e.clientWidth,height:e.clientHeight}));
+      await expect.poll(() => summaryRequest).toBeDefined();
+      await summaryRequest!.continue();
+      await page.waitForSelector('.site-row .scope-row-source');
       await page.waitForSelector('.mini [data-preview-state="ready"] iframe');
       expect(await page.$eval('input[type="search"]', e => e === document.activeElement)).toBe(true);
       expect(await page.$eval('.site-row', e => ({width:e.clientWidth,height:e.clientHeight}))).toEqual(rowBefore);
@@ -146,8 +155,11 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
           (e) => e === document.activeElement,
         ),
       ).toBe(true);
+      await mkdir("test-results", { recursive: true });
       for (const width of [390, 1440]) {
         await page.setViewport({ width, height: 900 });
+        expect(await page.$eval('.site-row .row-visibility', el => getComputedStyle(el).display === 'none')).toBe(width === 390);
+        await page.screenshot({ path: `test-results/sharing-list-${width}.png` });
         expect(
           await page.evaluate(
             () => document.documentElement.scrollWidth <= innerWidth,

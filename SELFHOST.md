@@ -561,3 +561,39 @@ suite uses a disposable test gateway, Postgres, signed mock IdP, Chrome and a re
 run it locally with `E2E_CHROME=/path/to/chrome node scripts/test-subpath.mjs artifact-site:subpath`.
 The test gateway is not shipped in the runtime image. Verify the real gateway's redirects,
 rewrites, TLS and IdP registration again before a production cutover.
+
+## Default and scope sharing
+
+Tenant managers configure **Default sharing** in tenant settings. Users configure per-tenant
+**Sharing preferences**, inheriting their tenant by default or saving a personal override.
+Defaults affect only subsequent creations (including API, CLI, and MCP uploads), never older
+documents or new versions. Without configured defaults, existing deployment visibility behavior
+is preserved. Anonymous uploads keep the existing anonymous policy. Forks retain their source
+privacy ceiling; a broader default or collection rule cannot silently open a private copy.
+
+From **My sites**, users can enable sharing for a folder or their entire collection across tenants.
+Only their own eligible documents participate. These rules set each document's main-address
+access; a `/c/:token` collection link is a filtered directory, not an access credential. Tenant
+access always refers to the document's own tenant. Audience options are private, tenant members,
+all signed-in users, and anyone; scope sharing supports viewing and signed-in commenting only.
+
+Manual document settings take precedence, followed by folder rules, all-sites rules, personal
+defaults, and tenant defaults. Enabling a scope previews its existing documents before applying
+it. Moving documents into a shared folder explicitly replaces custom settings after confirmation.
+Leaving or disabling a scope restores another applicable scope or the defaults effective at that
+time; it does not automatically make documents private. Already-customized documents stay custom.
+If a follower is unavailable (for example, taken down, deleted, in a disabled tenant, or no longer
+manageable by the scope owner), stopping the scope invalidates its derived grant without editing
+the document. Restoration or re-enabling the scope cannot revive that grant. An authorized manager
+can use **Resume following** to apply the then-current rules.
+
+Independent document links and direct grants are unaffected. **Stop all sharing for this document**
+is a separate action that makes the main address private, revokes those links and grants, and
+exits following. Ownership and necessary administrative access remain. Tenant availability and ordinary authorization checks still apply. Sharing changes take effect immediately.
+
+The numbered migration is additive and requires no new environment settings. For browser
+acceptance, run `test/sharing-defaults.e2e.test.ts` with `SHARING_E2E_URL`,
+`ARTIFACT_DB_DRIVER=postgres`, and `ARTIFACT_DATABASE_URL` pointing at the same **disposable**
+server/database. Set `ARTIFACT_ADMIN_EMAILS=sharing-admin@example.test` on both server and runner;
+use `E2E_CHROME` to override the Chrome executable. Screenshots are written under
+`output/sharing-acceptance/`.

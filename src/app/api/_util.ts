@@ -15,6 +15,13 @@ export function json(data: unknown, status = 200): NextResponse {
   return NextResponse.json(data, { status, headers: { [SKILL_VERSION_HEADER]: getSkillVersion(), [LEGACY_SKILL_VERSION_HEADER]: getSkillVersion() } });
 }
 
+/** Authenticated settings must not survive an identity change or be cached by proxies. */
+export function privateJson(data: unknown, status = 200): NextResponse {
+  const response = json(data, status);
+  response.headers.set("cache-control", "private, no-store");
+  return response;
+}
+
 /** Request body exceeded the declared-size ceiling (413). */
 export class PayloadTooLargeError extends Error {
   readonly statusCode = 413;

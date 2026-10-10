@@ -205,15 +205,9 @@ export const components: Messages = {
   "Set official version": "设置正式版",
   "Clear official version": "取消正式版",
 
-  "Platform administrator": "平台管理员",
-  "Workspaces": "工作空间",
   "Workspace": "工作空间",
   "Workspace administrator": "租户管理员",
   "Member": "成员",
-  "Claim anonymous artifacts": "认领匿名产物",
-  "Claim and move": "认领并迁入",
-  "Claim {n} artifacts from this browser and move them to the selected workspace.": "认领此浏览器创建的 {n} 个产物并迁入所选工作空间。",
-  "Membership is permanent until removed. Share links grant separate, revocable access.": "成员授权持续有效，直到被移除；分享链接提供独立、可撤销的访问授权。",
   "Site administrator": "站点管理员",
   "Shared version": "分享的版本",
   "Follow latest version": "跟随最新版本",
@@ -390,7 +384,7 @@ export const components: Messages = {
   "Sign in to delete": "删除需要先登录",
   "Deleting makes the link stop working immediately; only the site's owner can do it.": "删除会让链接立刻失效，只有站点的所有者能做。",
   "Sign in with your company account": "用企业账号登录",
-  "Signing in does not claim anonymous sites. Claim them explicitly in Workspaces using the browser that created them.": "登录不会自动认领匿名站点。请在创建站点的浏览器中，前往工作空间主动认领。",
+  "Signing in does not claim anonymous sites. Open My sites in the browser that created them to add them to your account.": "登录不会自动认领匿名站点。请在创建站点的浏览器中打开“我的站点”，将作品加入你的账户。",
   "Keep browsing": "继续浏览",
   "sites are now yours": "个站点已归到你名下",
   "The sites this browser created anonymously now belong to you": "这个浏览器之前匿名创建的站点，现在都是你的了",
@@ -540,7 +534,7 @@ export const components: Messages = {
   // "My sites" rail + search
   "Search my sites": "搜索我的站点",
   "{n} site": "{n} 个站点",
-  "Sign in and explicitly claim this site in Workspaces": "登录后在工作空间中主动认领此站点",
+  "Sign in and add this site to your account from My sites": "登录后从“我的站点”将此作品加入你的账户",
   // ── app shell (sidebar, top bar) and the home hero ──────────────────────
   "Home": "首页",
   "Explore": "发现作品",

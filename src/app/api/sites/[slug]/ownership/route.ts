@@ -35,7 +35,7 @@ export async function POST(
     const { slug } = await context.params;
     const view = await getSiteView(slug);
     if (!view) return json({ error: "site not found" }, 404);
-    if (!view.site.ownerId) throw new EditForbiddenError("Claim anonymous sites explicitly in Workspaces before transferring ownership");
+    if (!view.site.ownerId) throw new EditForbiddenError("Add anonymous sites to your account from My sites before transferring ownership");
     const session = await resolveSession(request);
     await requirePermission(request, view.site, "site.owner.transfer", session, false);
 
@@ -75,6 +75,7 @@ export async function POST(
         "UPDATE sites SET owner_id=$1,edit_token='',anon_owner_id=NULL,updated_at=$2 WHERE id=$3",
         [target.id, Date.now(), site.id],
       );
+      await (await import("@/lib/sharing-defaults")).markSharingManual(q, { ...site, ownerId: target.id });
       await recordRbacAudit(
         q,
         site.tenantId,

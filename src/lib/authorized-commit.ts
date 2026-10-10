@@ -67,6 +67,8 @@ export async function commitAuthorizedCreation(site: InsertSiteInput, version: I
             const [source] = await q("SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL", [audit.sourceSiteId]);
             if (!source || !(await canForkSite(request, toSite(source), session)))
                 throw new EditForbiddenError("Source access was revoked");
+            // Source sharing may change while the copied files are being prepared.
+            site = { ...site, visibility: await (await import("@/lib/sharing-defaults")).forkVisibilityCeiling(toSite(source), site.visibility, q) };
         }
         const now = Date.now();
         await q("INSERT INTO sites(id,slug,title,kind,current_version_id,created_at,updated_at,edit_token,anon_owner_id,owner_id,visibility,tenant_id) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11)", [site.id, site.slug, site.title, site.kind, version.id, now, site.ownerId ? "" : site.editToken, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, tenantId]);
@@ -75,6 +77,8 @@ export async function commitAuthorizedCreation(site: InsertSiteInput, version: I
         await writeCommitAudit(q, audit, now);
         const [created] = await q("SELECT * FROM sites WHERE id=$1", [site.id]);
         await publicationPolicy.commitVersion({ q, site: toSite(created), versionId: version.id, request, creating: true, official: Boolean(version.official), publishOfficial: () => designateOfficial(q, site.id, version.id, audit, now) });
+        const [initialized] = await q("SELECT * FROM sites WHERE id=$1", [site.id]);
+        await (await import("@/lib/sharing-defaults")).initializeSharing(q, toSite(initialized), request, version.source === "fork" ? site.visibility : undefined);
         await recordPublishedVersion(q, site.id, version.id, true);
     }).catch(async (error) => {
         if ((error as {

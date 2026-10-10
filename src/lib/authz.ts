@@ -93,7 +93,7 @@ export function viewerRequestFromHeaders(bag: HeaderBag, path: string): Request 
   return new Request(base.url, { headers: merged });
 }
 
-export type CredentialSource = "account" | "operator" | "management" | "anonymous-cookie" | "anonymous-token" | "share" | "everyone" | "none";
+export type CredentialSource = "account" | "operator" | "management" | "anonymous-cookie" | "anonymous-token" | "share" | "everyone" | "main" | "none";
 export interface Authority { role: ResourceRole | null; source: CredentialSource }
 
 /** Every credential enters the same role catalog. Presence alone never grants authority. */
@@ -116,6 +116,8 @@ export async function resolveAuthority(viewer: Viewer, site: Site): Promise<Auth
   if (anonymous && isAnonymousCreator(viewer, site)) {
     return { role: policy.anonymousSites === "read-only" ? "viewer" : "owner", source: "anonymous-cookie" };
   }
+  const mainRole = await (await import("@/lib/sharing-defaults")).mainSharingRole(site, viewer.session?.userId ?? null);
+  if (mainRole && !account.role) account = { role: mainRole, source: "main" };
   if (!viewer.session && await everyoneRole(site.id)) account = {role:"viewer",source:"everyone"};
   if (viewer.request) {
     const { requestShareAccess } = await import("@/lib/share");
@@ -132,7 +134,7 @@ export async function resolveAuthority(viewer: Viewer, site: Site): Promise<Auth
 /** Human-readable 403 reason, so the UI can tell "sign in" apart from "you lack access". */
 function reasonFor(viewer: Viewer, site: Site): string {
   if (!viewer.session) {
-    if (isAnonymousCreator(viewer, site)) return "Sign in and explicitly claim this site in Workspaces";
+    if (isAnonymousCreator(viewer, site)) return "Sign in and add this site to your account from My sites";
     return "Please sign in first";
   }
   if (!site.ownerId) return "This site has no account owner; use the creating browser or ask an administrator to assign ownership";

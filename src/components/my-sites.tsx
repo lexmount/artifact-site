@@ -2,6 +2,11 @@
 import { appPath } from "@/lib/app-path";
 import type { DirectoryPage } from "@/lib/directory-query";
 import { useDirectoryNavigation } from "@/lib/use-directory-navigation";
+import { adminFetch } from "@/components/admin/format";
+import { AUDIENCE_LABELS, type SharingState } from "@/lib/sharing-policy";
+import ScopeSharingDialog, { SharingDialog } from "@/components/sharing/scope-dialog";
+import MoveSharingDialog from "@/components/sharing/move-dialog";
+import { invalidateClientCaches } from "@/lib/client-cache";
 import ArtifactCover from "@/components/artifact-cover";
 import ProgressivePreview from "@/components/progressive-preview";
 
@@ -14,12 +19,12 @@ import SiteDownload from "@/components/site-download";
 
 // "My sites": a folder rail on the left (all / unfiled / the person's own folders, with counts),
 // the tools row (title search, sort, list or grid), then the sites — as rows with a "…" menu, or
-// as cards. Folders are a personal classification: they never change who may open a site.
+// as cards. Folder sharing is opt-in; confirmed moves preview main-address access changes.
 import { usePermissionsForSites } from "@/lib/site-permissions";
 import { useCallback, useEffect, useSyncExternalStore, useMemo, useState, type SyntheticEvent } from "react";
 import Link from "next/link";
 import SiteLink from "@/components/site-link";
-import { Folder, Globe, Lock, Link2, LayoutGrid, List, Search } from "lucide-react";
+import { Folder, Globe, Lock, Link2, LayoutGrid, List, Search, Pencil, Trash2, PanelsTopLeft } from "lucide-react";
 import type { SiteSummary } from "@/lib/types";
 import { loginHref, useAuth } from "@/lib/use-auth";
 import { useShelf, type ShelfOutcome } from "@/lib/folder-shelf";
@@ -106,9 +111,18 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
   const [localPage, setLocalPage] = useState(directory?.query.page ?? 0);
   const page=directory?.query.page ?? localPage;
   const setPage = (value:number) => {setLocalPage(value);if(directory && value!==0)navigation.change("page",value);};
+  const [scopeDialog, setScopeDialog] = useState<{folderId:string|null;deleting?:boolean}|null>(null);
+  const [moveDialog,setMoveDialog] = useState<{slugs:string[];folderId:string|null}|null>(null);
+  const [selectedSlugs,setSelectedSlugs] = useState<string[]>([]);
+  const [sharingVersion,setSharingVersion] = useState(0);
+  const [sharingSummary,setSharingSummary] = useState<{states:Record<string,SharingState>;sharedFolders:string[];allShared:boolean}>({states:{},sharedFolders:[],allShared:false});
+  const sharingQuery = sites.map(s=>`slug=${encodeURIComponent(s.slug)}`).join("&");
+  useEffect(()=>{if(shelf.mode!=="account")return;let alive=true;adminFetch<typeof sharingSummary>(`/api/me/sharing/summary?${sharingQuery}`).then(r=>{if(alive)setSharingSummary(r);}).catch(()=>{});return()=>{alive=false;};},[sharingQuery,shelf.mode,sharingVersion]);
+  const refreshed = () => { setSharingVersion(v=>v+1); invalidateClientCaches(); void shelf.reload(); setSelectedSlugs([]); onMutated?.(); router.refresh(); };
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState("");
-  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [hint, setHint] = useState<string | null>(null);
   const [railOpen, setRailOpen] = useState(false);
   const [, setNonce] = useState(0);
@@ -145,14 +159,14 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
   }, [t, directory, onMutated]);
 
   const addFolder = async (name: string, slug?: string): Promise<void> => {
-    const r = report(await shelf.create(name, slug));
+    const r = report(await shelf.create(name, shelf.mode === "account" ? undefined : slug));
     if (r.outcome === "refused") {
       setHint(name.trim() ? t("At most {n} folders", { n: MAX_FOLDERS }) : t("A folder name cannot be empty"));
       return;
     }
     if (r.outcome !== "ok") return;
     setHint(null);
-    if (r.id) setFilter(r.id);
+    if (r.id) { setFilter(r.id); if (slug && shelf.mode === "account") setMoveDialog({slugs:[slug],folderId:r.id}); }
   };
 
   function submitNew(e?: SyntheticEvent) {
@@ -163,14 +177,25 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
     if (name) void addFolder(name);
   }
 
-  function commitRename(id: string, previous: string) {
+  function startRename(folder: { id: string; name: string }) {
+    setRenaming(folder);
+    setRenameDraft(folder.name);
+  }
+
+  async function commitRename() {
+    if (!renaming || !renameDraft.trim()) return;
+    if (renameDraft.trim() !== renaming.name) {
+      const result = await shelf.rename(renaming.id, renameDraft.trim());
+      if (result.outcome === "server") throw new Error(t("The change was not saved to your account: {error}", { error: result.error }));
+      if (result.outcome === "storage") throw new Error(t(STORAGE_HINT));
+      if (result.outcome !== "ok") throw new Error(t("A folder name cannot be empty"));
+      report(result);
+    }
     setRenaming(null);
-    const name = draft.trim();
-    setDraft("");
-    if (name && name !== previous) void shelf.rename(id, name).then(report);
   }
 
   function removeFolder(folder: { id: string; name: string }) {
+    if (shelf.mode === "account") { setScopeDialog({folderId:folder.id,deleting:true}); return; }
     const n = counts.byId[folder.id] ?? 0;
     const detail = n > 0 ? t("The {n} sites inside go back to \"Unfiled\"; the sites themselves are not deleted.", { n }) : t("Sites are not affected.");
     if (!window.confirm(t("Delete the folder \"{name}\"? {detail}", { name: folder.name, detail }))) return;
@@ -184,6 +209,7 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
       if (name?.trim()) void addFolder(name, slug);
       return;
     }
+    if (shelf.mode === "account") { setMoveDialog({slugs:[slug],folderId:value === FILTER_UNFILED ? null : value}); return; }
     void shelf.assign(slug, value === FILTER_UNFILED ? null : value).then(report);
   }
 
@@ -195,24 +221,19 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
       </div>
       <nav aria-label={t("Choose a folder")}>
         <button className="folder" type="button" aria-current={active === FILTER_ALL} onClick={() => { setFilter(FILTER_ALL); setPage(0); }}>
-          <span>{t("All sites")}</span><b>{counts.all}</b>
+          <span className="folder-type-icon"><PanelsTopLeft size={18} aria-hidden="true" />{sharingSummary.allShared && <Link2 className="folder-share-badge" size={11} aria-label={t("Sharing enabled")} />}</span><span>{t("All sites")}</span><b>{counts.all}</b>
         </button>
         <button className="folder" type="button" aria-current={active === FILTER_UNFILED} onClick={() => { setFilter(FILTER_UNFILED); setPage(0); }}>
           <span>{t("Unfiled")}</span><b>{counts.unfiled}</b>
         </button>
         {state.folders.length > 0 && <div className="folder-separator" />}
-        {state.folders.map((f) =>
-          renaming === f.id ? (
-            <input key={f.id} className="folder-input" autoFocus value={draft} maxLength={40} aria-label={t("Rename folder {name}", { name: f.name })}
-              onChange={(e) => setDraft(e.target.value)} onBlur={() => commitRename(f.id, f.name)}
-              onKeyDown={(e) => { if (e.key === "Enter") commitRename(f.id, f.name); else if (e.key === "Escape") { setRenaming(null); setDraft(""); } }} />
-          ) : (
-            <button key={f.id} className="folder" type="button" aria-current={active === f.id} onClick={() => { setFilter(f.id); setPage(0); }}
-              onDoubleClick={() => { setRenaming(f.id); setDraft(f.name); }} title={t("Double-click to rename")}>
-              <Folder size={16} aria-hidden="true" /><span>{f.name}</span><b>{counts.byId[f.id] ?? 0}</b>
-            </button>
-          ),
-        )}
+        {state.folders.map((f) => (
+          <button key={f.id} className="folder" type="button" aria-current={active === f.id} onClick={() => { setFilter(f.id); setPage(0); }}
+            onDoubleClick={() => startRename(f)} title={t("Double-click to rename")}>
+            <span className="folder-type-icon"><Folder size={18} aria-hidden="true" />{sharingSummary.sharedFolders.includes(f.id) && <Link2 className="folder-share-badge" size={11} aria-label={t("Shared folder")} />}</span>
+            <span>{f.name}</span><b>{counts.byId[f.id] ?? 0}</b>
+          </button>
+        ))}
       </nav>
       {creating ? (
         <form className="folder-form" onSubmit={submitNew}>
@@ -222,13 +243,7 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
       ) : (
         <button className="folder-add" type="button" onClick={() => { setCreating(true); setDraft(""); }}>＋ {t("New folder")}</button>
       )}
-      {activeFolder && (
-        <div className="folder-actions">
-          <button type="button" className="quiet" onClick={() => { setRenaming(activeFolder.id); setDraft(activeFolder.name); }}>{t("Rename")}</button>
-          <button type="button" className="quiet" onClick={() => removeFolder(activeFolder)}>{t("Delete folder")}</button>
-        </div>
-      )}
-      <p className="folder-hint">{t("Folders are for organising. They never change who can open a site.")}</p>
+      <p className="folder-hint">{t(shelf.mode === "account" ? "Folders organise documents. Sharing a folder also changes the visibility of the documents inside." : "Folders are for organising. They never change who can open a site.")}</p>
     </aside>
   );
 
@@ -250,6 +265,11 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
 
   return (
     <>
+      {renaming && <SharingDialog className="folder-rename-dialog" title={t("Rename folder {name}", { name: renaming.name })} confirmLabel={t("Confirm changes")} disabled={!renameDraft.trim()} onClose={() => setRenaming(null)} onSubmit={commitRename}>
+        <label className="folder-rename-field">{t("Folder name")}<input autoFocus className="folder-input" value={renameDraft} maxLength={40} onChange={e => setRenameDraft(e.target.value)} /></label>
+      </SharingDialog>}
+      {scopeDialog && <ScopeSharingDialog {...scopeDialog} onClose={()=>setScopeDialog(null)} onSaved={refreshed}/>}
+      {moveDialog && <MoveSharingDialog slugs={moveDialog.slugs} folders={state.folders} initialFolderId={moveDialog.folderId} onClose={()=>setMoveDialog(null)} onSaved={refreshed}/>}
       {upload && <VersionUpload key={upload.slug} target={upload} onClose={() => setUpload(null)} onPublished={() => { learn("update"); onMutated?.(); router.refresh(); }} />}
       <button type="button" className="mobile-folders" aria-expanded={railOpen} aria-controls="folder-rail" onClick={() => setRailOpen((v) => !v)}>
         {t("Folders")} · {activeFolder ? activeFolder.name : active === FILTER_UNFILED ? t("Unfiled") : t("All sites")} ▾
@@ -276,7 +296,14 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
           <div className="folder-heading">
             <h2>{activeFolder ? activeFolder.name : active === FILTER_UNFILED ? t("Unfiled") : t("All sites")}</h2>
             <span aria-live="polite">· {total}</span>
+            {active === FILTER_ALL && shelf.mode === "account" && manage && <div className="folder-heading-actions"><button type="button" className={`folder-icon-action${sharingSummary.allShared ? " is-shared" : ""}`} aria-label={t("Share my entire collection")} title={t("Share my entire collection")} onClick={() => setScopeDialog({folderId:null})}><Link2 size={18}/></button></div>}
+            {activeFolder && <div className="folder-heading-actions" role="group" aria-label={t("Folder actions")}>
+              {shelf.mode === "account" && <button type="button" className={`folder-icon-action${sharingSummary.sharedFolders.includes(activeFolder.id) ? " is-shared" : ""}`} aria-label={t("Share folder")} title={t("Share folder")} onClick={() => setScopeDialog({folderId: activeFolder.id})}><Link2 size={18} /></button>}
+              <button type="button" className="folder-icon-action" aria-label={t("Rename")} title={t("Rename")} onClick={() => startRename(activeFolder)}><Pencil size={18} /></button>
+              <button type="button" className="folder-icon-action is-delete" aria-label={t("Delete folder")} title={t("Delete folder")} onClick={() => removeFolder(activeFolder)}><Trash2 size={18} /></button>
+            </div>}
           </div>
+          {selectedSlugs.length > 0 && <div className="scope-bulk-bar"><span>{t("{n} documents selected",{n:selectedSlugs.length})}</span><button className="btn sm" onClick={()=>setMoveDialog({slugs:selectedSlugs,folderId:activeFolder?.id??null})}>{t("Move documents")}</button><button className="quiet" onClick={()=>setSelectedSlugs([])}>{t("Cancel")}</button></div>}
           {hint && <p className="folder-note" role="status">{hint}</p>}
 
           {pageItems.length === 0 ? empty : view === "grid" ? (
@@ -290,6 +317,7 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
               {pageItems.map((s) => (
                 <div className="site-row" key={s.slug} data-slug={s.slug} data-update-hint={s.slug === firstEditable?.slug || undefined}>
                   <div className="site-name">
+                    {shelf.mode === "account" && <input className="scope-row-select" type="checkbox" aria-label={t("Select {title}",{title:s.title})} checked={selectedSlugs.includes(s.slug)} onChange={e=>setSelectedSlugs(v=>e.target.checked?[...v,s.slug]:v.filter(x=>x!==s.slug))}/>}
                     <SiteLink slug={s.slug} href={`/s/${s.slug}`} className="mini" aria-hidden="true" tabIndex={-1}>
                       {s.kind === "document" ? <ArtifactCover site={s} /> : <ProgressivePreview key={`${s.slug}:${s.updatedAt}`} site={s} src={`/api/preview/${s.slug}?thumb=1`} />}
                     </SiteLink>
@@ -299,7 +327,14 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
                     </div>
                   </div>
                   <span className="row-views" data-label={t("Total opens")} title={t("All recorded opens, including your own and collaborators. New opens by the same reader within 30 minutes are combined across links; older records keep their original counting rules.")}>{s.totalViews == null ? "—" : s.totalViews.toLocaleString(locale)}</span>
-                  <span className="row-visibility"><VisibilityCell site={s} t={t} /></span>
+                  <span className="row-visibility">
+                    <span className="scope-row-audience" title={sharingSummary.states[s.slug] ? t(AUDIENCE_LABELS[sharingSummary.states[s.slug].policy.audience]) : undefined}>
+                      {sharingSummary.states[s.slug] ? t(sharingSummary.states[s.slug].policy.audience === "public" ? "Public" : AUDIENCE_LABELS[sharingSummary.states[s.slug].policy.audience]) : <VisibilityCell site={s} t={t} />}
+                    </span>
+                    {sharingSummary.states[s.slug] && sharingSummary.states[s.slug].source !== "default" && <small className="scope-row-source" title={t(sharingSummary.states[s.slug].source === "folder" ? "Following folder" : sharingSummary.states[s.slug].source === "all" ? "Following my entire collection" : "Custom settings")}>
+                      {t(sharingSummary.states[s.slug].source === "folder" ? "Following folder" : sharingSummary.states[s.slug].source === "all" ? "Following my entire collection" : "Custom settings")}
+                    </small>}
+                  </span>
                   <SiteVersionCell key={`${s.slug}:${s.officialVersionId}:${s.versionCount}`} site={s} canManage={Boolean(permissions[s.slug]?.canManageSharing)} token={tokens[s.slug]} onMutated={onMutated} />
                   <span className="row-date">{relTime(s.updatedAt, t, locale)}</span>
                   <span className="row-menu-wrap">

@@ -17,6 +17,7 @@ import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, useSy
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { ViewerBackLink } from "@/components/viewer-navigation";
+import { AUDIENCE_LABELS } from "@/lib/sharing-policy";
 import VisibilityChip from "@/components/visibility-chip";
 import Link from "next/link";
 import ViewerBrand from "@/components/viewer-brand";
@@ -96,6 +97,8 @@ export function drawerHoldEffect(before: number, after: number): "reveal" | "hid
 }
 
 export default function SiteViewer(props: {
+  collectionToken?: string;
+  mainAudience?: import("@/lib/sharing-policy").SharingPolicy["audience"];
   siteId: string; versionId: string; filePath: string;
   viewedVersionId?: string; latestVersionId?: string; pinnedVersionId?: string; officialVersionId?: string | null;
   visibility: Visibility;
@@ -469,9 +472,8 @@ export default function SiteViewer(props: {
           {/* The frosted glass is its own layer: backdrop-filter also creates a containing block for position:fixed
               descendants; keeping it on this purely decorative layer keeps the ancestor chain of the drawers/login gate clean. */}
           <div className="fs-bar-glass" aria-hidden="true" />
-          <ViewerBackLink label={t("Back to previous page")}>
-            <ViewerBrand />
-          </ViewerBackLink>
+          <ViewerBackLink label={t("Back to previous page")}><ViewerBrand /></ViewerBackLink>
+          {props.collectionToken && <a className="collection-return" href={appPath(`/c/${props.collectionToken}`)}>{t("Back to collection")}</a>}
           <div className="header-mid">
             <div className="header-title-edit">
               {!permissions.canRename ? (
@@ -495,7 +497,7 @@ export default function SiteViewer(props: {
             </div>
             <div className="viewer-meta">
               <span className="kind-chip">{kind === "single" ? t("Single file") : kind === "document" ? t("Document") : t("Folder")}</span>
-              <VisibilityChip visibility={props.visibility} />
+              {props.mainAudience === "tenant" || props.mainAudience === "login" ? <span className="kind-chip">{t(AUDIENCE_LABELS[props.mainAudience])}</span> : <VisibilityChip visibility={props.visibility} />}
               <span className="dot" aria-hidden="true" />
             </div>
             <OfficialVersion slug={slug} versionId={viewedVersion} onStatus={officialStatus} onOpenChange={onVersionsOpen} />
