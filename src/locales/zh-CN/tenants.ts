@@ -1,5 +1,6 @@
 import type { Messages } from "@/lib/i18n";
 export const tenants: Messages = {
+  "All statuses": "全部状态",
   "Account not found": "账号不存在",
   "This account will remain disabled. Sign-in and revoked credentials will not be restored.": "该账号将保持停用，登录权限及已撤销的凭证不会恢复。",
   "Tenant role": "角色",
