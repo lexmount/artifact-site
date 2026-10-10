@@ -1,5 +1,6 @@
 "use client";
 
+import { appPath } from "@/lib/app-path";
 import { useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
 import { Maximize2 } from "lucide-react";
@@ -31,7 +32,7 @@ export default function ImmersivePreview({ slug, versionId }: { slug: string; ve
     };
   }, [tip]);
   return <>
-    <a className="btn icon-only header-immersive" href={`/api/preview/${encodeURIComponent(slug)}/?v=${encodeURIComponent(versionId)}`}
+    <a className="btn icon-only header-immersive" href={appPath(`/api/preview/${encodeURIComponent(slug)}/?v=${encodeURIComponent(versionId)}`)}
       target="_blank" rel="noopener noreferrer" aria-label={t("Immersive preview (opens in a new tab)")}
       aria-describedby={tip ? id : undefined}
       onPointerEnter={event => { if (event.pointerType === "mouse") show(event.currentTarget); }}

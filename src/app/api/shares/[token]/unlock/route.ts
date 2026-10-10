@@ -1,9 +1,10 @@
+import { requestBase } from "@/lib/public-base";
 // POST /api/shares/<token>/unlock — hand in a passcode, get the entry cookie.
 //
 // Reached by a plain <form> on /v/<token>, so it has to work with no JavaScript and answers with a
 // 303 back to the viewer. A fetch caller (`content-type: application/json`) gets JSON instead.
 import { NextResponse } from "next/server";
-import { config, rateLimit as rateLimitCfg } from "@/lib/config";
+import { rateLimit as rateLimitCfg } from "@/lib/config";
 import { getShareByTokenHash } from "@/lib/db";
 import { buildPasscodeCookie, hashToken, isLive, resolveShareAccess } from "@/lib/share";
 import { checkRateLimit, clientKey, RateLimitError } from "@/lib/ratelimit";
@@ -12,8 +13,8 @@ import { errorResponse, json } from "../../../_util";
 /** Same-origin address of the viewer page. Built from the token we were routed with — never from
  *  anything in the body — so this can never become an open redirect. */
 function viewerUrl(request: Request, token: string, error?: string): string {
-  const base = config.publicUrl || new URL(request.url).origin;
-  const url = new URL(`/v/${encodeURIComponent(token)}`, base);
+  const base = requestBase(request);
+  const url = new URL(`${base}/v/${encodeURIComponent(token)}`);
   if (error) url.searchParams.set("e", error);
   return url.toString();
 }

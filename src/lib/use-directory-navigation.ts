@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { DirectoryNavigation } from "@/lib/directory-navigation";
@@ -12,7 +13,7 @@ export function useDirectoryNavigation() {
     (value) => {
       const next = new URLSearchParams(window.location.search);
       next.set("view", value);
-      window.history.replaceState(null, "", `${path}?${next}`);
+      window.history.replaceState(null, "", appPath(`${path}?${next}`));
       return next.toString();
     },
   ));

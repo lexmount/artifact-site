@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import { track, analyticsRequest } from "@/lib/analytics";
 
 import SiteDownload from "@/components/site-download";
@@ -341,7 +342,7 @@ export default function Editor(props: {
             <SiteDownload slug={slug} editToken={editToken} versionId={baseVersion?.id ?? curVersion} />
             {/* The "Preview" in the toolbar switches in place (no navigation), so this external link is called
                 "Open in new tab" instead — calling both of them preview only leaves people guessing which one leaves the page. */}
-            <a role="menuitem" className="menu-item" href={withShareContext(`/api/preview/${slug}`)} target="_blank" rel="noreferrer" title={t("Open the artifact itself in a new tab")}><ExternalLink size={14} aria-hidden="true" /> {t("Open in new tab")}</a>
+            <a role="menuitem" className="menu-item" href={appPath(withShareContext(`/api/preview/${slug}`))} target="_blank" rel="noreferrer" title={t("Open the artifact itself in a new tab")}><ExternalLink size={14} aria-hidden="true" /> {t("Open in new tab")}</a>
 
             <button role="menuitem" className="menu-item" type="button" onClick={fork} disabled={forking} title={t("Copy into a separate new site")}>
               {forking ? <Loader2 size={14} className="spin" /> : <Copy size={14} aria-hidden="true" />} {t("Save as new site")}
@@ -442,7 +443,7 @@ export default function Editor(props: {
                 key={reloadKey}
                 className="editor-preview"
                 title={t("Site preview")}
-                src={withShareContext(`/api/preview/${slug}?r=${reloadKey}`)}
+                src={appPath(withShareContext(`/api/preview/${slug}?r=${reloadKey}`))}
                 sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
               />
             )}

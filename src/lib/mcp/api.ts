@@ -1,3 +1,4 @@
+import { requestBase } from "@/lib/public-base";
 import * as folders from "@/app/api/me/folders/route";
 import * as assignments from "@/app/api/me/folders/assignments/route";
 import * as commentResult from "@/app/api/sites/[slug]/comments/[threadId]/result/route";
@@ -28,10 +29,10 @@ import * as official from "@/app/api/sites/[slug]/official/route";
 
 export type Operation = "public_list" | "folders" | "move" | "comment_result" | "comments_list" | "comment_read" | "comment_messages" | "comment_context" | "operation_status" | "upload_status" | "official" | "official_set" | "official_clear" | "publish" | "get" | "rename" | "delete" | "versions" | "update" | "edit" | "fork" | "rollback" | "share" | "shares" | "search" | "read" | "list" | "whoami" | "upload_start" | "upload_file" | "upload_commit";
 export function apiRequest(source: Request, route: string, method = "GET", body?: BodyInit) {
-  const url = new URL(route, source.url);
+  const url = new URL(`${requestBase(source)}${route}`);
   const authorization = source.headers.get("authorization")!;
   const headers = new Headers({ authorization, origin: url.origin });
-  for (const name of ["x-real-ip", "x-forwarded-for", "x-artifact-share", "x-artifact-tenant", "idempotency-key", "x-artifact-operation-input"]) { const value = source.headers.get(name); if (value) headers.set(name, value); }
+  for (const name of ["host", "x-forwarded-proto", "x-real-ip", "x-forwarded-for", "x-artifact-share", "x-artifact-tenant", "idempotency-key", "x-artifact-operation-input"]) { const value = source.headers.get(name); if (value) headers.set(name, value); }
   if (typeof body === "string") headers.set("content-type", "application/json");
   return new Request(url, { method, headers, body, signal: source.signal, ...(body instanceof ReadableStream ? { duplex: "half" } : {}) });
 }

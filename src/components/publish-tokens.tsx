@@ -1,7 +1,8 @@
+"use client";
+import { appFetch } from "@/lib/app-path";
 // Publish tokens — the personal centre's view of what can publish as you, and the kill switch.
 // Listing/revoking is browser-session-only (the API refuses token sessions), so a leaked token
 // cannot hide itself or shed its siblings.
-"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import TokenCreate from "@/components/token-create";
@@ -26,7 +27,7 @@ export default function PublishTokensCard() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    fetch("/api/me/tokens")
+    appFetch("/api/me/tokens")
       .then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error ?? t("Failed to load")))))
       .then((d: { tokens: TokenRow[] }) => setTokens(d.tokens))
       .catch((e: Error) => setError(e.message));
@@ -40,7 +41,7 @@ export default function PublishTokensCard() {
     setBusyId(id);
     setError(null);
     try {
-      const res = await fetch(`/api/me/tokens/${id}`, { method: "DELETE" });
+      const res = await appFetch(`/api/me/tokens/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setError(body.error ?? t("Failed to revoke the token"));

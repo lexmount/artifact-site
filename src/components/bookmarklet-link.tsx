@@ -1,4 +1,5 @@
 "use client";
+import { appBasePath, appPath } from "@/lib/app-path";
 
 // The home page's "Publish this page" — a button meant to be DRAGGED AWAY, not clicked.
 //
@@ -16,7 +17,7 @@ export default function BookmarkletLink() {
   const t = useT();
   // Lazy initialization rather than setState in an effect: origin is already known on the first
   // client frame. There is no window during SSR, so fall back to "" and fill it in on hydration.
-  const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin));
+  const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin + appBasePath()));
   const link = useRef<HTMLAnchorElement>(null);
 
   // React blocks `javascript:` hrefs in JSX (it cannot tell our own code from an injection), so the
@@ -30,7 +31,7 @@ export default function BookmarkletLink() {
     <p className="bookmarklet-strip">
       <span>{t("Got a page open in your browser?")}</span>
       <span className="bookmarklet-wrap">
-        <a ref={link} className="bookmarklet-drag" href={BOOKMARKLET_TARGET_PATH} draggable>
+        <a ref={link} className="bookmarklet-drag" href={appPath(BOOKMARKLET_TARGET_PATH)} draggable>
           <Bookmark size={13} /> {t("Publish this page")}
         </a>
         <span className="bookmarklet-tip" role="tooltip">

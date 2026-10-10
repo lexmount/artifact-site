@@ -1,4 +1,5 @@
 "use client";
+import { appBasePath } from "@/lib/app-path";
 
 // The floating assistant on the /s/ viewer (an external, deployment-provided AI panel) — the "edit tier" of the embed:
 // rendered ONLY when the deployment configured ARTIFACT_ASSISTANT_URL and the viewer holds
@@ -303,7 +304,7 @@ export default function Assistant({ sdkBase, slug, site, mode = "edit" }: {
         label: mode === "edit" ? t("Let AI edit this artifact") : t("Ask AI"),
         suggestions: ASSISTANT_SUGGESTIONS[mode].map((s) => ({ label: t(s.label), prompt: t(s.prompt) })),
         selectionActions: ASSISTANT_SELECTION_ACTIONS[mode].map((a) => ({ label: t(a.label), prompt: t(a.prompt) })),
-        context: () => buildAssistantContext(currentSite, window.location.origin, currentArtifactSelection(currentSlug)),
+        context: () => buildAssistantContext(currentSite, window.location.origin + appBasePath(), currentArtifactSelection(currentSlug)),
       });
       // mount() creates the host anchor synchronously, so it is guaranteed to be found here (and if not, it is quietly skipped).
       releaseLauncher = installLauncherAffordance();

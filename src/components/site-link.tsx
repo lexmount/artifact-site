@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import Link from "next/link";
 import type { ComponentProps, MouseEvent } from "react";
 import { useStoredToken } from "@/lib/edit-token";
@@ -19,8 +20,8 @@ export default function SiteLink({ slug, href, ...props }: Omit<ComponentProps<t
       // Let the destination render its normal access/network error.
     } finally {
       // Full navigation avoids a prefetched permission-denied response from before the exchange.
-      if (tab) tab.location.href = href;
-      else if (!separate) window.location.assign(href);
+      if (tab) tab.location.href = appPath(href);
+      else if (!separate) window.location.assign(appPath(href));
     }
   };
   return <Link {...props} href={href} prefetch={props.prefetch ?? false} onClick={e => { void open(e); }} onAuxClick={e => { if (e.button === 1) void open(e); }} />;

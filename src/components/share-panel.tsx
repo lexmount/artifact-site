@@ -1,4 +1,5 @@
 "use client";
+import { appPath, appFetch } from "@/lib/app-path";
 import AuthorizationPanel from "@/components/authorization-panel";
 import { track } from "@/lib/analytics";
 // The drawer edits site visibility, role bindings and independent share links.
@@ -113,7 +114,7 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
     let alive = true;
     void (async () => {
       try {
-        const response = await fetch(`/api/sites/${slug}/sharing`, { cache: "no-store" });
+        const response = await appFetch(`/api/sites/${slug}/sharing`, { cache: "no-store" });
         if (!response.ok) throw new Error("Sharing settings unavailable");
         const s = await response.json();
         if (!alive) return;
@@ -184,13 +185,13 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
     quickBusyRef.current = true;
     setQuickBusy(policy); setQuickError(null); setQuickManualUrl(null);
     try {
-      const listResponse = await fetch(`/api/sites/${slug}/shares`, { cache: "no-store" });
+      const listResponse = await appFetch(`/api/sites/${slug}/shares`, { cache: "no-store" });
       const listBody: unknown = await listResponse.json().catch(() => ({}));
       if (!listResponse.ok) throw new Error(errorText(listBody, t("Failed to load share links")));
       const reusable = reusableQuickShare(readShares(listBody), policy, Date.now());
       let url = reusable?.url ?? null;
       if (!url) {
-        const res = await fetch(`/api/sites/${slug}/shares`, {
+        const res = await appFetch(`/api/sites/${slug}/shares`, {
           method: "POST", headers: writeHeaders(),
           body: JSON.stringify({ policy, mode: policy === "login" ? "comment" : "view", expiresInDays: 30 }),
         });
@@ -220,7 +221,7 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
     if (!siteDraft || siteSaving) return;
     setError(null); setSiteSaving(true);
     try {
-      const res = await fetch(`/api/sites/${slug}/sharing`, {method: "PUT", headers: writeHeaders(), body: JSON.stringify(siteDraft)});
+      const res = await appFetch(`/api/sites/${slug}/sharing`, {method: "PUT", headers: writeHeaders(), body: JSON.stringify(siteDraft)});
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? t("Failed to save"));
       setVisibility(siteDraft.visibility);
       siteDirtyRef.current = false; setSiteDraft(null); setConfirmSite(false);
@@ -244,7 +245,7 @@ export default function SharePanel({ slug, visibility: initialVisibility, onOpen
   // this panel. Success or failure, the notice does the talking: the clipboard throws outright in an
   // insecure context, in which case the address is shown so people can take it themselves.
   async function copyCanonical(): Promise<void> {
-    const url = `${window.location.origin}/s/${slug}`;
+    const url = `${window.location.origin}${appPath(`/s/${slug}`)}`;
     try {
       await navigator.clipboard.writeText(url);
       track("share_link_copy", { share_type: "canonical" });

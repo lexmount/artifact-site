@@ -41,7 +41,7 @@ The example defaults to a localhost-only anonymous trial with private visibility
 
 The three decisions that matter most in `.env`:
 
-1. **`ARTIFACT_PUBLIC_URL`**: once set, never change it. The OIDC callback, the CSRF check and the API address handed to agents all come from it.
+1. **`ARTIFACT_PUBLIC_URL`**: the preferred public address. Single-endpoint deployments also derive authentication from it. For a domain change, use the migration procedure below instead of changing it abruptly.
 2. **`ARTIFACT_CREATE_POLICY`**: do not leave it at `open` on a public deployment — that lets anyone upload HTML to your machine. `login` needs the OIDC settings in section four; with `token`, drag-and-drop upload in the browser returns 401 and only scripts and agents can publish.
 3. **Where the data lives**: `ARTIFACT_DATA_PATH` and `POSTGRES_DATA_PATH` default to directories under the repository (`./data`, `./pgdata`); if the repository itself is cloned on the data disk there is nothing to change. These two directories are all of the data.
 
@@ -114,7 +114,7 @@ Everything is unlimited until you say otherwise. On a deployment where strangers
 ## Verifying the deployment
 
 ```bash
-BASE=$(grep ^ARTIFACT_PUBLIC_URL .env | cut -d= -f2)
+BASE=$(grep '^ARTIFACT_PUBLIC_URL=' .env | cut -d= -f2)
 curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/"                # 200
 curl -sS "$BASE/for-agents.md" | grep -m1 'Base URL'                # must be your own domain
 ```
@@ -174,8 +174,10 @@ client obtained by signing in (ChatGPT, Claude and every client that implements 
 authorization — the app is its own authorization server, see [MCP.md](docs/MCP.md)), a
 personal token, or the operator token. Browser cookies do not authenticate MCP. For the OAuth
 path the reverse proxy must pass `/.well-known/*` and `/oauth/*` through untouched (no
-dot-file deny rule, no caching), and `ARTIFACT_PUBLIC_URL` must be the exact address clients
-use, because tokens are bound to it. OAuth requires OIDC sign-in; its three knobs (client host
+dot-file deny rule, no caching). `ARTIFACT_PUBLIC_URL` must be the exact base address clients
+use, because tokens are bound to it. For a subpath deployment, configure the build prefix and
+exact discovery rewrites described in [Domain and subpath migration](#domain-and-subpath-migration).
+OAuth requires OIDC sign-in; its three knobs (client host
 allow-list, dynamic registration, extra application schemes) live in the console next to the
 other policies. Personal tokens are created in the Agent guide or My sites
 and may be revoked immediately. Without OIDC, configure PUBLISH_API_TOKEN and supply it only
@@ -408,3 +410,125 @@ Discussion authors and first-time repliers follow automatically. Explicit unfoll
 Platform administrators can configure **Settings → Notification retention (days)** (1–3650, default 90), overriding `ARTIFACT_NOTIFICATION_RETENTION_DAYS`. Unlike other retention settings, `0` does not mean forever: notification retention must be 1–3650 days. Maintenance removes expired events and their inbox rows in batches, without deleting comments or subscriptions.
 
 Authenticated visitors who comment or explicitly follow using a verified share link receive a version-specific access receipt lasting at most 30 days and no later than link expiry. Receipts are checked against the original resource tenant, current link rules, grant membership, version policy and account status. Authorization changes invalidate receipts; label changes do not. Following without independently verified access cannot issue a receipt.
+
+
+## Domain and subpath migration
+
+Each image runs one standalone Next.js process at one canonical address. Root deployments
+remain the default. To deploy at `https://new.example.net/artifact-site`, build the path into
+the image and set its complete public address at runtime:
+
+```sh
+docker build --build-arg ARTIFACT_BASE_PATH=/artifact-site -t artifact-site:subpath .
+```
+
+```dotenv
+ARTIFACT_PUBLIC_URL=https://new.example.net/artifact-site
+ARTIFACT_BASE_PATH=/artifact-site
+```
+
+`make build` and `make image` pass `ARTIFACT_BASE_PATH` from `.env` as a build argument.
+It is **not a runtime switch**: setting it on an already-built root image cannot add a prefix.
+For platforms without working build-argument support, select `Dockerfile.artifact-site`
+as the Dockerfile (keep the repository root as the build context). It fixes the compiled
+path at `/artifact-site` without requiring any build arguments:
+
+```sh
+docker build -f Dockerfile.artifact-site -t artifact-site:subpath .
+```
+
+Set runtime `ARTIFACT_PUBLIC_URL=https://new.example.net/artifact-site`, then build and
+deploy the new image. The normal `Dockerfile` still defaults to the root path; other
+components can keep using it. For a different prefix, build and publish an image with
+the normal Dockerfile and the appropriate build argument.
+Local development uses `ARTIFACT_BASE_PATH=/artifact-site npm run dev`.
+The server refuses to start if the public URL's path does not match its compiled path.
+The image health check automatically uses the compiled path plus `/api/auth/me`.
+
+Use an empty build prefix and a root `ARTIFACT_PUBLIC_URL` for a root deployment. Supported
+prefixes are slash-separated ASCII letters, digits, `_` and `-`, with no trailing slash.
+The first prefix segment must not reuse an application route or asset directory (for example
+`/api`, `/s`, `/oauth`, `/me`, `/v`, `/brand`, `/vendor` or `/_next`), including nested prefixes
+such as `/api/sites`. Build, startup and `make doctor` reject these ambiguous mounts. The full
+reserved list is in `config/reserved-base-paths.json`; `/artifact-site` is supported.
+A public address must have no credentials, query or fragment. All generated links, callbacks,
+agent instructions, OAuth issuer and MCP resource use this single address, regardless of the
+incoming host. No domain allowlist, second app process or internal routing proxy is needed.
+
+### Gateway routes
+
+Configure these at the HTTP gateway, not in DNS:
+
+| Incoming address | Gateway action |
+| --- | --- |
+| `https://new.example.net/` (exact root only) | 302 to `https://new.example.net/artifact-site/`, preserving query |
+| `/artifact-site` and `/artifact-site/*` on the new host | Forward unchanged to app port 4300 |
+| Old host's browser pages | 302 to the new base plus original path and query |
+| Old API, MCP, OAuth and login callback routes | Retire; clients must change their configured address |
+
+Do not redirect old API writes, token exchanges or login callbacks into the new application.
+Restrict the old-page redirect to GET/HEAD, and exclude `/api`, `/mcp`, `/oauth` and
+`/.well-known` (including descendants). Already-open old pages may fail until reloaded.
+Keep new-host root redirects exact so they do not take over unrelated paths.
+The canonical application address remains the subpath even when a visitor starts at the root.
+
+Standard OAuth discovery also needs four **exact path rewrites** on the new host:
+
+| Public path | Path forwarded to the app |
+| --- | --- |
+| `/.well-known/oauth-authorization-server/artifact-site` | `/artifact-site/.well-known/oauth-authorization-server` |
+| `/.well-known/openid-configuration/artifact-site` | `/artifact-site/.well-known/openid-configuration` |
+| `/.well-known/oauth-protected-resource/artifact-site` | `/artifact-site/.well-known/oauth-protected-resource` |
+| `/.well-known/oauth-protected-resource/artifact-site/mcp` | `/artifact-site/.well-known/oauth-protected-resource/mcp` |
+
+These return JSON directly, without a 302. Forwarding the original discovery path unchanged
+is insufficient: the Next app is mounted under `/artifact-site`. Reserve only these exact
+routes; the app does not need the entire host root or all `/.well-known` paths.
+For example, an Nginx gateway can implement one discovery mapping as:
+
+```nginx
+location = /.well-known/oauth-authorization-server/artifact-site {
+    proxy_pass http://app:4300/artifact-site/.well-known/oauth-authorization-server;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+}
+```
+
+Apply the same pattern to the other three mappings. For ordinary app requests, preserve the
+mount, external `Host` and actual external scheme; overwrite client-supplied forwarding headers
+at the trusted gateway. Keep the app port private and disable buffering/caching for streams
+and auth routes. Adjust trusted-proxy handling if there is another load balancer in front.
+
+### Cutover and acceptance
+
+1. Back up the target deployment's Postgres database and uploaded files. When updating an
+   existing component, retain its database, S3 configuration or local data volume; no data move
+   is needed. If using a replacement component instead, reuse that deployment's database and
+   S3 bucket, or transfer/reattach its local volume, stopping old writes during the handoff.
+   A new empty local volume cannot serve existing uploads. Other independent deployments
+   need no changes. Old-address redirects belong at the gateway (or a redirect-only component).
+2. Register `https://new.example.net/artifact-site/api/auth/callback` with the existing IdP
+   client (or append the configured `ARTIFACT_OIDC_REDIRECT_PATH`). Preserve the IdP identity
+   configuration so existing accounts and permissions remain the same.
+3. Deploy the matching image and gateway routes. Verify browser navigation/API paths,
+   login/logout, upload/edit/download, share creation/unlock, HTML/PDF previews, agent guide,
+   MCP discovery/authorization/calls/refresh and CLI configuration against the full base URL.
+4. Enable the old-page and new-root redirects. Verify old deep links and query parameters,
+   and that new-host unrelated paths are not captured. Update MCP/CLI clients explicitly to
+   the new address and authorize again; HTTP redirects are not an OAuth migration mechanism.
+5. After the transition, remove the old-host redirect and obsolete IdP callback registration.
+   The new application's sessions, data and refresh grants continue working. Old links stop
+   working when their redirect is removed; retain it as long as old shared links matter.
+
+Users sign in again on the new host. Old authorization codes/access/refresh tokens are not
+transferred to the new issuer, and anonymous ownership/cookies are not migrated. A path is
+**not** a browser security boundary: host this app only alongside trusted applications on the
+same origin; uploaded content stays in its sandbox. Changing the path requires an image rebuild;
+changing only the hostname does not. There is no schema migration or extra application process.
+
+CI tests the default root image separately from a `/artifact-site` image. The subpath acceptance
+suite uses a disposable test gateway, Postgres, signed mock IdP, Chrome and a real MCP SDK client;
+run it locally with `E2E_CHROME=/path/to/chrome node scripts/test-subpath.mjs artifact-site:subpath`.
+The test gateway is not shipped in the runtime image. Verify the real gateway's redirects,
+rewrites, TLS and IdP registration again before a production cutover.

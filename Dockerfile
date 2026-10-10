@@ -3,6 +3,7 @@
 # that cannot reach Docker Hub / registry.npmjs.org directly: `make build` fills them from .env.
 #   NODE_IMAGE     base image for all three stages (e.g. a mirror of node:24-bookworm-slim)
 #   NPM_REGISTRY   registry for `npm ci` (empty = npm's default / whatever .npmrc says)
+#   ARTIFACT_BASE_PATH  compiled URL prefix (empty = root); requires a matching public URL
 ARG NODE_IMAGE=node:24-bookworm-slim
 
 # ─────────────────────────────────────────────────────────────
@@ -20,10 +21,12 @@ RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi 
 # ─────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS builder
 WORKDIR /app
-ENV NEXT_TELEMETRY_DISABLED=1
+ARG ARTIFACT_BASE_PATH=
+ENV NEXT_TELEMETRY_DISABLED=1 ARTIFACT_BASE_PATH=$ARTIFACT_BASE_PATH
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN npm run build \
+    && node -e 'require("fs").writeFileSync("base-path.json", JSON.stringify(process.env.ARTIFACT_BASE_PATH))'
 
 # ─────────────────────────────────────────────────────────────
 # 3. runner — minimal runtime, non-root, persistent /data volume
@@ -50,6 +53,7 @@ RUN set -eux; \
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/base-path.json ./base-path.json
 COPY LICENSE-APACHE LICENSE-MIT NOTICE ./
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
@@ -59,7 +63,7 @@ VOLUME ["/data"]
 
 # Uploaded artifacts live under $ARTIFACT_DATA_DIR — keep it on the volume.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4300)+'/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4300)+require('./base-path.json')+'/api/auth/me').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # Start as root so the entrypoint can chown a freshly-mounted /data volume, then
 # it drops to the unprivileged nextjs user before exec'ing the standalone server.

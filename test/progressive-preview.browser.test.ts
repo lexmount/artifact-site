@@ -9,7 +9,7 @@ describe.skipIf(!process.env.E2E_CHROME)("preview eligibility regressions", () =
   let requests = 0;
   beforeAll(async () => {
     const output = await build({configFile:false,logLevel:"silent",resolve:{alias:{"@":path.resolve("src")}},
-      define:{"process.env.NODE_ENV":JSON.stringify("development")},
+      define:{"process.env.NODE_ENV":JSON.stringify("development"),"process.env.NEXT_PUBLIC_ARTIFACT_BASE_PATH":JSON.stringify("")},
       build:{write:false,lib:{entry:path.resolve("test/fixtures/progressive-preview.tsx"),name:"Fixture",formats:["iife"]}}});
     const bundle = (Array.isArray(output) ? output[0] : output) as {output:{type:string;code?:string}[]};
     const code = bundle.output.find(item => item.type === "chunk")!.code!;

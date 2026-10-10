@@ -124,3 +124,37 @@ it.each(["json", "multipart"])("rejects oversized %s before reserving its operat
   expect(await response.json()).toMatchObject({ code: "inline_upload_too_large", effect: "none" });
   expect(await rbacQuery("SELECT id FROM publish_operations WHERE id=$1", [id])).toEqual([]);
 });
+
+
+it.each(["", "/artifact-site"])("keeps create/edit recovery URLs consistent at mount %s", async mount => {
+  setup(); vi.stubEnv("NEXT_PUBLIC_ARTIFACT_BASE_PATH", mount);
+  vi.stubEnv("ARTIFACT_PUBLIC_URL", `http://localhost${mount}`);
+  const { GET } = await import("@/app/api/operations/[key]/route");
+  const { recoverMcpOperation } = await import("@/lib/publish-operation");
+  const { POST: edit } = await import("@/app/api/sites/[slug]/edit/route");
+  const createKey = randomUUID(), body = { mode: "paste", html: "<p>Mounted recovery</p>" };
+  const create = () => POST(req(`${mount}/api/sites`, createKey, body));
+  const first = await create(); expect(first.status).toBe(200); const created = await first.json();
+  const editKey = randomUUID();
+  const update = () => edit(req(`${mount}/api/sites/${created.slug}/edit`, editKey, { content: "<p>Updated</p>" }), { params: Promise.resolve({ slug: created.slug }) });
+  const edited = await update(); expect(edited.status).toBe(200); const updated = await edited.json();
+  for (const [key, initial, retry] of [[createKey, created, create], [editKey, updated, update]] as const) {
+    expect(initial.url).toBe(`${mount}/s/${created.slug}`);
+    expect((await (await retry()).json()).url).toBe(initial.url);
+    const request = req(`${mount}/api/operations/${key}`, key);
+    const status = await GET(request, { params: Promise.resolve({ key }) });
+    expect(status.status).toBe(200);
+    expect((await status.json()).result.url).toBe(initial.url);
+    expect(await recoverMcpOperation(request)).toMatchObject({ url: initial.url });
+    // Persisted data stays mount-independent and is projected for the reading component.
+    for (const current of ["/other-site", ""]) {
+      vi.stubEnv("NEXT_PUBLIC_ARTIFACT_BASE_PATH", current);
+      vi.stubEnv("ARTIFACT_PUBLIC_URL", `http://localhost${current}`);
+      expect(await recoverMcpOperation(request)).toMatchObject({ url: `${current}/s/${created.slug}` });
+      const status = await GET(request, { params: Promise.resolve({ key }) });
+      expect((await status.json()).result.url).toBe(`${current}/s/${created.slug}`);
+    }
+    vi.stubEnv("NEXT_PUBLIC_ARTIFACT_BASE_PATH", mount);
+    vi.stubEnv("ARTIFACT_PUBLIC_URL", `http://localhost${mount}`);
+  }
+});

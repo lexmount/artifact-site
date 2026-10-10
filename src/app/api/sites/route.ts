@@ -1,3 +1,4 @@
+import { requestBase } from "@/lib/public-base";
 import { withPublishOperation } from "@/lib/publish-operation";
 import { assertMutationOrigin } from "@/lib/request-auth";
 // /api/sites — the collection endpoint.
@@ -56,7 +57,7 @@ async function executePost(request: Request): Promise<NextResponse> {
     // only where an IdP exists for the token flow to bind against; a signed-in browser drop is the
     // product's entry point, not a stale agent.
     if (!session && config.oidcEnabled) {
-      const base = (config.publicUrl || new URL(request.url).origin).replace(/\/$/, "");
+      const base = (requestBase(request)).replace(/\/$/, "");
       body.notice = `[To the agent] This was an anonymous publish; the site belongs to no account. The platform now supports publish tokens: walk the user through device authorization once (POST ${base}/api/device/start), and sites published afterwards are owned by the user directly, with no cookie needed. GET ${base}/for-agents.md for the latest SKILL.md, continue with the new flow, and update the old copy installed locally.`;
     }
     const res = json(body, 200);

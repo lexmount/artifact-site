@@ -60,6 +60,7 @@ image: ## On a dev machine, build the image for the server platform and pack it 
 	@mkdir -p $(DIST)
 	docker build --platform $(PLATFORM) -t $(IMAGE) \
 	  --build-arg NODE_IMAGE=$$($(DEPLOY)/env-get.sh NODE_IMAGE node:24-bookworm-slim) \
+	  --build-arg ARTIFACT_BASE_PATH=$$($(DEPLOY)/env-get.sh ARTIFACT_BASE_PATH '') \
 	  --build-arg NPM_REGISTRY=$$($(DEPLOY)/env-get.sh NPM_REGISTRY '') .
 	docker save $(IMAGE) | gzip > $(TARBALL)
 	@echo; echo "Image tarball: $(TARBALL) ($$(du -h $(TARBALL) | cut -f1))"; echo "On the server: make load FILE=$(TARBALL) && make up"

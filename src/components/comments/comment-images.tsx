@@ -1,4 +1,5 @@
 "use client";
+import { appFetch } from "@/lib/app-path";
 import { browserRandomId } from "@/lib/browser-random-id";
 import { useEffect, useLayoutEffect, useRef, useState, useId } from "react";
 import { uploadCommentImage } from "@/lib/comments/upload-image";
@@ -38,7 +39,7 @@ export function CommentImage({attachment, endpoint, shareToken}: {attachment: Co
     if (!nearby) return;
     let active = true, objectUrl = "";
     const controller = new AbortController();
-    fetch(`${endpoint}/attachments/${encodeURIComponent(attachment.id)}`, {headers:shareToken ? {"x-artifact-share":shareToken} : {},cache:"no-store",signal:controller.signal})
+    appFetch(`${endpoint}/attachments/${encodeURIComponent(attachment.id)}`, {headers:shareToken ? {"x-artifact-share":shareToken} : {},cache:"no-store",signal:controller.signal})
       .then(async response => {if (!response.ok) throw new Error(); return response.blob();})
       .then(blob => {if (active) {objectUrl = URL.createObjectURL(blob);setUrl(objectUrl);setFailed(false);setLoadedIdentity(identity);}})
       .catch(() => {if(active) {setFailed(true);setLoadedIdentity(identity);}});
@@ -132,7 +133,7 @@ export function CommentUpload({attachments,onChange,endpoint,scope,shareToken,di
       {attachments.map(attachment=><div key={attachment.id} className="comment-upload-item">
         <CommentImage attachment={attachment} endpoint={endpoint} shareToken={shareToken}/>
         {resizedIds.has(attachment.id)&&<small role="status">{t("Resized to fit the image limit")}</small>}
-        <button type="button" className="comment-upload-remove" disabled={disabled} aria-label={t("Remove image")} onClick={()=>{const next=current.current.filter(a=>a.id!==attachment.id);current.current=next;onChange(next);void fetch(`${endpoint}/attachments/${encodeURIComponent(attachment.id)}`,{method:"DELETE",headers:shareToken?{"x-artifact-share":shareToken}:{}}).catch(()=>{});}}><X size={14}/></button>
+        <button type="button" className="comment-upload-remove" disabled={disabled} aria-label={t("Remove image")} onClick={()=>{const next=current.current.filter(a=>a.id!==attachment.id);current.current=next;onChange(next);void appFetch(`${endpoint}/attachments/${encodeURIComponent(attachment.id)}`,{method:"DELETE",headers:shareToken?{"x-artifact-share":shareToken}:{}}).catch(()=>{});}}><X size={14}/></button>
       </div>)}
       {pending.map(item=><div key={item.id} className="comment-upload-pending">
         <span title={item.file.name}>{item.file.name}</span><small role={item.error?"alert":"status"}>{item.error?(item.reason === "image_too_large" ? t("Image is too large. Choose a smaller image.") : item.reason === "image_invalid" ? t("Image could not be decoded. Choose another PNG, JPEG or WebP.") : t("Upload failed")):item.progress===100?t("Processing image…"):t("Uploading {percent}%",{percent:item.progress??0})}</small>

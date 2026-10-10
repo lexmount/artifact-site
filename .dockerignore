@@ -26,6 +26,7 @@ cli
 
 # Docker meta itself.
 Dockerfile
+Dockerfile.artifact-site
 .dockerignore
 docker-compose.yml
 

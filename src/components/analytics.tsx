@@ -1,4 +1,5 @@
 "use client";
+import { localPath } from "@/lib/app-path";
 
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
@@ -34,7 +35,7 @@ export default function Analytics({ measurementId, hosts }: { measurementId: str
       let name = control?.getAttribute("data-analytics-button");
       if (!name && control instanceof HTMLAnchorElement) {
         const url = new URL(control.href);
-        if (url.origin === window.location.origin && url.pathname === "/api/auth/login") name = "login";
+        if (url.origin === window.location.origin && localPath(url.pathname) === "/api/auth/login") name = "login";
       }
       if (["upload", "login", "share", "download", "update"].includes(name ?? "")) {
         track("ui_click", { button_name: name as "upload" | "login" | "share" | "download" | "update" });

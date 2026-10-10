@@ -1,5 +1,6 @@
 "use client";
 
+import { appPath } from "@/lib/app-path";
 // /me — the person's own sites: title and the upload action, two scopes (created by me / I can
 // edit), the folder rail and list, and the low-frequency account tools (publish tokens, the
 // applications connected through OAuth) behind one menu instead of more tabs.
@@ -67,7 +68,7 @@ export default function MePage({ allSites, directory, userId }: { allSites: Site
               {tab === "recent"
                 ? shelf.items.length > 0 && <button type="button" className="quiet" onClick={clearHistory}>{t("Clear history")}</button>
                 /* Identity is an addition, never a wall: the sign-in offer sits beside the list, and only where an IdP exists. */
-                : oidcEnabled && <a className="quiet" href={loginHref(typeof window === "undefined" ? "/me" : `/me${window.location.search}`)}>{t("Sign in to see your sites on every device")}</a>}
+                : oidcEnabled && <a className="quiet" href={appPath(loginHref(typeof window === "undefined" ? "/me" : `/me${window.location.search}`))}>{t("Sign in to see your sites on every device")}</a>}
             </span>
           </div>
           <div role="tabpanel" id="me-panel" aria-labelledby={tab === "recent" ? "me-tab-recent" : "me-tab-browser"}>

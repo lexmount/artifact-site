@@ -28,7 +28,7 @@ describe("/admin gate and entry", () => {
   it("the account menu shows Administration only when /api/auth/me says isAdmin", () => {
     const menu = read("src/components/auth-button.tsx");
     expect(menu).toMatch(/\{isAdmin && \([\s\S]*href="\/admin"/);
-    expect(read("src/lib/use-auth.ts")).toContain("isAdmin: Boolean(body.isAdmin)");
+    expect(read("src/lib/auth-store.ts")).toContain("isAdmin: Boolean(body.isAdmin)");
   });
   it("every console view is a client page under the gated layout", () => {
     for (const page of ["page", "users/page", "sites/page", "settings/page", "system/page"]) {

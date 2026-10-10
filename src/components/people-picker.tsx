@@ -1,4 +1,5 @@
 "use client";
+import { appFetch } from "@/lib/app-path";
 // The list editor for the "Specific people" tier. Two ways in, and both are required:
 //
 //   1. Search users who have signed in to this site — a hit proves they REALLY have an account, so
@@ -53,7 +54,7 @@ export default function PeoplePicker({ people, onAdd, onRemove, disabled, idPref
       void (async () => {
         setSearching(true);
         try {
-          const res = await fetch(`/api/users/search?q=${encodeURIComponent(query.trim())}`, {
+          const res = await appFetch(`/api/users/search?q=${encodeURIComponent(query.trim())}`, {
             signal: ctrl.signal, cache: "no-store",
           });
           const body: unknown = await res.json().catch(() => ({}));

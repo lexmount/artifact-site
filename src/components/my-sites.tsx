@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import type { DirectoryPage } from "@/lib/directory-query";
 import { useDirectoryNavigation } from "@/lib/use-directory-navigation";
 import ArtifactCover from "@/components/artifact-cover";
@@ -242,7 +243,7 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
             : t("Use \"Move to folder\" in a site's menu to put it here.")}
       </p>
       {active === FILTER_ALL && oidcEnabled && !user && !query.trim() && (
-        <p><a className="quiet" href={loginHref("/me")}>{t("Sign in to recover sites from your other devices")}</a></p>
+        <p><a className="quiet" href={appPath(loginHref("/me"))}>{t("Sign in to recover sites from your other devices")}</a></p>
       )}
     </div>
   );

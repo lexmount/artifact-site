@@ -4,6 +4,8 @@ import type { Messages } from "@/lib/i18n";
 /** Client components under src/components (grid, uploader, sharing drawer, version history,
  *  personal centre cards, header chrome). Keys are the English source strings exactly as in code. */
 export const components: Messages = {
+  "Retry account check": "重试登录状态检查",
+  "Could not sign out. Please try again.": "退出登录失败，请重试。",
   "Private site — use a share link": "私有站点，请使用分享链接",
   "This page address /s/{slug} is only accessible to people who already have permission. To share with others, copy or create a share link in Sharing settings.": "本页地址 /s/{slug} 仅限已有访问权限的人访问。分享给他人，请在「分享设置」中复制或创建分享链接。",
   "Go to sharing": "去分享",

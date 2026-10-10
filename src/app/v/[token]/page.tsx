@@ -1,3 +1,4 @@
+import { appPath } from "@/lib/app-path";
 import RecentUnavailable from "@/components/recent-unavailable";
 import RecentTracker from "@/components/recent-tracker";
 import { tenantActive } from "@/lib/rbac-access";
@@ -223,7 +224,7 @@ function denied(t: Translator, reason: ShareDenial, token: string, error?: strin
               `login` share is unopenable by anyone, and a button that 400s is worse than a
               sentence explaining why. */}
           {config.oidcEnabled
-            ? <a className="btn solid" href={`/api/auth/login?return_to=${returnTo}`}>{t("Sign in")}</a>
+            ? <a className="btn solid" href={appPath(`/api/auth/login?return_to=${returnTo}`)}>{t("Sign in")}</a>
             : <p className="drawer-note">{t("This deployment has no sign-in configured yet. Ask the person who shared it for a different link.")}</p>}
         </>
       ));
@@ -253,7 +254,7 @@ function passcodeForm(t: Translator, token: string, error?: string) {
     <>
       <p>{t("The person who shared this link protected it with a passcode. Enter it to view; you will not be asked again for 12 hours.")}</p>
       {message && <p className="drawer-error" role="alert">{message}</p>}
-      <form className="share-add" method="post" action={`/api/shares/${encodeURIComponent(token)}/unlock`}>
+      <form className="share-add" method="post" action={appPath(`/api/shares/${encodeURIComponent(token)}/unlock`)}>
         {/* Not type="password": this is a code someone was told out loud or pasted from a chat, not
             a secret they are trying to hide from the person next to them, and masking it only makes
             it harder to check. autoComplete off for the same reason — nothing here belongs in a
@@ -290,7 +291,7 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
           <div className="controls">
             {mode === "edit" && <Link className="btn" title={t("Edit")} href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}`}><Pencil size={14} aria-hidden="true" />{t("Edit")}</Link>}
             {/* Pin this rendered preview to the same immutable version as its discussion. A reload follows the link again. */}
-            <a className="btn sm ghost" title={t("Open in a new tab")} href={`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`} target="_blank" rel="noreferrer">
+            <a className="btn sm ghost" title={t("Open in a new tab")} href={appPath(`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`)} target="_blank" rel="noreferrer">
               <ExternalLink size={14} aria-hidden="true" />
               {t("Open in a new tab")}
             </a>
@@ -304,7 +305,7 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
               get a laxer sandbox than the owner does. */}
           <iframe
             className="fs-frame"
-            src={`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`}
+            src={appPath(`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`)}
             title={site.title}
             sandbox="allow-forms allow-modals allow-scripts allow-popups allow-downloads"
             allow="fullscreen"

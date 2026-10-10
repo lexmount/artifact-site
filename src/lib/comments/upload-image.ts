@@ -1,3 +1,4 @@
+import { appPath } from "@/lib/app-path";
 /** XHR exposes transfer progress; 100% means server processing, not completion. */
 export function uploadCommentImage(url: string, data: FormData, token: string | undefined, signal: AbortSignal, progress: (percent: number) => void): Promise<{data:unknown;resized:boolean}> {
   return new Promise((resolve,reject) => {
@@ -5,7 +6,7 @@ export function uploadCommentImage(url: string, data: FormData, token: string | 
     const abort = () => {xhr.abort();reject(new DOMException("Upload cancelled","AbortError"));};
     const cleanup = () => signal.removeEventListener("abort",abort);
     if (signal.aborted) {abort();return;}
-    xhr.open("POST",url);
+    xhr.open("POST",appPath(url));
     if(token) xhr.setRequestHeader("x-artifact-share",token);
     xhr.timeout=300_000;
     xhr.upload.onprogress=event=>{if(event.lengthComputable) progress(Math.min(100,Math.round(event.loaded/event.total*100)));};

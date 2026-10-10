@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 
 // The four things a person does to one of their sites from a list — copy its link, save a copy,
 // rename it, delete it — plus the toast that reports each. Shared by the account list (my-sites)
@@ -27,7 +28,7 @@ export function useSiteActions(tokens: Readonly<Record<string, string | undefine
   const tokenHeader = (slug: string): Record<string, string> => (tokens[slug] ? { "x-edit-token": tokens[slug] as string } : {});
 
   async function copyLink(slug: string) {
-    const url = `${window.location.origin}/s/${slug}`;
+    const url = `${window.location.origin}${appPath(`/s/${slug}`)}`;
     try {
       await navigator.clipboard.writeText(url);
       flash(t("Link copied"));

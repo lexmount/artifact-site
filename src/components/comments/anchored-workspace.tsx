@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { CommentToastProvider, useCommentToast } from "./comment-toast";
 import { Copy } from "lucide-react";
@@ -332,7 +333,7 @@ function AnchoredWorkspaceContent(props: AnchoredWorkspaceProps) {
               onClick={() => {
                 const url = new URL(window.location.href);
                 if (canAggregate) {
-                  url.pathname = `/s/${encodeURIComponent(slug)}`;
+                  url.pathname = appPath(`/s/${encodeURIComponent(slug)}`);
                   url.search = new URLSearchParams({
                     comments: "all",
                   }).toString();

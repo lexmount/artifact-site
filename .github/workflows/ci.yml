@@ -82,7 +82,7 @@ jobs:
 
   image:
     name: docker build
-    timeout-minutes: 20
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,8 +112,33 @@ jobs:
         run: bash scripts/test-image.sh artifact-site:ci
         env:
           E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: artifact-site:subpath
+          build-args: ARTIFACT_BASE_PATH=/artifact-site
+          cache-from: type=gha
+      - name: Build fixed subpath image without build arguments
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.artifact-site
+          push: false
+          load: true
+          tags: artifact-site:fixed-subpath
+          cache-from: type=gha
+      - name: Test subpath deployment and gateway cutover
+        run: node scripts/test-subpath.mjs artifact-site:subpath
+        env:
+          E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+      - name: Test fixed subpath image
+        run: node scripts/test-subpath.mjs artifact-site:fixed-subpath
+        env:
+          E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: image-server-log
-          path: test-results/image-server.log
+          path: test-results/*.log

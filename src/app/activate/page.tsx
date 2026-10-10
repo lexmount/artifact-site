@@ -1,10 +1,11 @@
+"use client";
+import { appFetch, appPath } from "@/lib/app-path";
 // /activate — the human half of device authorization: sign in, see the code, press allow.
 //
 // The user code arrives via ?code= (low-sensitivity: it can only be approved by the person who is
 // signed in here, and approving binds the token to THAT person — knowing a code steals nothing).
 // The page still shows the code and who you are before the button, because the one real risk is
 // social: someone sending you THEIR code hoping you'll bless it. Make what's happening legible.
-"use client";
 
 import AppShell from "@/components/app-shell";
 import Link from "next/link";
@@ -38,7 +39,7 @@ export default function ActivatePage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/device/approve", {
+      const res = await appFetch("/api/device/approve", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ user_code: code }),
@@ -76,7 +77,7 @@ export default function ActivatePage() {
             <p className="eyebrow">{t("Sign-in required")}</p>
             <h1>{t("Sign in to complete device authorization")}</h1>
             <p className="deck">{t("A terminal / agent session is asking to publish as you. Sign in to confirm.")}</p>
-            <p><a className="primary" href={loginHref(`/activate${code ? `?code=${encodeURIComponent(code)}` : ""}`)}>{t("Sign in")}</a></p>
+            <p><a className="primary" href={appPath(loginHref(`/activate${code ? `?code=${encodeURIComponent(code)}` : ""}`))}>{t("Sign in")}</a></p>
           </section>
         )}
 

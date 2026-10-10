@@ -386,7 +386,7 @@ describe("C5 no action on the bar may go missing", () => {
 
   it("the panel copies the read-only link and must never include the edit token", () => {
     const copy = block(share, "async function copyCanonical()", "\n  }");
-    expect(copy).toContain("`${window.location.origin}/s/${slug}`");
+    expect(copy).toContain("`${window.location.origin}${appPath(`/s/${slug}`)}`");
     expect(copy).not.toContain("?t=");
     expect(viewer).not.toContain("async function shareEditable");
     expect(viewer).toContain("permissions.canRename");

@@ -50,12 +50,27 @@ load_env
 url="${ARTIFACT_PUBLIC_URL:-}"
 if [ -z "$url" ]; then
   wrn "ARTIFACT_PUBLIC_URL is not set. It is required behind a reverse proxy; otherwise the OIDC callback, CSRF checks and the addresses in /for-agents.md are guessed from the request Host."
-elif ! [[ "$url" =~ ^https?://[^/]+$ ]]; then
-  err "ARTIFACT_PUBLIC_URL=$url has the wrong format: expected http(s)://host[:port], with no path and no trailing slash."
+elif ! [[ "$url" =~ ^https?://[^/[:space:]?#@]+(/[a-zA-Z0-9_-]+)*$ ]]; then
+  err "ARTIFACT_PUBLIC_URL=$url has the wrong format: expected http(s)://host[:port], with an optional path and no trailing slash."
 elif [[ "$url" =~ ^https?://([^/:]+\.)?example\.(net|com|org)(:[0-9]+)?$ ]]; then
   err "ARTIFACT_PUBLIC_URL=$url is still the template placeholder. Set it to this site's real address; otherwise writes are rejected by the Origin check, the OIDC callback points at example.net, and agents get a bogus API address."
 else
   ok "public url $url"
+fi
+
+# Next embeds the mount at build time; changing only the runtime URL cannot move it.
+mount="${ARTIFACT_BASE_PATH:-}"
+if ! [[ "$mount" =~ ^(/[a-zA-Z0-9_-]+)*$ ]]; then err "ARTIFACT_BASE_PATH must be empty or a path such as /artifact-site, with no trailing slash."; fi
+mount_root="${mount#/}"; mount_root="${mount_root%%/*}"
+# Read the same list used by next.config.ts and the boot check; no host Node/jq dependency.
+while IFS= read -r reserved; do
+  if [ "$mount_root" = "$reserved" ]; then err "ARTIFACT_BASE_PATH starts with a reserved application route: /$reserved. Use a distinct prefix such as /artifact-site."; fi
+done < <(sed -n 's/^[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/config/reserved-base-paths.json")
+url_path="${url#*://}"; url_path="${url_path#${url_path%%/*}}"
+if [ "$url_path" != "$mount" ]; then err "ARTIFACT_PUBLIC_URL path must match ARTIFACT_BASE_PATH. Build a matching image before starting."; fi
+if [ -n "$mount" ]; then
+  [ -n "$url" ] || err "Subpath deployments require ARTIFACT_PUBLIC_URL."
+  wrn "Subpath mode: the image must be built for $mount. Preserve that prefix at the gateway and rewrite exact OAuth discovery routes; see SELFHOST.md."
 fi
 
 # ---- metadata ------------------------------------------------------------------------------
@@ -185,7 +200,7 @@ else info "document conversion: off (Office documents show as download cards; se
 if bundled_caddy; then
   if [ -z "${ARTIFACT_DOMAIN:-}" ]; then err "ARTIFACT_WITH_CADDY=on requires ARTIFACT_DOMAIN."; else
     ok "proxy: bundled Caddy, domain ${ARTIFACT_DOMAIN} (ports 80/443 must be free and reachable from the internet)"
-    if [ -n "$url" ] && [[ "$url" != "https://${ARTIFACT_DOMAIN}" ]]; then wrn "ARTIFACT_PUBLIC_URL and ARTIFACT_DOMAIN do not match ($url vs https://${ARTIFACT_DOMAIN})."; fi
+    if [ -n "$url" ] && [[ "$url" != "https://${ARTIFACT_DOMAIN}${mount}" ]]; then wrn "ARTIFACT_PUBLIC_URL and ARTIFACT_DOMAIN do not match ($url vs https://${ARTIFACT_DOMAIN})."; fi
   fi
 else
   info "proxy: not bundled (point your existing reverse proxy at ${ARTIFACT_BIND:-127.0.0.1}:${ARTIFACT_PORT:-4300})"

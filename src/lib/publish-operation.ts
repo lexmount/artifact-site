@@ -1,3 +1,4 @@
+import { appPath, localPath } from "@/lib/app-path";
 import { requirePermission } from "@/lib/authz";
 import { checkRateLimit, withRateLimitChecked } from "@/lib/ratelimit";
 import "server-only";
@@ -103,7 +104,7 @@ export async function withPublishOperation(request: Request, run: (request: Requ
       return null;
     });
     if (claimed) return json(await readableOperationResult(request, claimed.result), Number(claimed.http_status));
-    const status = url.pathname.startsWith("/api/uploads") ? 201 : 200;
+    const status = localPath(url.pathname).startsWith("/api/uploads") ? 201 : 200;
     const headers = new Headers(request.headers); headers.delete("content-length");
     const replayable = new Request(request.url, { method: request.method, headers, body: Buffer.from(bytes), signal: request.signal });
     try {
@@ -141,6 +142,9 @@ export async function readableOperationResult(request: Request, encoded: unknown
     const site = await getSiteBySlug(result.slug);
     if (!site || site.deletedAt) throw failure("Published artifact is no longer available", "site_not_found", 404);
     await requirePermission(request, site, "site.source.export", undefined, false);
+    // Durable rows are app-relative; render links for the component reading them, including
+    // records written before a domain/path change or by another component sharing the database.
+    result.url = appPath(`/s/${site.slug}`);
   }
   return result;
 }

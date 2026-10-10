@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import type { SitePermissions } from "@/lib/authz";
 import { useSitePermissions } from "@/lib/site-permissions";
 import { siteFetch as fetch } from "@/lib/share-context";
@@ -174,7 +175,7 @@ export default function VersionHistory({ slug, editToken, onBeforeRollback, onRo
                   <div className="ver-row-actions">
                     {canDownload && <SiteDownload slug={slug} versionId={v.id} editToken={editToken} menuItem={false} />}
                     {canManageOfficial && <button type="button" className="btn sm" disabled={rolling !== null} onClick={() => void designate(v)}>{t(v.official ? "Remove official designation" : "Set as official version")}</button>}
-                    <a className="btn sm ghost" href={`/s/${slug}?version=${encodeURIComponent(v.id)}`} target="_blank" rel="noreferrer">
+                    <a className="btn sm ghost" href={appPath(`/s/${slug}?version=${encodeURIComponent(v.id)}`)} target="_blank" rel="noreferrer">
                       <Eye size={13} /> {t("Preview this version")}
                     </a>
                     {/* title goes on the outer span rather than the button: a disabled button

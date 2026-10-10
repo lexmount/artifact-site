@@ -1,5 +1,6 @@
 "use client";
 
+import { appPath } from "@/lib/app-path";
 // Client half of i18n: the root layout resolves the locale on the server and hands it down here,
 // so client components render the same language on the server and after hydration. Without a
 // provider (unit tests, storybook-style isolation) `useT` is plain English — never a crash.
@@ -33,6 +34,6 @@ export function setLocaleCookie(locale: Locale): void {
   // explicitly chooses a language, otherwise the menu would appear to do nothing after reload.
   const hadOverride = url.searchParams.has("lang");
   url.searchParams.delete("lang");
-  if (hadOverride) window.location.assign(url.toString());
+  if (hadOverride) window.location.assign(appPath(url.toString()));
   else window.location.reload();
 }

@@ -165,7 +165,7 @@ export function createRemoteMcpServer(request: Request) {
     const sourceRequest = apiRequest(request, `/api/sites/${encodeURIComponent(slug)}/export${version_id ? `?version_id=${encodeURIComponent(version_id)}` : ""}`);
     const view = await getReadableView(sourceRequest, slug, { audit: false }); if (!view?.readable) throw Object.assign(new Error("Site or requested version not accessible"), { statusCode: 404 });
     await requirePermission(sourceRequest, view.site, "site.source.export");
-    if (path === undefined) return { slug, versionId: view.version.id, files: await getStorage().list(view.site.id, view.version.id), downloadUrl: new URL(`/api/sites/${encodeURIComponent(slug)}/export?version_id=${encodeURIComponent(view.version.id)}`, publicBase).href, authorization: "Send your configured Bearer token; it is not embedded in the URL." };
+    if (path === undefined) return { slug, versionId: view.version.id, files: await getStorage().list(view.site.id, view.version.id), downloadUrl: `${publicBase}/api/sites/${encodeURIComponent(slug)}/export?version_id=${encodeURIComponent(view.version.id)}`, authorization: "Send your configured Bearer token; it is not embedded in the URL." };
     const data = await getStorage().readRange(view.site.id, view.version.id, safeRelativePath(path), offset, offset + length - 1);
     return { versionId: view.version.id, path, offset, total: data.total, base64: Buffer.from(data.bytes).toString("base64"), nextOffset: offset + data.bytes.length, done: offset + data.bytes.length >= data.total };
   });

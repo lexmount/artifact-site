@@ -144,7 +144,11 @@ export class ArtifactSiteClient {
 
   /** Absolute URL for a site-relative path the API returned (`/s/...`, `/v/...`). */
   absolute(pathOrUrl: string): string {
-    return /^https?:\/\//.test(pathOrUrl) ? pathOrUrl : `${this.baseUrl}${pathOrUrl.startsWith("/") ? "" : "/"}${pathOrUrl}`;
+    if (/^https?:\/\//.test(pathOrUrl)) return pathOrUrl;
+    const base = new URL(this.baseUrl);
+    const mount = base.pathname.replace(/\/$/, "");
+    if (mount && (pathOrUrl === mount || pathOrUrl.startsWith(`${mount}/`))) return base.origin + pathOrUrl;
+    return `${this.baseUrl}${pathOrUrl.startsWith("/") ? "" : "/"}${pathOrUrl}`;
   }
 
   // ---- identity ------------------------------------------------------------------------------

@@ -155,7 +155,7 @@ describe("quick sharing is idempotent", () => {
   });
 
   it("lists before minting, gives newly minted quick links an expiry, and treats copy failure separately", () => {
-    expect(panel).toContain('fetch(`/api/sites/${slug}/shares`, { cache: "no-store" })');
+    expect(panel).toContain('appFetch(`/api/sites/${slug}/shares`, { cache: "no-store" })');
     expect(panel).toContain("reusableQuickShare(readShares(listBody), policy, Date.now())");
     expect(panel).toContain("expiresInDays: 30");
     expect(panel).toContain("await copyShareLink(url)");

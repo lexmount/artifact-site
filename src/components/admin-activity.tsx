@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/app-path";
 // "Administrator activity" — a drawer on the site page, for its owner: every time an administrator
 // took the site down, restored it, or opened it while it was not public. The list is the owner's
 // own view of the administration log (GET /api/sites/<slug>/admin-activity), so the platform's
@@ -33,7 +34,7 @@ export default function AdminActivity({ slug, onOpenChange }: { slug: string; on
   const load = useCallback(async () => {
     setError(null);
     try {
-      const res = await fetch(`/api/sites/${slug}/admin-activity`, { cache: "no-store" });
+      const res = await appFetch(`/api/sites/${slug}/admin-activity`, { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || t("Failed to load"));
       setEntries(data.entries as Entry[]);

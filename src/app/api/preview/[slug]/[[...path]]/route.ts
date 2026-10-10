@@ -1,3 +1,4 @@
+import { requestBase } from "@/lib/public-base";
 // Serve read path — GET /api/preview/:slug/:path*. The whole body is lib/preview.servePreviewFile:
 // path guards, current-version render, <base> + storage shim, sandbox CSP. 404 unknown · 400 guard.
 //
@@ -82,6 +83,6 @@ async function serve(request: Request, context: { params: Promise<{ slug: string
   const versionId=access.versionId;
   const result = await servePreviewFile(slug, path, versionId, baseHref, request.headers.get("range"), imageViewer,
     ["document", "iframe", "frame", "object", "embed"].includes(request.headers.get("sec-fetch-dest") ?? ""),
-    url.searchParams.get("__artifact_download") === "1");
+    url.searchParams.get("__artifact_download") === "1", new URL(requestBase(request)).origin);
   return new NextResponse(result.body as BodyInit, { status: result.status, headers: { ...result.headers, vary: "Sec-Fetch-Dest", "cache-control": access.key ? "private, no-store" : result.headers["cache-control"] ?? "no-store" } });
 }

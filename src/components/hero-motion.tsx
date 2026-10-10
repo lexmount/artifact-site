@@ -1,5 +1,6 @@
 "use client";
 
+import { appPath } from "@/lib/app-path";
 // The hero's eight-second loop (a page passing through a frame), pre-rendered to video by the
 // design team. Muted, looping, playing only while visible and only when the person has not asked
 // the OS for less motion — then it is the poster. Autoplay refusals fall back to the poster too.
@@ -27,9 +28,9 @@ export default function HeroMotion() {
   return (
     <div className="hero-art" aria-hidden="true">
       {/* Purely decorative (the wrapper is aria-hidden), so no accessible name. */}
-      <video ref={ref} muted playsInline loop preload="metadata" poster="/brand/hero-motion-poster.jpg">
-        <source src="/brand/hero-loop.mp4" type="video/mp4" />
-        <source src="/brand/hero-loop.webm" type="video/webm" />
+      <video ref={ref} muted playsInline loop preload="metadata" poster={appPath("/brand/hero-motion-poster.jpg")}>
+        <source src={appPath("/brand/hero-loop.mp4")} type="video/mp4" />
+        <source src={appPath("/brand/hero-loop.webm")} type="video/webm" />
       </video>
     </div>
   );

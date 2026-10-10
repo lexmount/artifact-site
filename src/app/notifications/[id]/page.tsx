@@ -1,3 +1,4 @@
+import { appPath } from "@/lib/app-path";
 import { headers } from "next/headers";
 import Link from "next/link";
 import ViewerBrand from "@/components/viewer-brand";
@@ -63,7 +64,7 @@ export default async function NotificationTargetPage({
           <iframe
             className="fs-frame"
             title={target.site.title}
-            src={`/api/preview/${encodeURIComponent(target.site.slug)}?v=${encodeURIComponent(version.id)}`}
+            src={appPath(`/api/preview/${encodeURIComponent(target.site.slug)}?v=${encodeURIComponent(version.id)}`)}
             sandbox="allow-forms allow-modals allow-scripts allow-popups allow-downloads"
           />
         </div>

@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import { siteFetch as fetch } from "@/lib/share-context";
 import { useSitePermissions } from "@/lib/site-permissions";
 
@@ -42,7 +43,7 @@ import { formatDate } from "@/lib/i18n";
 // The bridge owns navigation after mount. Parent chrome updates must not overwrite its file URL.
 function SnapshotFrame({ src, ...props }: ComponentProps<"iframe">) {
   const [initialSrc] = useState(src);
-  return <iframe {...props} src={initialSrc} />;
+  return <iframe {...props} src={appPath(initialSrc)} />;
 }
 
 type Device = "desktop" | "tablet" | "mobile";
@@ -404,7 +405,7 @@ export default function SiteViewer(props: {
           <div className="fs-notice info" role="status">
             <b>{t("Published without an account.")}</b>{" "}
             {t("This site will be removed on {date}. Sign in from the browser that created it to keep it.", { date: formatDate(props.expiresAt, locale) })}{" "}
-            {props.canSignIn && <a href={loginHref()}>{t("Sign in to keep it")}</a>}
+            {props.canSignIn && <a href={appPath(loginHref())}>{t("Sign in to keep it")}</a>}
           </div>
         )}
         <div className="fs-stage">
@@ -539,7 +540,7 @@ export default function SiteViewer(props: {
               <a
                 role="menuitem"
                 className="menu-item"
-                href={`/api/preview/${slug}/${(commentVersion || props.pinnedVersionId) ? `?v=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`}
+                href={appPath(`/api/preview/${slug}/${(commentVersion || props.pinnedVersionId) ? `?v=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`)}
                 target="_blank"
                 rel="noreferrer"
                 title={props.visibility === "private"

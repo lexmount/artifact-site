@@ -1,3 +1,4 @@
+import { appBasePath, localPath } from "@/lib/app-path";
 // Browser-only, opt-in analytics. All fields crossing the boundary are allowlisted.
 type Events = {
   ui_click: { button_name: "upload" | "login" | "share" | "download" | "update" };
@@ -19,7 +20,7 @@ declare global {
 
 export function analyticsPage(href: string) {
   const url = new URL(href);
-  const path = url.pathname;
+  const path = localPath(url.pathname);
   let route = "/other", title = "Other", type = "other";
   const pages: Record<string, [string, string]> = {
     "/": ["Home", "home"], "/explore": ["Explore", "explore"], "/me": ["My artifacts", "account"],
@@ -33,7 +34,7 @@ export function analyticsPage(href: string) {
   else if (/^\/s\/[^/]+\/edit\/?$/.test(path)) { route = "/s/artifact/edit"; title = "Edit artifact"; type = "editor"; }
   else if (/^\/s\/[^/]+\/?$/.test(path)) { route = "/s/artifact"; title = "Artifact"; type = "viewer"; }
   else if (path === "/admin" || path.startsWith("/admin/")) { route = "/admin"; title = "Administration"; type = "admin"; }
-  return { page_location: url.origin + route, page_title: title, page_type: type };
+  return { page_location: url.origin + appBasePath() + route, page_title: title, page_type: type };
 }
 
 const campaignKeys = ["utm_source", "utm_medium", "utm_campaign"] as const;

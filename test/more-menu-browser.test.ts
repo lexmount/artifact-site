@@ -17,7 +17,7 @@ describe.skipIf(!process.env.E2E_CHROME)("MoreMenu browser regressions", () => {
       configFile: false,
       logLevel: "silent",
       resolve: { alias: { "@": path.resolve("src") } },
-      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      define: { "process.env.NODE_ENV": JSON.stringify("development"), "process.env.NEXT_PUBLIC_ARTIFACT_BASE_PATH": JSON.stringify("") },
       build: {
         write: false,
         minify: false,

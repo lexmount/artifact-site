@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import { useEffect, useRef, useState } from "react";
 import ArtifactCover from "@/components/artifact-cover";
 import { previewQueue } from "@/lib/preview-queue";
@@ -77,7 +78,7 @@ function ActivePreview({ site, src }: { site: SiteSummary; src: string }) {
   }, [src]);
   return <div ref={host} className="progressive-preview" data-preview-state={state}>
     <ArtifactCover site={site} />
-    {state !== "cover" && <iframe src={src} title={t("{title} preview", { title: site.title })}
+    {state !== "cover" && <iframe src={appPath(src)} title={t("{title} preview", { title: site.title })}
       tabIndex={-1} inert sandbox="" aria-hidden="true"
       style={{ opacity: state === "ready" ? 1 : 0 }}
       onLoad={() => { setState("ready"); host.current?.dispatchEvent(new Event("preview-settled")); }}

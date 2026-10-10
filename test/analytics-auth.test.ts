@@ -35,3 +35,16 @@ it("marks only the first completed OIDC sign-in as signup", async () => {
   vi.stubEnv("ARTIFACT_GA_MEASUREMENT_ID", "");
   expect((await handleOidcCallback(req)).cookies.get("artifact_analytics_auth")).toBeUndefined();
 });
+
+it("issues a fresh short-lived auth sync marker for each completed login without analytics", async () => {
+  vi.stubEnv("ARTIFACT_GA_MEASUREMENT_ID", "");
+  vi.stubEnv("NEXT_PUBLIC_ARTIFACT_BASE_PATH", "/artifacts");
+  const req = new Request("https://app.example.com/artifacts/api/auth/callback?code=secret&state=secret");
+  const first = await handleOidcCallback(req);
+  const marker = first.cookies.get("artifact_auth_change");
+  expect(marker).toMatchObject({ path: "/artifacts", maxAge: 120, sameSite: "lax", secure: true, httpOnly: false });
+  expect(marker?.value).toMatch(/^[a-f0-9-]{36}$/);
+  const second = await handleOidcCallback(req);
+  expect(second.cookies.get("artifact_auth_change")?.value).not.toBe(marker?.value);
+  expect(first.headers.getSetCookie().join("; ")).toContain("session=test");
+});

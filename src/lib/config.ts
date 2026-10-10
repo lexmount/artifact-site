@@ -224,9 +224,7 @@ export const config = {
   get convertConcurrency(): number {
     return Math.max(1, intFromEnv("ARTIFACT_CONVERT_CONCURRENCY", 2));
   },
-  /** Canonical public origin, e.g. https://artifacts.example.net. Used to derive the OIDC redirect
-   *  URI and to check Origin on cookie-authenticated writes. Empty falls back to the request origin,
-   *  which is fine locally but should always be set behind a proxy. */
+  /** Canonical public base URL, including the optional build-time path prefix. */
   get publicUrl(): string {
     return (process.env.ARTIFACT_PUBLIC_URL || "").trim().replace(/\/+$/, "");
   },

@@ -11,6 +11,13 @@ import { isAdmin, assertPresentedBearerAlive } from "@/lib/auth";
 import { errorResponse, json } from "../../_util";
 
 export async function GET(request: Request): Promise<NextResponse> {
+  const response = await currentUser(request);
+  response.headers.set("Cache-Control", "private, no-store");
+  response.headers.set("Vary", "Cookie, Authorization");
+  return response;
+}
+
+async function currentUser(request: Request): Promise<NextResponse> {
   try {
     const session = await resolveSession(request);
     await assertPresentedBearerAlive(request, session);

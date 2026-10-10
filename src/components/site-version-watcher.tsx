@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch, appPath } from "@/lib/app-path";
 // The "updated" sentinel — the viewer page's ear on the version feed (contract 2's client half).
 //
 // Mounted on every /s/ page. Primary transport is the SSE feed; if the stream cannot be
@@ -91,7 +92,7 @@ export default function SiteVersionWatcher({ slug, versionId, autoRefresh = fals
     const startPolling = () => {
       if (poll || stopped) return;
       poll = setInterval(() => {
-        void fetch(`/api/sites/${slug}/versions`, { cache: "no-store" })
+        void appFetch(`/api/sites/${slug}/versions`, { cache: "no-store" })
           .then((r) => (r.ok ? r.json() : null))
           .then((body: { currentVersionId?: unknown } | null) => {
             if (!stopped && body && isNewVersion(versionId, body.currentVersionId)) announce({ versionId: body.currentVersionId });
@@ -103,7 +104,7 @@ export default function SiteVersionWatcher({ slug, versionId, autoRefresh = fals
     const openStream = () => {
       if (source || stopped) return;
       try {
-        source = new EventSource(`/api/sites/${slug}/events`);
+        source = new EventSource(appPath(`/api/sites/${slug}/events`));
       } catch {
         startPolling();
         return;
@@ -152,7 +153,7 @@ export default function SiteVersionWatcher({ slug, versionId, autoRefresh = fals
         return;
       }
       openStream();
-      void fetch(`/api/sites/${slug}/versions`, { cache: "no-store" })
+      void appFetch(`/api/sites/${slug}/versions`, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
         .then((body: { currentVersionId?: unknown } | null) => {
           if (!stopped && body && isNewVersion(versionId, body.currentVersionId)) announce({ versionId: body.currentVersionId });

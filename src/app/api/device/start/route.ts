@@ -1,3 +1,4 @@
+import { requestBase } from "@/lib/public-base";
 // POST /api/device/start — begin a device authorization (RFC 8628 in spirit).
 //
 // An agent with no browser calls this, shows the user the verification link, and polls /poll.
@@ -5,7 +6,6 @@
 // on /activate can approve it. Rate-limited so the table can't be flooded.
 import type { NextResponse } from "next/server";
 import { insertDeviceGrant, UserCodeConflictError } from "@/lib/db";
-import { config } from "@/lib/config";
 import { checkRateLimit } from "@/lib/ratelimit";
 import {
   createDeviceCode, createUserCode, DEVICE_GRANT_TTL_MS, DEVICE_POLL_INTERVAL_S, hashTokenSecret,
@@ -31,7 +31,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         userCode = createUserCode();
       }
     }
-    const base = (config.publicUrl || new URL(request.url).origin).replace(/\/$/, "");
+    const base = (requestBase(request)).replace(/\/$/, "");
     const verificationUrl = `${base}/activate?code=${userCode}`;
     return json({
       device_code: deviceCode,

@@ -1,4 +1,5 @@
 // POST /api/auth/logout — revoke this browser's session.
+import { AUTH_CHANGE_COOKIE, authChangeCookiePath } from "@/lib/auth-change";
 import { NextResponse } from "next/server";
 import { clearSessionCookie, endSession, isSameOrigin } from "@/lib/session";
 import { AuthError } from "@/lib/auth";
@@ -13,6 +14,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const res = json({ ok: true }, 200);
     // ResponseCookies.set rewrites Set-Cookie: always finish it before appending session/flow cookies.
     res.cookies.set("artifact_analytics_auth", "", { path: "/", maxAge: 0 });
+    res.cookies.set(AUTH_CHANGE_COOKIE, "", { path: authChangeCookiePath(), maxAge: 0 });
     res.headers.append("set-cookie", clearSessionCookie(request));
     return res;
   } catch (error) {

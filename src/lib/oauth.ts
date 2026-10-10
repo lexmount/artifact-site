@@ -1,3 +1,4 @@
+import { appPath } from "@/lib/app-path";
 // The authorization server behind /mcp: consent, authorization codes, access and refresh tokens.
 // The vocabulary and the discovery documents live in lib/oauth-shared; clients in lib/oauth-clients.
 //
@@ -118,6 +119,7 @@ export async function decideAuthorization(input: { requestId: string; decision: 
   const gone = () => new OauthError("invalid_request", "This authorization request is unknown, already answered or has expired. Start again from the application.");
   const auth = input.requestId ? await getOauthAuthorization(input.requestId) : null;
   if (!auth || auth.userId !== session.userId || auth.approvedAt != null || auth.consumedAt != null || auth.expiresAt <= now) throw gone();
+  if (auth.resource !== canonicalResource(issuer)) throw gone();
   if (input.decision !== "allow") {
     await consumeOauthAuthorization(auth.id, now);
     return { location: withParams(auth.redirectUri, { error: "access_denied", error_description: "The user declined the request", state: auth.state, iss: issuer }) };
@@ -170,6 +172,7 @@ export async function exchangeAuthorizationCode(client: OauthClient, input: { co
     if (auth.grantId) await revokeOauthGrant(auth.grantId, now);
     throw denied("The authorization code was already used; the tokens it produced have been revoked");
   }
+  if (auth.resource !== canonicalResource(issuer)) throw denied("The authorization code belongs to another endpoint");
   if (auth.clientId !== client.id) throw denied("The authorization code was issued to a different client");
   const redirectUri = validateRedirectUri(input.redirectUri);
   if (!redirectUri || redirectUri !== auth.redirectUri) throw denied("redirect_uri does not match the authorization request");
@@ -204,9 +207,13 @@ async function assertAccountActive(userId: string): Promise<void> {
 export async function refreshTokens(client: OauthClient, input: { refreshToken: string | null; scope: string | null; resource: string | null }, issuer: string, now = Date.now()): Promise<TokenResponse> {
   const denied = (why: string) => new OauthError("invalid_grant", why);
   if (!input.refreshToken?.startsWith(OAUTH_REFRESH_TOKEN_PREFIX)) throw denied("refresh_token is missing or not one this server issued");
+  // A wrong entry must not consume an otherwise valid grant on the original entry.
+  const bound = await getOauthToken(sha256hex(input.refreshToken));
+  if (bound && bound.resource !== canonicalResource(issuer)) throw denied("The refresh token belongs to another endpoint");
   const consumed = await consumeOauthRefreshToken(sha256hex(input.refreshToken), now);
   if (!consumed) throw denied("The refresh token is invalid or has expired; authorize again");
   const { token, reused } = consumed;
+  if (token.resource !== canonicalResource(issuer)) throw denied("The refresh token belongs to another endpoint");
   if (reused) {
     // Replay means theft — except in the first moments after a rotation, when it is far more
     // likely an honest client's parallel calls all hit the hour boundary at once and raced each
@@ -358,7 +365,7 @@ export function authorizationFailurePage(error: unknown): Response {
 <style>body{margin:0;display:grid;place-items:center;min-height:100vh;font:400 15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#fdfdfd;color:#171a17}
 main{max-width:26rem;padding:2rem}h1{font-size:1.4rem;font-weight:600;margin:0 0 .6rem}p{margin:0 0 1.2rem;color:#626862}
 a{display:inline-block;margin-right:.8rem;padding:.55rem .9rem;border:1px solid #e3e7e1;border-radius:7px;color:#171a17;text-decoration:none;font-weight:500;font-size:.9rem}</style></head>
-<body><main><h1>Authorization did not complete</h1><p>${safe}</p><a href="/">Back to home</a></main></body></html>`;
+<body><main><h1>Authorization did not complete</h1><p>${safe}</p><a href="${appPath("/")}">Back to home</a></main></body></html>`;
   return new Response(html, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 

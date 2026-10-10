@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import { useT } from "@/components/locale-provider";
 import { loginHref } from "@/lib/use-auth";
 
@@ -8,7 +9,7 @@ export default function CommentSignIn({ onRefresh, busy = false, returnTo }: {
 }) {
   const t = useT();
   return <div className="comment-login">
-    <a href={loginHref(returnTo)} target="_blank" rel="noreferrer">{t("Sign in to comment (opens a new tab)")}</a>
+    <a href={appPath(loginHref(returnTo))} target="_blank" rel="noreferrer">{t("Sign in to comment (opens a new tab)")}</a>
     <p>{t("Your draft stays here. After signing in, return to this tab and refresh access.")}</p>
     <button type="button" className="btn sm" disabled={busy} onClick={onRefresh}>{t("Refresh access")}</button>
   </div>;

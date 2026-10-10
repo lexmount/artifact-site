@@ -13,18 +13,22 @@ class Link {
   setAttribute(name: string, value: string) { this.attributes[name] = value; }
 }
 
-function harness(baseTarget: string | null = null) {
+function harness(baseTarget: string | null = null, mount?: string) {
+  const messages: Array<{ type: string; path?: string }> = [];
+  let receive: (event: unknown) => void = () => {};
   let capture: (event: unknown) => void = () => {};
   const tasks: Array<() => void> = [];
   const historyListeners = new Map<string, () => void>();
   const bubbles = new Set<(event: unknown) => void>();
   const window = { addEventListener(type: string, handler: typeof capture, capturePhase: boolean) {
-    if (type === "click" && capturePhase) capture = handler;
+    if (type === "message") receive = handler;
+    else if (type === "click" && capturePhase) capture = handler;
     else if (type === "click") bubbles.add(handler);
     else if (type === "popstate" || type === "hashchange") historyListeners.set(type, () => handler({}));
   }, removeEventListener(_type: string, handler: typeof capture) { bubbles.delete(handler); } };
-  runInNewContext(previewNavigationBootstrap().replace(/^<script[^>]*>|<\/script>$/g, ""), {
-    window, parent: window, URL, Element: Link, HTMLAnchorElement: Link,
+  const parent = mount === undefined ? window : { postMessage: (message: { type: string; path?: string }) => messages.push(message) };
+  runInNewContext(previewNavigationBootstrap(mount ?? "").replace(/^<script[^>]*>|<\/script>$/g, ""), {
+    window, parent, URL, Element: Link, HTMLAnchorElement: Link,
     location: { href: "https://hub.example/api/preview/site/nested.html?v=old#previous" },
     document: {
       baseURI: "https://hub.example/api/preview/site~credential/",
@@ -32,7 +36,9 @@ function harness(baseTarget: string | null = null) {
     },
     setTimeout: (task: () => void) => { tasks.push(task); },
   });
+  receive({ source: parent, origin: "https://hub.example", data: { type: "artifact:platform-navigation-enabled" } });
   return {
+    messages,
     capture: (event: ReturnType<typeof activation>) => {
       const path = [...event.composedPath(), window];
       const dispatched = { ...event, composedPath: () => path, currentTarget: window };
@@ -89,5 +95,23 @@ describe("fragment URL correction", () => {
     h.capture(activation(link)); expect(link.href).toBe("#x");
     link.setAttribute("target", "_self"); h.capture(activation(link));
     expect(link.href).toContain("nested.html?v=old#x");
+  });
+});
+
+
+describe("mounted platform navigation", () => {
+  it.each([
+    ["/artifact-site", "/"], ["/artifact-site/", "/"], ["/artifact-site/me", "/me"],
+    ["https://hub.example/artifact-site/explore?ignored=yes", "/explore"],
+    ["/me", null], ["/artifact-site/api/sites", null], ["/artifact-site/me/other", null],
+    ["/artifact-site-other/me", null], ["https://evil.example/artifact-site/me", null],
+    ["https://user:pass@hub.example/artifact-site/me", null],
+  ])("maps only a fixed destination in the current mount: %s", (href, expected) => {
+    const h = harness(null, "/artifact-site");
+    let prevented = false;
+    h.capture(activation(new Link({ href }), { preventDefault: () => { prevented = true; } }));
+    const navigation = h.messages.filter(message => message.type === "artifact:platform-navigation");
+    expect(prevented).toBe(expected !== null);
+    expect(navigation.map(message => message.path)).toEqual(expected === null ? [] : [expected]);
   });
 });

@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import { browserRandomId } from "@/lib/browser-random-id";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { COMMENT_LOCATION_FLASH_MS } from "@/lib/comments/contracts";
@@ -97,7 +98,7 @@ export function useCommentPreview({ frameRef, scope, generation = 0 }: { frameRe
     if (!frame) return;
     beginNavigation.current?.(targetPath, waitForLoad);
     resetPreviewLoad(frame);
-    frame.src = url;
+    frame.src = appPath(url);
   }, [frameRef]);
   const select = useCallback(() => {
     selecting.current = true; setIsSelecting(true); setLocationResult(null); send({ type: "select" });

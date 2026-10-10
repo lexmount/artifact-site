@@ -36,7 +36,7 @@ describe("auth state arrival", () => {
     expect(css).toContain(".auth-slot.should-animate::before");
     expect(hook).toContain("useSyncExternalStore(subscribe, getClientSnapshot, getServerSnapshot)");
     expect(hook).toContain("function getServerSnapshot(): AuthState { return loadingSnapshot; }");
-    expect(hook).toMatch(/resetAuthCache[\s\S]*void load\(\)/);
+    expect(hook).toMatch(/resetAuthCache[\s\S]*void refreshAuth\(\)/);
   });
 
   it("uses a short brake/squash motion with a reduced-motion fallback", () => {

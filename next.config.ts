@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
+import { validateBasePath } from "./src/lib/base-path";
 
+const basePath = process.env.ARTIFACT_BASE_PATH || "";
+validateBasePath(basePath);
 const nextConfig: NextConfig = {
+  basePath,
+  env: { NEXT_PUBLIC_ARTIFACT_BASE_PATH: basePath },
   // Emit a self-contained server bundle (.next/standalone/server.js) so the
   // Docker runtime image can drop node_modules and the source tree entirely.
   output: "standalone",
