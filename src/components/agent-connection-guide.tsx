@@ -81,7 +81,7 @@ export default function AgentConnectionGuide({ base, oidcEnabled, dcrEnabled = t
       <p className="connection-server">{t("Current server")} <code>{base}</code></p>
       <Step number={1} title={t("Install the CLI")}><p>{t("The CLI provides all operations from your terminal. MCP connects remotely without installing it.")}</p>{install}</Step>
       <Step number={2} title={t("Authenticate")}>{authContent}</Step>
-      <Step number={3} title={t("Publish and verify")}>{command(auth === "login" ? `${c.verify}\n${c.publish}` : c.publish)}<p>{t("Replace dist/ with your build output. A successful publish returns the site address. This example creates no share link; omitting --share defaults to a public share.")}</p></Step>
+      <Step number={3} title={t("Publish and verify")}>{command(auth === "login" ? `${c.verify}\n${c.publish}` : c.publish)}<p>{t("Replace dist/ with your build output. Publishing creates a private artifact. Use visibility unlisted only when you want to share the main link.")}</p></Step>
       <details><summary>{t("Update, search and read commands")}</summary>{command(c.more)}<p>{t("Replace YOUR_SITE_SLUG with the identifier in the site's address. Update writes a new version; search and read respect your access permissions.")}</p></details>
     </section>
     <section id="mcp" role="tabpanel" aria-labelledby="tab-mcp" hidden={mode !== "mcp"} tabIndex={0}>

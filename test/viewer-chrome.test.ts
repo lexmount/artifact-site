@@ -130,7 +130,7 @@ describe("C1 the drawer must escape the action bar", () => {
     // Conclusion: the scrim must be moved out by createPortal, otherwise the drawer turns transparent
     // and click-through as soon as the bar collapses, while the component's open is still true —
     // the user sees "the drawer vanished on its own".
-    for (const [name, src] of [["版本历史", history], ["分享设置", share]] as const) {
+    for (const [name, src] of [["版本历史", history]] as const) {
       const scrim = src.indexOf('className="drawer-scrim"');
       expect(scrim, `${name} 少了遮罩`).toBeGreaterThan(-1);
       const portal = src.lastIndexOf("createPortal(", scrim);
@@ -370,7 +370,7 @@ describe("C5 no action on the bar may go missing", () => {
     // it reads as one more clickable action.
     expect(viewer).toMatch(/viewer-meta[\s\S]{0,400}<VisibilityChip/);
     }
-    expect(header, "缺少返回").toContain('aria-label={t("Back to sites")}');
+    expect(header, "缺少返回").toContain('label={t("Back to previous page")}');
     expect(header, "缺少标题重命名").toContain('title={t("Click to rename")}');
   });
 
@@ -380,13 +380,15 @@ describe("C5 no action on the bar may go missing", () => {
     // both sides are asserted.
     expect(controls).not.toContain("copyLink");
     expect(controls).not.toContain('t("Copy link")');
-    expect(share).toContain("share-foot");
-    expect(share).toContain("Copy site address");
+    expect(share).toContain("sharing-copy");
+    expect(share).toContain("Copy link");
+    expect(share).toContain("dialog?.showModal()");
   });
 
   it("the panel copies the read-only link and must never include the edit token", () => {
-    const copy = block(share, "async function copyCanonical()", "\n  }");
-    expect(copy).toContain("`${window.location.origin}${appPath(`/s/${slug}`)}`");
+    const copy = block(share, "async function copy()", "\n  }");
+    expect(share).toContain("setUrl(`${window.location.origin}${appPath(`/s/${slug}`)}`)");
+    expect(copy).toContain("navigator.clipboard.writeText(url)");
     expect(copy).not.toContain("?t=");
     expect(viewer).not.toContain("async function shareEditable");
     expect(viewer).toContain("permissions.canRename");

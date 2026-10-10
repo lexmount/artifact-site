@@ -76,6 +76,7 @@ async function fixture() {
     { mode: "paste", html: "<html><body>Comment</body></html>" },
     { ownerId: owner.user.id },
   );
+  await rbacQuery("UPDATE site_comment_settings SET reader_access=0 WHERE site_id=$1", [site.id]);
   return {
     site,
     owner,
@@ -322,7 +323,7 @@ describe("comment persistence and real routes", () => {
   it("records migration once and rejects modified history", async () => {
     await fixture();
     await rbacTransaction(q => migrateNumbered(q, migrationDialect));
-    expect(await rbacQuery("SELECT id FROM schema_migrations")).toHaveLength(13);
+    expect(await rbacQuery("SELECT id FROM schema_migrations")).toHaveLength(14);
     const [saved] = await rbacQuery(
       "SELECT checksum FROM schema_migrations WHERE id='0001-comments'",
     );

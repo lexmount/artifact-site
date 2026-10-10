@@ -1,4 +1,5 @@
 "use client";
+import { replaceBrowserUrl } from "@/lib/browser-history";
 // Post-login acknowledgement. Signing in is the moment a pile of anonymous drops becomes *yours*,
 // and that is invisible in the data — so it gets said out loud, once, then never again.
 //
@@ -29,7 +30,7 @@ export default function WelcomeBurst() {
     const n = Number.parseInt(raw, 10);
     // Strip first: a burst that survives a refresh reads as a bug, not a celebration.
     url.searchParams.delete("welcome");
-    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    replaceBrowserUrl(url.pathname + url.search + url.hash);
 
     // The callback hint is not proof that the browser accepted its session cookie.
     let cancelled = false;

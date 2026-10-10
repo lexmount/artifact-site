@@ -8,14 +8,14 @@ vi.mock("@/lib/auth-store", () => ({ refreshAuth: mocks.refresh, resetAuthCache:
 import WelcomeBurst from "@/components/welcome-burst";
 beforeEach(() => {
   vi.useFakeTimers(); mocks.effects.length = 0; vi.clearAllMocks();
-  vi.stubGlobal("window", { location: { href: "https://app.example.com/?welcome=0" }, history: { replaceState: vi.fn() }, matchMedia: () => ({ matches: false }), setTimeout });
+  vi.stubGlobal("window", { location: { href: "https://app.example.com/?welcome=0" }, history: { state: { __NA: true, _N: true, artifactViewerReturn: { family: "/s/a", trail: ["/me"] } }, replaceState: vi.fn() }, matchMedia: () => ({ matches: false }), setTimeout });
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 it.each([{ user: null, error: false }, { user: { id: "u1" }, error: true }])("never celebrates an unconfirmed session: %j", async (auth) => {
   mocks.refresh.mockResolvedValue(auth);
   WelcomeBurst(); mocks.effects[0](); await Promise.resolve();
   expect(mocks.set).not.toHaveBeenCalled();
-  expect(window.history.replaceState).toHaveBeenCalledWith(null, "", "/");
+  expect(window.history.replaceState).toHaveBeenCalledWith({ artifactViewerReturn: window.history.state.artifactViewerReturn }, "", "/");
 });
 it("waits for the real session before celebrating", async () => {
   let resolve!: (value: unknown) => void;

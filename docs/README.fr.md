@@ -119,7 +119,7 @@ Choisissez le point d’entrée adapté à votre agent :
 - **CLI**: `npm install -g @artifact-site/cli` — nécessite Node 24+ ; exemples de commandes ci-dessous.
 - **MCP**: `https://your-server/mcp` — connectez ChatGPT, Claude ou un autre client MCP via la connexion OAuth du serveur ; aucune installation de la CLI n’est nécessaire. Un client qui ne lance que des serveurs MCP locaux peut utiliser `artifact-site mcp` de la CLI à la place.
 
-**La publication via CLI ou MCP crée par défaut un partage public.** Utilisez `--share none` (CLI) ou `share: false` (MCP) pour publier sans partager.
+**CLI et MCP créent des œuvres privées par défaut, sans lien indépendant.** Pour partager le lien principal, utilisez `artifact-site visibility <slug> unlisted` ou MCP `artifact_site_set_visibility`.
 
 <p align="center"><img src="assets/agent.gif" alt="Un agent de codage publie un dossier de build avec la CLI artifact-site et renvoie le lien de partage" width="820"></p>
 <p align="center"><sub><b>Ou laissez faire votre agent de codage.</b> Avec le guide des agents (<code>/for-agents.md</code>), la CLI ou le serveur MCP, « publie ceci et donne-moi un lien » tient en une seule instruction — et le site peut être mis à jour, recherché et lu de la même façon.</sub></p>
@@ -142,7 +142,7 @@ artifact-site read YOUR_SITE_SLUG                    # remplacer par le slug d'u
 <details>
 <summary>Détails de l’authentification</summary>
 
-Ouvrez **Agent guide** (le guide des agents) sur votre déploiement pour choisir la voie du prompt, de la CLI ou de MCP. `/for-agents#cli` et `/for-agents#mcp` fournissent les commandes propres au serveur, les étapes d'authentification et la configuration des clients. Le MCP distant authentifie chaque requête : ChatGPT, Claude et les autres clients compatibles OAuth se connectent via la page de consentement du serveur, les autres clients portent un jeton personnel. Publier, mettre à jour, partager et supprimer via la CLI exigent un jeton ; la publication crée par défaut un partage public. Utilisez `--share none` (CLI) ou `share: false` (MCP) pour ne pas partager.
+Ouvrez **Agent guide** (le guide des agents) sur votre déploiement pour choisir la voie du prompt, de la CLI ou de MCP. `/for-agents#cli` et `/for-agents#mcp` fournissent les commandes propres au serveur, les étapes d'authentification et la configuration des clients. Le MCP distant authentifie chaque requête : ChatGPT, Claude et les autres clients compatibles OAuth se connectent via la page de consentement du serveur, les autres clients portent un jeton personnel.  La création est privée par défaut ; modifiez explicitement l’accès du lien principal. Les liens indépendants sont une fonction avancée.
 
 Les déploiements d'équipe avec OIDC prennent en charge l'approbation de connexion d'appareil ; l'installation locale anonyme ci-dessus n'en a pas besoin. L'agent suit le guide et la politique de publication du serveur pour choisir l'authentification. Un agent dans le cloud ne peut pas atteindre directement `127.0.0.1` sur votre ordinateur.
 

@@ -1,3 +1,5 @@
+import { appPath } from "@/lib/app-path";
+import ViewerNavigation from "@/components/viewer-navigation";
 // App shell. One light theme, on purpose: the product is black on near-white with a light green,
 // and the artifacts it hosts bring their own colours.
 import { previewLoadTrackerScript } from "@/lib/comments/preview-load";
@@ -34,11 +36,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang={locale}>
       <head>
+        {/* Declare the icon before streamed metadata to avoid a root favicon fallback. */}
+        <link rel="icon" type="image/png" href={appPath("/icon.png")} />
         <script dangerouslySetInnerHTML={{ __html: previewLoadTrackerScript }} />
         <meta name="theme-color" content="#fdfdfd" />
       </head>
       <body>
         <LocaleProvider locale={locale}>
+          <Suspense fallback={null}><ViewerNavigation /></Suspense>
           <AuthConfigProvider enabled={config.oidcEnabled} hasSessionHint={hasSessionHint}>
             <NavigationShell>{children}</NavigationShell>
             <NavigationMetrics />

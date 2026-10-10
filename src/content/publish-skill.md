@@ -9,7 +9,28 @@ Hand a finished front-end artifact to the platform to host, and get back a `/s/<
 
 **Base URL**: written as `$BASE` below. The default is `https://artifact-site.example.com` (the platform rewrites it to its own address when it serves this file; if you still see example.com, this file did not come from the platform — ask the user for the address). If the user explicitly gives another address, use the user's. Strip the trailing `/` before calling the API or building share links, to avoid double slashes.
 
-### Check this Skill's version on first use
+### Creation, sharing and discovery
+
+Creating an artifact does not authorize sharing it. Web, CLI and MCP default to private creation; always inspect and report the returned `visibility` (administrators can explicitly override deployment defaults). Return the canonical `/s/<slug>` URL. Do not automatically create `/v/` links.
+
+| User intent | Action |
+| --- | --- |
+| Create a report / give me its link | Create privately and state that only authorized people can open it |
+| Share so anyone with the link can open it | Set `visibility: unlisted`; return the same main URL |
+| Publish to Explore / make searchable publicly | Set `visibility: public`, only on explicit request |
+| Make private again | Set `visibility: private`; independent share links remain active |
+| Separate customer review / password / expiry | Explicit advanced share; its comments stay isolated |
+| Stop all external sharing | Set private, list independent shares and revoke the applicable links too |
+
+MCP: `artifact_site_publish` no longer auto-shares. Use `artifact_site_get_visibility` and `artifact_site_set_visibility`. CLI: `artifact-site visibility <slug> [private|unlisted|public]`. HTTP: `GET/PUT /api/sites/<slug>/sharing`, body `{"visibility":"unlisted"}` for ordinary sharing. Only sharing managers may change access.
+
+If creation succeeds but changing access fails, report the existing artifact and retry the state change; never publish a duplicate. Updating content preserves access. Copying a URL never changes access. `unlisted` works are absent from unrelated users' searches and Explore; owners and authorized collaborators can still find their work. Knowing or opening a share link does not make its private artifact discoverable.
+
+New main discussions let artifact readers see comments and require sign-in to post. Pausing comments stops new comments/replies but preserves reading. Historical discussions retain their original visibility. Advanced shares keep separate discussions and their existing view/comment/edit permissions. Version boundaries are unchanged.
+
+The old explicit `share` publish parameter and CLI `--share` remain compatibility options for advanced independent links, with no default share. `share: public` is NOT the same as artifact visibility `public`.
+
+## Check this Skill's version on first use
 
 On the **first API call in each task using this Skill**, capture and inspect both the response
 headers and body. Compare `X-Artifact-Site-Skill-Version` (header names are case-insensitive)
@@ -43,7 +64,7 @@ status as well; a version mismatch does not turn a failed API call into a succes
 
 Skim the limits in section 3 before publishing — **most failures are the artifact itself violating a limit, not a wrong API call**.
 
-> **Shortcut**: if the `artifact-site` CLI is installed (`npm install -g @artifact-site/cli`), `artifact-site login --base $BASE` once and then `artifact-site publish <path>` / `artifact-site update <slug> <path> --expected-version <id>` do everything in sections 1–2 for you (mode selection, chunked upload, share link, optimistic locking). Agents with MCP support connect directly to `$BASE/mcp` over Streamable HTTP, without a CLI install: hosts that implement MCP authorization (ChatGPT, Claude) sign in through the server's OAuth consent page and need no token at all; others carry a personal or operator Bearer token. Use `artifact_site_find` to list your artifacts (no query) or search discoverable work (with query), and `artifact_site_read` to reuse earlier content. Use `artifact_site_publish` / `artifact_site_update` for inline content; for files above the MCP request limit, call `artifact_site_upload_start`, then sequential `artifact_site_upload_write` calls per relative path (zero-based index, base64, at most 256 KiB decoded, `final: true` on each file's last chunk). Finish by calling `artifact_site_publish` with `upload_id` and `share: false` if unshared, or `artifact_site_update` with `slug`, `upload_id` and `expected_version`. All paths are relative uploaded filenames, never paths on the server. `artifact_site_export` returns a manifest, or file bytes when given `path`, `version_id` and `offset`. `artifact_site_connection` reports identity and deployment limits. See `docs/MCP.md` in the repository for the tool catalog and migration. A host that only starts local MCP commands can use the CLI's `artifact-site mcp`, a stdio relay to `$BASE/mcp` with the same tools. The rest of this document is the contract both of them implement.
+> **Shortcut**: if the `artifact-site` CLI is installed (`npm install -g @artifact-site/cli`), `artifact-site login --base $BASE` once and then `artifact-site publish <path>` / `artifact-site update <slug> <path> --expected-version <id>` do everything in sections 1–2 for you (mode selection, chunked upload, private creation, optimistic locking). Agents with MCP support connect directly to `$BASE/mcp` over Streamable HTTP, without a CLI install: hosts that implement MCP authorization (ChatGPT, Claude) sign in through the server's OAuth consent page and need no token at all; others carry a personal or operator Bearer token. Use `artifact_site_find` to list your artifacts (no query) or search discoverable work (with query), and `artifact_site_read` to reuse earlier content. Use `artifact_site_publish` / `artifact_site_update` for inline content; for files above the MCP request limit, call `artifact_site_upload_start`, then sequential `artifact_site_upload_write` calls per relative path (zero-based index, base64, at most 256 KiB decoded, `final: true` on each file's last chunk). Finish by calling `artifact_site_publish` with `upload_id`, or `artifact_site_update` with `slug`, `upload_id` and `expected_version`. All paths are relative uploaded filenames, never paths on the server. `artifact_site_export` returns a manifest, or file bytes when given `path`, `version_id` and `offset`. `artifact_site_connection` reports identity and deployment limits. See `docs/MCP.md` in the repository for the tool catalog and migration. A host that only starts local MCP commands can use the CLI's `artifact-site mcp`, a stdio relay to `$BASE/mcp` with the same tools. The rest of this document is the contract both of them implement.
 
 ### Recommended publishing and recovery
 
@@ -307,44 +328,25 @@ When using link-granted access through an API or MCP, supply **that exact link t
 `X-Artifact-Share: <token>`. Editable links require a signed-in account and grant no member-management
 rights. Membership and sharing are independent: revoking one does not revoke the other.
 
-### After creating the site, create a share link too
+### Ordinary sharing uses the main address
 
-`$BASE/s/<slug>` is **the site's own address**, and only the site's owner (the user the token is bound to, or the creating cookie when anonymous) can open it. New sites on this deployment are **private** — anyone else who gets this address sees a 404, so sending it out as is means the recipient cannot open it.
-
-So after creating the site, ask for a share link and send **that** to the people who should see it:
+Return `$BASE/s/<slug>` and its current visibility after creation. Keep it private unless the user asks to open access. To share with anyone holding the link:
 
 ```bash
 curl -sS -H "authorization: Bearer $TOKEN" \
-  -X POST "$BASE/api/sites/<slug>/shares" \
-  -H 'content-type: application/json' \
-  -d '{"policy":"public"}'
-# for an anonymous site use -b ah-cookies.txt -H "origin: $BASE" instead
+  -X PUT "$BASE/api/sites/<slug>/sharing" \
+  -H 'content-type: application/json' -d '{"visibility":"unlisted"}'
 ```
 
-```json
-{"share":{"id":"…","policy":"public"},"token":"…","url":"https://…/v/…"}
-```
+The address and main discussion stay unchanged. To inspect access, GET the same endpoint. Copying the address does not change access. `public` additionally enables public discovery; it is not ordinary link sharing.
 
-**`policy` must be written explicitly.** Left out, it defaults to `login`, and that link then requires a login to open. Four levels:
+### Advanced independent links
 
-| policy | Who can open it |
-| --- | --- |
-| `public` | Anyone with the link, no login |
-| `login` | Any logged-in user (**the default when policy is omitted**) |
-| `email` | Only the named email addresses |
-| `passcode` | Whoever enters the right passcode (the response carries the generated code back) |
+Only when requested, POST `/api/sites/<slug>/shares` with an explicit `policy` (`public`, `login`, `people`, or `passcode`), optional `mode` (`view`, `comment`, `edit`) and expiry/version settings. This creates a `/v/<token>` entrance with its own isolated discussion. It does not change the main address's visibility. List existing links through GET `/api/sites/<slug>/shares`; DELETE `/api/sites/<slug>/shares/<shareId>` revokes one. Creating a replacement does not revoke the old link.
 
-The `url` in the response is a full address, and **this is the one to give the user**. The `token` is readable only in this one response; if it is lost, create a new one
-(which is also exactly how an old link is revoked).
+Use `artifact_site_share` for advanced creation and `artifact_site_revoke_share` for explicit revocation. CLI equivalents are `share` and `revoke-share`. If all external sharing must stop, make the main link private and revoke independent links. Named memberships remain separate authorizations.
 
-> If new sites on this deployment are public by default (usually the case on an intranet), `$BASE/s/<slug>` itself can be sent directly.
-> When unsure, verify once as described in section 4 below instead of guessing.
-
-### What the three kinds of address are
-
-- `$BASE/s/<slug>` — the site itself, with the platform chrome (title, version history, edit entry). On a private deployment only the owner and the people it is shared with can open it.
-- `$BASE/v/<token>` — the share link, **the one for readers** (the policy decides who can open it).
-- `$BASE/api/preview/<slug>` — the raw artifact, suitable for embedding in an iframe. With a trailing slash it **308-redirects** to the form without one and **drops the query string**; use the slash-free form directly in scripts.
+`/api/preview/` serves sandboxed artifact resources internally. Never present it as a user-facing share URL. Presentation mode uses `/s/<slug>?presentation=1` or the corresponding `/v/<token>?presentation=1` and retains access checks.
 
 ## 2. Making changes after publishing
 
@@ -543,33 +545,22 @@ The response body is JSON `{"error":"…"}`. **Read the message before deciding*
 
 Checks run in the order **429 → 401/403 → 413 → parsing**, so with bad credentials you never see a size error.
 
-**Verify once yourself after a successful publish**; do not stop at the 200:
+**Verify once after a successful publish**. Use authenticated `artifact_site_get_site` or `GET /api/sites/<slug>` to verify the intended version and visibility. For a private artifact, an unauthenticated `/s/<slug>` returning 404 is expected; do not broaden access to make a verification pass.
 
-```bash
-# Verify without credentials — this is what the user sees
-curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/v/<token>"     # share link, expect 200
-curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/s/<slug>"      # site address, 404 on a private deployment
-```
-
-**Do not verify with `-b ah-cookies.txt`**: with the owner's cookie everything is 200, which verifies nothing.
-Hand the share link to the user only after it returns 200. To check that the artifact really renders (no blank page), it is best to fetch `$BASE/api/preview/<slug>` once more and confirm the key content is there.
+After explicitly enabling `unlisted` or `public`, check `/s/<slug>` without owner credentials and confirm it opens. For an advanced link, verify its configured audience (password/login links are expected to show a gate). Keep internal `/api/preview/` resource URLs out of the delivery.
 
 ## 5. Delivering to the user
 
-For a token-based publish (the default path), two things are enough:
+For account-authenticated publication, deliver:
 
-1. **The share link** (`/v/<token>`; on a public deployment give `/s/<slug>` directly)
-2. The `slug`, for later changes
+1. **The main artifact link** (`/s/<slug>`) and its actual access state. Say **private** when only authorized people can open it. Creation alone does not authorize sharing.
+2. The `slug`, for later changes.
 
-The site is already under the user's account; the user can see it and edit it themselves in their account page, and there is no credential to keep.
+When asked to share normally, explicitly set `unlisted`, then return the same main link. When asked to publish to Explore/search, explicitly set `public`. Create an advanced independent `/v/<token>` link only for an explicit independent audience, expiry, password or isolated discussion request, and label its isolation clearly.
 
-For an anonymous publish (when the user declined to bind), give at least three things:
+The site belongs to the authenticated user's account; no management credential needs to be pasted into chat.
 
-1. **The share link**
-2. **The location of the credential file** (e.g. `ah-cookies.txt`), stating clearly: **keep this file: without it, you lose this publishing session's access; an administrator must help recover an unowned site**
-3. The `slug`
-
-Do not paste the `editToken` into the conversation body — it is equivalent to the right to modify this site. Write it to a file, or tell the user to keep it safe.
+For anonymous publication, also provide the credential file location (for example `ah-cookies.txt`) and explain that losing both the creating session and saved management token requires administrator recovery. Never paste `editToken` into the conversation or a reader URL.
 
 ### Attaching an unowned site to an account
 
@@ -753,3 +744,5 @@ Uploads retain the 5 MiB source limit, 16 million decoded pixel limit and four i
 message. If re-encoding exceeds the storage limit, the server proportionally downsizes
 within those limits and reports `x-artifact-image-resized: true` on the upload response.
 This status is transient; stored attachment dimensions describe the resulting image.
+
+Access inspection: `artifact_site_get_visibility`. Main access: `artifact_site_set_visibility`. Independent revocation: `artifact_site_revoke_share`.

@@ -31,3 +31,8 @@ export const siteFetch: typeof fetch = async (input, init) => {
   if(response.ok && !["GET","HEAD"].includes(method) && !permissionRead)invalidateClientCaches();
   return response;
 };
+
+export function presentationLink(slug: string, version?: string, token?: string): string {
+  const base = token ? `/v/${encodeURIComponent(token)}` : `/s/${encodeURIComponent(slug)}`;
+  return `${base}?presentation=1${version ? `&version=${encodeURIComponent(version)}` : ""}`;
+}

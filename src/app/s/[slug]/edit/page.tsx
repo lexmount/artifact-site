@@ -83,7 +83,7 @@ export default async function EditorPage({ params, searchParams }: {
 
   if (plan.step === "picker") {
     return (
-      <VersionPicker
+      <VersionPicker shareToken={sp.share}
         slug={slug}
         title={view.site.title}
         kind={view.site.kind}
@@ -112,7 +112,7 @@ export default async function EditorPage({ params, searchParams }: {
     const bytes = await readText(siteId, versionId, entry);
     const content = bytes ? Buffer.from(bytes).toString("utf8") : "";
     return (
-      <Editor
+      <Editor shareToken={sp.share}
         slug={slug}
         title={view.site.title}
         kind="single"
@@ -141,7 +141,7 @@ export default async function EditorPage({ params, searchParams }: {
   );
 
   return (
-    <Editor
+    <Editor shareToken={sp.share}
       slug={slug}
       title={view.site.title}
       kind="folder"

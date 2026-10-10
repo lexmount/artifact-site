@@ -114,8 +114,8 @@ describe.skipIf(!process.env.E2E_CHROME)("version upload browser acceptance", ()
       expect(await page.$(".coachmark")).toBeNull();
     } finally { releaseAuth?.(); releaseAuth = undefined; delayedAuth = false; }
   });
-  it("only renders an interactive visibility chip when a contextual action exists", async () => {
-    expect(await page.$eval(".vis-unlisted", el => el.tagName)).toBe("SPAN");
+  it("explains visibility through interactive status chips", async () => {
+    expect(await page.$eval(".vis-unlisted", el => el.tagName)).toBe("BUTTON");
     expect(await page.$eval(".vis-private", el => el.tagName)).toBe("BUTTON");
   });
   it("auto-dismisses teaching but keeps explicitly opened guidance available", async () => {

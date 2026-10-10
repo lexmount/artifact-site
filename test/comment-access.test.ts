@@ -23,6 +23,7 @@ async function fixture() {
   const owner = await identity(), reader = await identity();
   const { site } = await createSite({ mode: "paste", html: "<html><body>Review this</body></html>" }, { ownerId: owner.user.id });
   await rbacQuery("UPDATE sites SET visibility='private' WHERE id=$1", [site.id]);
+  await rbacQuery("UPDATE site_comment_settings SET reader_access=0 WHERE site_id=$1", [site.id]);
   return { owner, reader, site: { ...site, visibility: "private" as const } };
 }
 async function link(site: Site, mode: ShareMode = "comment", policy: SharePolicy = "public", versionId: string | null = null) {

@@ -4,7 +4,7 @@ import { track } from "@/lib/analytics";
 // Share links: a site can have several, each with its own policy, expiry, people list and view log, and each can be revoked on its own.
 //
 // Share URLs can be retrieved by managers; generated passcodes are shown once.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Copy, Link2, Loader2, Plus, ShieldAlert } from "lucide-react";
 import { useLocale, useT } from "@/components/locale-provider";
 import PeoplePicker from "@/components/people-picker";
@@ -93,10 +93,8 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
   const [draftPeople, setDraftPeople] = useState<PickedPerson[]>([]);
   const firstCreateField = useRef<HTMLSelectElement>(null);
 
-  function openCreate() {
-    setCreating(true);
-    requestAnimationFrame(() => firstCreateField.current?.focus());
-  }
+  useLayoutEffect(() => { if (creating) firstCreateField.current?.focus(); }, [creating]);
+  function openCreate() { setCreating(true); }
 
   const load = useCallback(async () => {
     try {

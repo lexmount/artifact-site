@@ -3,7 +3,7 @@ import { appPath } from "@/lib/app-path";
 import { track, analyticsRequest } from "@/lib/analytics";
 
 import SiteDownload from "@/components/site-download";
-import { siteFetch as fetch, withShareContext } from "@/lib/share-context";
+import { siteFetch as fetch, withShareContext, presentationLink } from "@/lib/share-context";
 
 // In-browser editor. The default is **visual**: you land straight in the preview and double-click text to change it,
 // with no source code and no file list in sight. Source editing was not removed — folder sites still need it for
@@ -63,7 +63,7 @@ export default function Editor(props: {
   slug: string; title: string; kind: "single" | "folder"; entry: string; versionId: string; files: EditFile[];
   /** Description of the base when it is a **historical** version (omitted when the base is the current version). See lib/edit-base. */
   baseVersion?: EditBaseInfo;
-  latestVersionId?: string; officialBase?: boolean;
+  latestVersionId?: string; officialBase?: boolean; shareToken?: string;
   /**
    * Server-resolved "can this visitor change content" (capability ≥ content, see lib/authz). Required rather than
    * optional: every new render site must answer this question explicitly; a default of false would silently lock
@@ -342,7 +342,7 @@ export default function Editor(props: {
             <SiteDownload slug={slug} editToken={editToken} versionId={baseVersion?.id ?? curVersion} />
             {/* The "Preview" in the toolbar switches in place (no navigation), so this external link is called
                 "Open in new tab" instead — calling both of them preview only leaves people guessing which one leaves the page. */}
-            <a role="menuitem" className="menu-item" href={appPath(withShareContext(`/api/preview/${slug}`))} target="_blank" rel="noreferrer" title={t("Open the artifact itself in a new tab")}><ExternalLink size={14} aria-hidden="true" /> {t("Open in new tab")}</a>
+            <a role="menuitem" className="menu-item" href={appPath(presentationLink(slug, baseVersion?.id ?? curVersion, props.shareToken))} target="_blank" rel="noreferrer" title={t("Open the artifact itself in a new tab")}><ExternalLink size={14} aria-hidden="true" /> {t("Open in new tab")}</a>
 
             <button role="menuitem" className="menu-item" type="button" onClick={fork} disabled={forking} title={t("Copy into a separate new site")}>
               {forking ? <Loader2 size={14} className="spin" /> : <Copy size={14} aria-hidden="true" />} {t("Save as new site")}

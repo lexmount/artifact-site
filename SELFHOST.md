@@ -37,7 +37,7 @@ make doctor           # see what it complains about
 make build up         # build image → preflight → start containers → wait for health
 ```
 
-The example defaults to a localhost-only anonymous trial with private visibility. Creators can view their work and grant access through share links. RBAC is always enforced; `ARTIFACT_ENFORCE_OWNERSHIP` is deprecated and ignored. Anonymous sites accept their creating browser or management token, subject to the anonymous policy; account-owned sites use account roles. Upgrade all replicas together; old authorization binaries must not keep serving writes. Existing personal and MCP OAuth credentials remain valid. Keep an existing deployment's `.env` when upgrading.
+The example defaults to a localhost-only anonymous trial with private visibility. Creators can view their work and explicitly enable link access in Sharing. Independent share links remain an advanced option. RBAC is always enforced; `ARTIFACT_ENFORCE_OWNERSHIP` is deprecated and ignored. Anonymous sites accept their creating browser or management token, subject to the anonymous policy; account-owned sites use account roles. Upgrade all replicas together; old authorization binaries must not keep serving writes. Existing personal and MCP OAuth credentials remain valid. Keep an existing deployment's `.env` when upgrading.
 
 The three decisions that matter most in `.env`:
 

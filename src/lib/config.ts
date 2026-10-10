@@ -236,24 +236,13 @@ export const config = {
     return (process.env.ARTIFACT_ASSISTANT_URL || process.env.ARTIFACT_CLOUDDESK_URL || "").trim().replace(/\/+$/, "");
   },
   /**
-   * Visibility a brand-new site is born with. Two postures:
-   *
-   *   public    open. A link is a link: whoever has it can open it, and it is listed in the home directory. (intranet, internal use)
-   *   private   cautious. The canonical link is a 404 for everyone until the owner explicitly shares it. (public internet)
-   *
-   * `ARTIFACT_DEFAULT_VISIBILITY` decides. Unset, the only thing inferred is "is this a local
-   * checkout": no ARTIFACT_PUBLIC_URL means somebody is running it on their laptop, and defaulting
-   * that to private would make every site invisible the moment they open a clean browser. Any
-   * deployment with a public URL defaults to the cautious posture — an intranet deployment says
-   * `public` explicitly. (This used to sniff a company hostname; a self-hosted product cannot.)
-   *
-   * Only the DEFAULT moves. Once a site's visibility is set, both postures read it the same way
-   * (lib/share.canReadSite), and existing rows are untouched.
+   * New sites default to private, including local deployments. Operators can explicitly
+   * choose another default. Existing visibility values are never migrated.
    */
   get defaultVisibility(): "public" | "unlisted" | "private" {
     const explicit = (process.env.ARTIFACT_DEFAULT_VISIBILITY || "").trim().toLowerCase();
     if (explicit === "public" || explicit === "unlisted" || explicit === "private") return explicit;
-    return this.publicUrl === "" ? "public" : "private";
+    return "private";
   },
   /** OIDC relying-party settings. Endpoints are discovered from the issuer, so only these three
    *  are configured; the redirect URI is derived from publicUrl and must match the IdP whitelist. */

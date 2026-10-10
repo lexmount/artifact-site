@@ -16,6 +16,8 @@ import * as versions from "@/app/api/sites/[slug]/versions/route";
 import * as edit from "@/app/api/sites/[slug]/edit/route";
 import * as fork from "@/app/api/sites/[slug]/fork/route";
 import * as rollback from "@/app/api/sites/[slug]/rollback/route";
+import * as sharing from "@/app/api/sites/[slug]/sharing/route";
+import * as shareItem from "@/app/api/sites/[slug]/shares/[shareId]/route";
 import * as shares from "@/app/api/sites/[slug]/shares/route";
 import * as search from "@/app/api/search/route";
 import * as read from "@/app/api/sites/[slug]/text/route";
@@ -27,7 +29,7 @@ import * as uploadFile from "@/app/api/uploads/[versionId]/files/[...relpath]/ro
 
 import * as official from "@/app/api/sites/[slug]/official/route";
 
-export type Operation = "public_list" | "folders" | "move" | "comment_result" | "comments_list" | "comment_read" | "comment_messages" | "comment_context" | "operation_status" | "upload_status" | "official" | "official_set" | "official_clear" | "publish" | "get" | "rename" | "delete" | "versions" | "update" | "edit" | "fork" | "rollback" | "share" | "shares" | "search" | "read" | "list" | "whoami" | "upload_start" | "upload_file" | "upload_commit";
+export type Operation = "share_revoke" | "visibility" | "visibility_set" | "public_list" | "folders" | "move" | "comment_result" | "comments_list" | "comment_read" | "comment_messages" | "comment_context" | "operation_status" | "upload_status" | "official" | "official_set" | "official_clear" | "publish" | "get" | "rename" | "delete" | "versions" | "update" | "edit" | "fork" | "rollback" | "share" | "shares" | "search" | "read" | "list" | "whoami" | "upload_start" | "upload_file" | "upload_commit";
 export function apiRequest(source: Request, route: string, method = "GET", body?: BodyInit) {
   const url = new URL(`${requestBase(source)}${route}`);
   const authorization = source.headers.get("authorization")!;
@@ -36,14 +38,16 @@ export function apiRequest(source: Request, route: string, method = "GET", body?
   if (typeof body === "string") headers.set("content-type", "application/json");
   return new Request(url, { method, headers, body, signal: source.signal, ...(body instanceof ReadableStream ? { duplex: "half" } : {}) });
 }
-export async function callApi(source: Request, op: Operation, args: { threadId?: string; key?: string; slug?: string; versionId?: string; file?: string; query?: Record<string, string>; body?: unknown; raw?: BodyInit } = {}) {
+export async function callApi(source: Request, op: Operation, args: { shareId?: string; threadId?: string; key?: string; slug?: string; versionId?: string; file?: string; query?: Record<string, string>; body?: unknown; raw?: BodyInit } = {}) {
   const slug = args.slug ?? "";
   const versionId = args.versionId ?? "";
-  const params = { params: Promise.resolve({ threadId: args.threadId ?? "", key: args.key ?? "", slug, versionId, relpath: (args.file ?? "").split("/") }) };
+  const params = { params: Promise.resolve({ shareId: args.shareId ?? "", threadId: args.threadId ?? "", key: args.key ?? "", slug, versionId, relpath: (args.file ?? "").split("/") }) };
   const item = `/api/sites/${encodeURIComponent(slug)}`;
   const query = args.query ? `?${new URLSearchParams(args.query)}` : "";
   const thread = `${item}/comments/${encodeURIComponent(args.threadId ?? "")}`;
   const routes = {
+    share_revoke: ["DELETE", `${item}/shares/${encodeURIComponent(args.shareId ?? "")}`, shareItem.DELETE],
+    visibility: ["GET", `${item}/sharing`, sharing.GET], visibility_set: ["PUT", `${item}/sharing`, sharing.PUT],
     public_list: ["GET", "/api/sites", collection.GET],
     folders: ["GET", "/api/me/folders", folders.GET],
     move: ["PUT", "/api/me/folders/assignments", assignments.PUT],

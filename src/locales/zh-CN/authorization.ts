@@ -2,6 +2,9 @@ import type { Messages } from "@/lib/i18n";
 export const authorization: Messages = {
   "Load more": "加载更多",
   "Authorization": "授权",
+  "Back to members": "返回成员列表",
+  "Save authorization": "保存授权",
+  "No matching members": "未找到匹配成员",
   "Add authorization": "新增授权",
   "Edit authorization": "编辑授权",
   "Viewer": "查看者",
@@ -16,7 +19,6 @@ export const authorization: Messages = {
   "Anonymous visitors can only read": "匿名访客仅可查看",
   "Find workspace member": "查找租户成员",
   "Name or email": "姓名或邮箱",
-  "Select a member": "选择成员",
   "Select a role": "选择角色",
   "Revoke authorization": "撤销授权",
   "Authorization saved": "授权已保存",

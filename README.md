@@ -94,7 +94,7 @@ cp .env.example .env
 make build up
 ```
 
-Once started, open **http://127.0.0.1:4300** and drop in HTML, a static site folder or a PDF to view your work. New sites are private by default; create a link with the desired access in Sharing before sending it to someone else.
+Once started, open **http://127.0.0.1:4300** and drop in HTML, a static site folder or a PDF to view your work. New sites are private by default; change main-link access in Sharing before sending it to someone else.
 
 The first run downloads dependencies and builds the image, then starts the app and Postgres. Use these commands in a fresh clone. The service is local-only by default; `make down` stops it and retains data. To make it reachable by your team, follow [Deploy for your team](#deploy-for-your-team).
 
@@ -117,7 +117,7 @@ Choose the entry point that fits your agent:
 - **CLI**: `npm install -g @artifact-site/cli` — requires Node 24+; use the commands below.
 - **MCP**: `https://your-server/mcp` — connect ChatGPT, Claude or another MCP client through the server’s OAuth sign-in; no CLI installation required. A client that only starts local MCP servers can run the CLI’s `artifact-site mcp` instead.
 
-**CLI and MCP publishing create a public share by default.** Use `--share none` (CLI) or `share: false` (MCP) to publish without sharing.
+**CLI and MCP create private artifacts by default, without independent share links.** Use `artifact-site visibility <slug> unlisted` or MCP `artifact_site_set_visibility` when the user asks to share the main link.
 
 <p align="center"><img src="docs/assets/agent.gif" alt="A coding agent publishes a build folder with the artifact-site CLI and hands back the share link" width="820"></p>
 <p align="center"><sub><b>Or let your coding agent do it.</b> With the agent guide (<code>/for-agents.md</code>), the CLI or the MCP server, "publish this and give me a link" is one instruction — and the site can be updated, searched and read the same way.</sub></p>
@@ -140,7 +140,7 @@ artifact-site read YOUR_SITE_SLUG                    # replace with a site slug 
 <details>
 <summary>Authentication details</summary>
 
-Open **Agent guide** on your deployment to choose the prompt, CLI or MCP path. `/for-agents#cli` and `/for-agents#mcp` provide server-specific commands, authentication steps and client configuration. Remote MCP authenticates every request: ChatGPT, Claude and other OAuth-capable clients sign in through the server's own consent page, other clients carry a personal token. CLI publishing, updating, sharing and deleting require a token; publishing creates a public share by default. Use `--share none` (CLI) or `share: false` (MCP) to skip sharing.
+Open **Agent guide** on your deployment to choose the prompt, CLI or MCP path. `/for-agents#cli` and `/for-agents#mcp` provide server-specific commands, authentication steps and client configuration. Remote MCP authenticates every request: ChatGPT, Claude and other OAuth-capable clients sign in through the server's own consent page, other clients carry a personal token.  Publishing is private by default; open main-link access explicitly with the visibility operation. Advanced independent links are opt-in.
 
 Team deployments with OIDC support device sign-in approval; the anonymous local setup above does not require it. The agent follows the guide and the server's publishing policy to choose authentication. A cloud agent cannot directly reach `127.0.0.1` on your computer.
 

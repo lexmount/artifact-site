@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { Maximize2 } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 
-/** A new preview tab keeps the existing sandbox CSP and read gate, with no viewer chrome. */
+/** The host presentation shell preserves the sandbox, access gate and selected version. */
 export default function ImmersivePreview({ slug, versionId }: { slug: string; versionId: string }) {
   const t = useT();
   const id = useId();
@@ -32,7 +32,7 @@ export default function ImmersivePreview({ slug, versionId }: { slug: string; ve
     };
   }, [tip]);
   return <>
-    <a className="btn icon-only header-immersive" href={appPath(`/api/preview/${encodeURIComponent(slug)}/?v=${encodeURIComponent(versionId)}`)}
+    <a className="btn icon-only header-immersive" href={appPath(`/s/${encodeURIComponent(slug)}?version=${encodeURIComponent(versionId)}&presentation=1`)}
       target="_blank" rel="noopener noreferrer" aria-label={t("Immersive preview (opens in a new tab)")}
       aria-describedby={tip ? id : undefined}
       onPointerEnter={event => { if (event.pointerType === "mouse") show(event.currentTarget); }}

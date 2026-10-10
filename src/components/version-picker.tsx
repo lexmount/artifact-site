@@ -1,6 +1,7 @@
 "use client";
 
 import { appFetch, appPath } from "@/lib/app-path";
+import { presentationLink } from "@/lib/share-context";
 // The "which version to edit from" selection step before entering the editor.
 //
 // Only appears when the site really has several versions (see PICKER_MIN_VERSIONS in lib/edit-base)
@@ -30,8 +31,8 @@ const SOURCE_LABEL: Record<VersionInfo["source"], string> = {
   upload: "Uploaded", edit: "Edited", fork: "Forked", rollback: "Rolled back", build: "Built",
 };
 
-export default function VersionPicker({ slug, title, kind, versions, currentVersionId, currentEntry, notice }: {
-  slug: string;
+export default function VersionPicker({ slug, title, kind, versions, currentVersionId, currentEntry, notice, shareToken }: {
+  slug: string; shareToken?: string;
   title: string;
   kind: "single" | "folder";
   /** The result of listVersions: newest → oldest, already filtered by siteId. */
@@ -142,7 +143,7 @@ export default function VersionPicker({ slug, title, kind, versions, currentVers
                       </p>
                     )}
                     <div className="ver-row-actions">
-                      <a className="btn sm ghost" href={appPath(`/api/preview/${slug}/?v=${v.id}`)} target="_blank" rel="noreferrer">
+                      <a className="btn sm ghost" href={appPath(presentationLink(slug, v.id, shareToken))} target="_blank" rel="noreferrer">
                         <Eye size={13} /> {t("Preview this version")}
                       </a>
                       <button type="button" className="btn sm" disabled={!usable} onClick={() => edit(v.id)}>

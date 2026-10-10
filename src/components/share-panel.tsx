@@ -1,376 +1,237 @@
 "use client";
 import { appPath, appFetch } from "@/lib/app-path";
-import AuthorizationPanel from "@/components/authorization-panel";
-import { track } from "@/lib/analytics";
-// The drawer edits site visibility, role bindings and independent share links.
-// Server permission flags control the entry point; each API rechecks authority.
-// Private visibility does not revoke role grants or existing share links.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { Globe, Maximize2, Minimize2, Link2, Loader2, Lock, Share2, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, ChevronDown, ChevronRight, Copy, Eye, Info, Link2, LockKeyhole, Globe, UserPlus, Maximize2, Minimize2, Share2, X } from "lucide-react";
 import { useT } from "@/components/locale-provider";
-import { drawerHost } from "@/components/version-history";
-import ShareSaveDialog from "@/components/share-save-dialog";
+import AuthorizationPanel from "@/components/authorization-panel";
 import ShareLinks from "@/components/share-links";
 import ShareViews from "@/components/share-views";
-import PrivateShareEducation from "@/components/private-share-education";
-import QuickShareOptions from "@/components/quick-share-options";
-import { errorText, readShares, reusableQuickShare, VISIBILITY_LABEL } from "@/components/share-model";
+import { track } from "@/lib/analytics";
+import { useAuth } from "@/lib/use-auth";
+import { emptySharing, sharingResource, type CommentSettings } from "@/lib/sharing-cache";
 import type { Visibility } from "@/lib/types";
-import { copyShareLink } from "@/lib/share-education";
 
+export const ACCESS_LABEL: Record<Visibility, string> = {
+  private: "Authorized people only", unlisted: "Anyone with the link", public: "Public (listed in Home — Discover sites)",
+};
+const ACCESS_HINT: Record<Visibility, string> = {
+  private: "Add members or change access before sharing with more people.",
+  unlisted: "Excluded from Explore and search results for unrelated people.",
+  public: "Shown in Explore and discoverable through search.",
+};
+type Settings = CommentSettings;
 
-
-/** Writes are cookie-authenticated, so the server checks Origin exactly on each one. */
-const writeHeaders = () => ({ "content-type": "application/json", origin: window.location.origin });
-
-export default function SharePanel({ slug, visibility: initialVisibility, onOpenChange, onEducationOpenChange }: {
-  slug: string;
-  visibility: Visibility;
-  /** While the drawer is open the parent must stop auto-collapsing the action bar — see the drawerHost comment in version-history. */
-  onOpenChange?: (open: boolean) => void;
-  onEducationOpenChange?: (open: boolean) => void;
-}) {
-  const t = useT();
-  const router = useRouter();
+/** Copy is read-only. Main access and independent links have separate explicit mutations. */
+type SharePanelProps = { slug: string; visibility: Visibility; onOpenChange?: (open: boolean) => void; entry?: "main" | "views" };
+export default function SharePanel(props: SharePanelProps) {
+  const auth = useAuth();
+  const identity = auth.user?.id ?? "anonymous";
+  return <SharePanelContent key={`${props.slug}:${identity}`} {...props} identity={identity} authLoading={auth.loading}/>;
+}
+function SharePanelContent({ slug, visibility: initialVisibility, onOpenChange, entry = "main", identity, authLoading }: SharePanelProps & { identity: string; authLoading: boolean }) {
+  const t = useT(), router = useRouter();
   const [open, setOpen] = useState(false);
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [visibilityStatus, setVisibilityStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [visibilityRetry, setVisibilityRetry] = useState(0);
-  function openQuick() {
-    setVisibilityStatus("loading");
-    setQuickOpen(true);
-  }
-  const [educationOpen, setEducationOpen] = useState(false);
-  const [educationDismissed, setEducationDismissed] = useState(false);
-  const [quickBusy, setQuickBusy] = useState<"public" | "login" | null>(null);
-  const quickBusyRef = useRef(false);
-  const [quickCopied, setQuickCopied] = useState<"public" | "login" | null>(null);
-  const [quickError, setQuickError] = useState<string | null>(null);
-  const [quickManualUrl, setQuickManualUrl] = useState<string | null>(null);
+  const [tab, setTab] = useState<"main" | "links" | "views" | "members">("main");
   const [expanded, setExpanded] = useState(false);
-  const dialogRef = useRef<HTMLElement>(null);
-  const quickDialogRef = useRef<HTMLDialogElement>(null);
-  const quickButtonRef = useRef<HTMLButtonElement>(null);
-  const [siteDraft, setSiteDraft] = useState<{visibility: Visibility} | null>(null);
-  const siteDirtyRef = useRef(false);
-  const [confirmSite, setConfirmSite] = useState(false);
-  const [siteSaving, setSiteSaving] = useState(false);
-  const dirtyRef = useRef(false);
-  const onDirtyChange = useCallback((dirty: boolean) => { dirtyRef.current = dirty; }, []);
-  const canLeave = useCallback(() => {
-    if (dialogRef.current?.querySelector("dialog[open]")) return false;
-    if ((dirtyRef.current || siteDirtyRef.current) && !window.confirm(t("Discard unsaved sharing changes? Saved settings will stay unchanged."))) return false;
-    siteDirtyRef.current = false; setSiteDraft(null); return true;
-  }, [t]);
-  const close = useCallback(() => { if (canLeave()) setOpen(false); }, [canLeave]);
-  // Links, site membership and external visit data are separate peer tasks.
-  const [startCreating, setStartCreating] = useState(false);
-  const [tab, setTab] = useState<"links" | "site" | "views">("links");
-  // Starts true: the drawer only mounts its body when open, and the first thing it does is fetch.
-  const [loading, setLoading] = useState(true);
+  const helpId = useId();
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpTrigger = useRef<HTMLButtonElement>(null);
+  const helpTip = useRef<HTMLSpanElement>(null);
+  const authorizationState = useRef({ editing: false, busy: false });
+  const onAuthorizationState = useCallback((editing: boolean, busy: boolean) => { authorizationState.current = { editing, busy }; }, []);
+  const resource = useMemo(() => sharingResource(identity, slug), [identity, slug]);
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot, () => emptySharing);
+  const { sharing, comments: settings } = snapshot;
+  const visibility = sharing?.visibility ?? initialVisibility;
+  const siteId = sharing?.siteId ?? "";
+  const ready = !!sharing;
+  const [selection, setSelection] = useState<Visibility | null>(null);
+  const draft = selection ?? visibility;
+  const [addMember, setAddMember] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [visibility, setVisibility] = useState<Visibility>(initialVisibility);
-  const [siteId,setSiteId] = useState("");
+  const [url, setUrl] = useState("");
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useLayoutEffect(() => {
+    if (!helpOpen || !open || tab !== "main") return;
+    const place = () => {
+      const tip = helpTip.current, trigger = helpTrigger.current, dialog = dialogRef.current;
+      if (!tip || !trigger || !dialog) return;
+      const bounds = dialog.getBoundingClientRect(), anchor = trigger.getBoundingClientRect();
+      const left = Math.max(8, bounds.left + 8), right = Math.min(window.innerWidth - 8, bounds.right - 8);
+      const top = Math.max(8, bounds.top + 8), bottom = Math.min(window.innerHeight - 8, bounds.bottom - 8);
+      tip.style.width = `${Math.min(280, right - left)}px`;
+      tip.style.maxHeight = `${bottom - top}px`;
+      const size = tip.getBoundingClientRect();
+      tip.style.left = `${Math.max(left, Math.min(anchor.left + anchor.width / 2 - size.width / 2, right - size.width))}px`;
+      const above = anchor.top - size.height - 8;
+      tip.style.top = `${Math.max(top, Math.min(above >= top ? above : anchor.bottom + 8, bottom - size.height))}px`;
+      tip.style.visibility = "visible";
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => { window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
+  }, [helpOpen, open, tab]);
+  const lastTab = useRef(tab);
+  useEffect(() => {
+    if (open && lastTab.current !== tab) {
+      const target = tab === "members" && addMember ? ".authorization-form select" : "h2";
+      dialogRef.current?.querySelector<HTMLElement>(target)?.focus();
+    }
+    lastTab.current = tab;
+  }, [open, tab, addMember]);
+  const linkDirty = useRef(false);
+  const accessPending = selection !== null;
+  const busyRef = useRef(false);
+  const canLeave = () => !dialogRef.current?.querySelector("dialog[open]") && !busy && !authorizationState.current.busy && (!(linkDirty.current || authorizationState.current.editing) || window.confirm(t("Discard unsaved sharing changes? Saved settings will stay unchanged.")));
+  const close = () => { if (canLeave()) { setSelection(null); linkDirty.current = false; setOpen(false); } };
 
-  const openAdvanced = useCallback((nextTab: "links" | "site" | "views") => {
-    setError(null);
-    setLoading(true);
-    setEducationDismissed(true);
-    setEducationOpen(false);
-    setQuickOpen(false);
-    setStartCreating(nextTab === "links");
-    setTab(nextTab);
-    setOpen(true);
-  }, []);
-
+  useEffect(() => { onOpenChange?.(open); return () => onOpenChange?.(false); }, [open, onOpenChange]);
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
-    const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, a[href], [tabindex="0"]',
-    ) ?? []).filter(el => el.getClientRects().length > 0);
-    focusable()[0]?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (dialogRef.current?.querySelector("dialog[open]")) return;
-      if (e.key === "Escape") close();
-      if (e.key !== "Tab") return;
-      const items = focusable();
-      const first = items[0], last = items.at(-1);
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("keydown", onKey); previous?.focus(); };
-  }, [open, close]);
-
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    dialog?.querySelector<HTMLElement>('[aria-label="' + t("Close") + '"]')?.focus();
+    return () => { dialog?.close(); previous?.focus(); };
+  }, [open, t]);
   useEffect(() => {
-    if (!open && !quickOpen) return;
-    // Every setState happens in an async continuation, never synchronously in the effect body —
-    // the latter is what react-hooks/set-state-in-effect flags, since it forces a second render
-    // pass before paint. `alive` drops results from a drawer the user already closed.
-    let alive = true;
-    void (async () => {
-      try {
-        const response = await appFetch(`/api/sites/${slug}/sharing`, { cache: "no-store" });
-        if (!response.ok) throw new Error("Sharing settings unavailable");
-        const s = await response.json();
-        if (!alive) return;
-        if (!["private", "public", "unlisted"].includes(s.visibility)) throw new Error("Invalid visibility");
-        setVisibility(s.visibility);
-        setVisibilityStatus("ready");
-        setSiteId(s.siteId ?? "");
-      } catch {
-        if (alive) {
-          setVisibilityStatus("error");
-          if (open) setError(t("Failed to load sharing settings"));
-        }
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => { alive = false; };
-  }, [open, quickOpen, visibilityRetry, slug, t]);
-
-  // Tell the parent the drawer is open. Report a close on unmount too, so the parent never keeps the "a drawer is open" lock forever.
+    if (authLoading || entry !== "main") return;
+    // Defer below the viewer's initial work. Hover/focus and opening can start it sooner.
+    const timer = window.setTimeout(() => { void resource.load(); }, 400);
+    return () => window.clearTimeout(timer);
+  }, [authLoading, entry, resource, snapshot.resetVersion]);
   useEffect(() => {
-    onOpenChange?.(open || quickOpen || educationOpen);
-    return () => onOpenChange?.(false);
-  }, [open, quickOpen, educationOpen, onOpenChange]);
-
+    if (!open || entry !== "main" || authLoading) return;
+    void resource.load();
+  }, [open, entry, authLoading, resource, snapshot.resetVersion]);
   useEffect(() => {
-    onEducationOpenChange?.(educationOpen);
-    return () => onEducationOpenChange?.(false);
-  }, [educationOpen, onEducationOpenChange]);
-
-  useLayoutEffect(() => {
-    if (!quickOpen) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const dialog = quickDialogRef.current;
-    if (!dialog) return;
-    dialog.showModal();
-    const position = () => {
-      const anchor = quickButtonRef.current?.getBoundingClientRect();
-      const panel = quickDialogRef.current;
-      if (!anchor || !panel) return;
-      const margin = 12;
-      const width = Math.min(620, window.innerWidth - margin * 2);
-      panel.style.width = `${width}px`;
-      panel.style.left = `${Math.max(margin, Math.min(anchor.right - width, window.innerWidth - width - margin))}px`;
-      panel.style.top = `${Math.max(margin, Math.min(anchor.bottom + 8, window.innerHeight - panel.offsetHeight - margin))}px`;
-    };
-    position();
-    // Async visibility, errors and copy feedback can change the dialog height.
-    const observer = new ResizeObserver(position);
-    observer.observe(dialog);
-    // Start at the primary task, with Close as a fallback while a copy request is pending.
-    const initialFocus = dialog.querySelector<HTMLElement>(".share-quick-options button:not(:disabled)")
-      ?? dialog.querySelector<HTMLElement>("button[aria-label]");
-    initialFocus?.focus();
-    window.addEventListener("resize", position);
-    window.addEventListener("scroll", position, true);
+    if (entry !== "main") return;
+    const refresh = () => { if (!authLoading && !busyRef.current) void resource.load(true); };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("artifact:shares-changed", refresh);
     return () => {
-      observer.disconnect();
-      dialog.close();
-      window.removeEventListener("resize", position);
-      window.removeEventListener("scroll", position, true);
-      previous?.focus();
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("artifact:shares-changed", refresh);
     };
-  }, [quickOpen]);
-
-  async function createQuickLink(policy: "public" | "login"): Promise<void> {
-    if (quickBusyRef.current) return;
-    quickBusyRef.current = true;
-    setQuickBusy(policy); setQuickError(null); setQuickManualUrl(null);
-    try {
-      const listResponse = await appFetch(`/api/sites/${slug}/shares`, { cache: "no-store" });
-      const listBody: unknown = await listResponse.json().catch(() => ({}));
-      if (!listResponse.ok) throw new Error(errorText(listBody, t("Failed to load share links")));
-      const reusable = reusableQuickShare(readShares(listBody), policy, Date.now());
-      let url = reusable?.url ?? null;
-      if (!url) {
-        const res = await appFetch(`/api/sites/${slug}/shares`, {
-          method: "POST", headers: writeHeaders(),
-          body: JSON.stringify({ policy, mode: policy === "login" ? "comment" : "view", expiresInDays: 30 }),
-        });
-        const body = await res.json().catch(() => ({})) as { url?: string; error?: string };
-        if (!res.ok || !body.url) throw new Error(body.error ?? t("Failed to create"));
-        url = body.url;
-      }
-      try {
-        await copyShareLink(url);
-      } catch {
-        setQuickManualUrl(url);
-        return;
-      }
-      setQuickCopied(policy);
-      window.setTimeout(() => setQuickCopied(current => current === policy ? null : current), 1800);
-    } catch (error) { setQuickError(error instanceof Error ? error.message : t("Failed to create")); }
-    finally { quickBusyRef.current = false; setQuickBusy(null); }
-  }
-
-  function stageSite(want: {visibility: Visibility}) {
-    const changed = want.visibility !== visibility;
-    siteDirtyRef.current = changed;
-    setSiteDraft(changed ? want : null);
-    setNotice(null);
-  }
-  async function saveSite() {
-    if (!siteDraft || siteSaving) return;
-    setError(null); setSiteSaving(true);
-    try {
-      const res = await appFetch(`/api/sites/${slug}/sharing`, {method: "PUT", headers: writeHeaders(), body: JSON.stringify(siteDraft)});
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? t("Failed to save"));
-      setVisibility(siteDraft.visibility);
-      siteDirtyRef.current = false; setSiteDraft(null); setConfirmSite(false);
-      setNotice(t("Sharing settings saved"));
-      router.refresh();
-    } catch (e) { setError(e instanceof Error ? e.message : t("Failed to save")); }
-    finally { setSiteSaving(false); }
-  }
-  function goPrivate() {
-    if (!canLeave()) return;
-    setStartCreating(false); setTab("site"); stageSite({visibility: "private"});
-  }
+  }, [entry, authLoading, resource]);
   useEffect(() => {
-    if (!open || !siteDraft) return;
+    if (!accessPending) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [open, siteDraft]);
+  }, [accessPending]);
 
-  // Copy /s/<slug> — the canonical link, i.e. the one governed by the visibility scope directly above
-  // this panel. Success or failure, the notice does the talking: the clipboard throws outright in an
-  // insecure context, in which case the address is shown so people can take it themselves.
-  async function copyCanonical(): Promise<void> {
-    const url = `${window.location.origin}${appPath(`/s/${slug}`)}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      track("share_link_copy", { share_type: "canonical" });
-      setNotice(visibility === "private"
-        ? t("Site address copied. Access follows site membership and visibility; use Share links to share with another audience.")
-        : t("Link copied · {scope}", { scope: t(VISIBILITY_LABEL[visibility]) }));
-    } catch {
-      setNotice(url);
-    }
+  function navigate(next: typeof tab) {
+    if (!canLeave()) return false;
+    setSelection(null); linkDirty.current = false; setTab(next); setAddMember(false); setNotice(null); setError(null);
+    return true;
   }
-
-  // Same as Version history: the drawer must escape `.fs-bar`, or it turns transparent and click-through the moment the action bar collapses.
-  const host = drawerHost(typeof document === "undefined" ? null : document);
-
-  return (
-    <>
-      <button ref={quickButtonRef} className="btn primary" data-analytics-button="share" aria-haspopup="dialog" aria-expanded={quickOpen || open} onClick={() => { setEducationDismissed(true); setEducationOpen(false); if (quickOpen) setQuickOpen(false); else openQuick(); }}><Share2 size={14} /> {t("Sharing")}</button>
-      {initialVisibility === "private" && visibility === "private" && !educationDismissed && <PrivateShareEducation slug={slug} anchor={quickButtonRef} onCreate={() => { setEducationDismissed(true); setEducationOpen(false); openQuick(); }} onOpenChange={setEducationOpen} />}
-      {quickOpen && host && createPortal(
-          <dialog ref={quickDialogRef} className="share-quick" aria-label={t("Sharing")}
-            onCancel={(event) => { event.preventDefault(); setQuickOpen(false); }}
-            onMouseDown={(event) => {
-              if (event.target !== event.currentTarget) return;
-              const rect = event.currentTarget.getBoundingClientRect();
-              if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
-                // Do not let the backdrop's default mousedown steal the restored trigger focus.
-                event.preventDefault();
-                setQuickOpen(false);
-              }
-            }}>
-            <header className="share-quick-head"><div><b>{t("Sharing")}</b><span>{t("Quick sharing")}</span></div><button type="button" className="btn sm ghost" aria-label={t("Close")} onClick={() => setQuickOpen(false)}><X size={14} /></button></header>
-            <QuickShareOptions busy={quickBusy} copied={quickCopied} onCopy={createQuickLink} />
-            {visibilityStatus === "ready" && visibility === "private" && <p className="share-quick-private"><Lock size={13} /> {t("This private site stays private at its site address. A quick link grants separate access to whoever receives it.")}</p>}
-            {visibilityStatus === "error" && <p className="share-error share-quick-visibility-error" role="alert">{t("Could not confirm current site address visibility.")} <button type="button" className="btn sm" onClick={() => { setVisibilityStatus("loading"); setVisibilityRetry(value => value + 1); }}>{t("Try again")}</button></p>}
-            {quickError && <p className="share-error" role="alert">{quickError}</p>}
-            {quickManualUrl && <div className="share-quick-manual" role="status"><span>{t("The link is ready, but automatic copy failed. Copy it manually:")}</span><input readOnly value={quickManualUrl} onFocus={(event) => event.currentTarget.select()} aria-label={t("Share link")} /></div>}
-            <footer className="share-quick-foot"><div><b>{t("Need more detailed sharing settings?")}</b><span>{t("Create share links, change site address visibility (currently {visibility}), or add site collaborators.", { visibility: visibilityStatus === "ready" ? t(visibility === "private" ? "Private" : "Public") : t(visibilityStatus === "loading" ? "Checking…" : "Unconfirmed") })}</span></div><button type="button" className="btn primary sm" onClick={() => openAdvanced("links")}>{t("New share link")}</button><button type="button" className="btn sm" onClick={() => openAdvanced("site")}>{t("Permission settings")}</button></footer>
-          </dialog>, host,
-      )}
-      {open && host && createPortal(
-        <div className="drawer-scrim" data-expanded={expanded} role="presentation" onClick={close}>
-          <aside ref={dialogRef} className="drawer share-drawer" role="dialog" aria-modal="true" aria-label={t("Sharing")} onClick={(e) => e.stopPropagation()}>
-            {confirmSite && siteDraft && <ShareSaveDialog label={t("The site itself")} changes={[
-              ...(siteDraft.visibility !== visibility ? [{label: t("Visibility"), before: t(VISIBILITY_LABEL[visibility]), after: t(VISIBILITY_LABEL[siteDraft.visibility])}] : []),
-            ]} expiryChanged={false} busy={siteSaving} error={error}
-              note={t("This changes access through the site address for existing visitors. Separate share links keep their own access rules.")}
-              onConfirm={() => void saveSite()} onClose={() => setConfirmSite(false)} />}
-            <header className="drawer-head">
-              <b>{t("Sharing")}</b>
-              <div className="share-window-actions">
-                <button type="button" className="btn sm ghost" aria-label={t(expanded ? "Collapse window" : "Expand window")} title={t(expanded ? "Collapse window" : "Expand window")} aria-pressed={expanded} onClick={() => setExpanded(v => !v)}>
-                  {expanded ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
-                </button>
-                <button className="btn sm ghost" onClick={close} aria-label={t("Close")}><X size={14} /></button>
+  async function saveAccess(next: Visibility) {
+    if (busyRef.current || !sharing || snapshot.sharingError || next === visibility) return;
+    const commit = resource.captureMutation();
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null); setSelection(next);
+    try {
+      const response = await appFetch(`/api/sites/${slug}/sharing`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ visibility: next }) });
+      if (!response.ok) { if ([401, 403, 404].includes(response.status)) resource.clear(); throw new Error((await response.json()).error ?? t("Failed to save")); }
+      if (!commit({ sharing: { ...sharing, visibility: next } })) return; setNotice(t("Access updated")); router.refresh();
+      void resource.load();
+      window.dispatchEvent(new Event("artifact:shares-changed"));
+    } catch (cause) { setError(t("Could not update access. Please try again.") + " " + (cause instanceof Error ? cause.message : t("Request failed"))); }
+    finally { setSelection(null); busyRef.current = false; setBusy(false); }
+  }
+  async function saveComments(mainPolicy: Settings["mainPolicy"]) {
+    if (!settings || busyRef.current || snapshot.sharingError || snapshot.commentsError) return;
+    const commit = resource.captureMutation();
+    busyRef.current = true; setBusy(true); setError(null);
+    try {
+      const response = await appFetch(`/api/sites/${slug}/comment-settings`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ mainPolicy }) });
+      if (!response.ok) { if ([401, 403, 404].includes(response.status)) resource.clear(); throw new Error((await response.json()).error ?? t("Failed to save")); }
+      if (!commit({ comments: await response.json() })) return; setNotice(t("Comment settings saved"));
+      void resource.load();
+      window.dispatchEvent(new Event("artifact:shares-changed"));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t("Request failed")); }
+    finally { busyRef.current = false; setBusy(false); }
+  }
+  async function copy() {
+    try { await navigator.clipboard.writeText(url); track("share_link_copy", { share_type: "canonical" }); setNotice(t(visibility === "private" ? "Link copied · only authorized people can open it" : "Link copied")); }
+    catch { setNotice(t("Automatic copy failed. Select and copy the address below.")); }
+  }
+  return <>
+    <button role={entry === "views" ? "menuitem" : undefined} className={entry === "views" ? "menu-item" : "btn primary"} data-analytics-button={entry === "main" ? "share" : undefined} aria-haspopup="dialog" aria-expanded={open} onMouseEnter={() => { if (entry === "main" && !authLoading) void resource.load(); }} onFocus={() => { if (entry === "main" && !authLoading) void resource.load(); }} onClick={() => { setUrl(`${window.location.origin}${appPath(`/s/${slug}`)}`); setTab(entry); setExpanded(false); setSelection(null); setHelpOpen(false); setError(null); setNotice(null); setOpen(true); }}>{entry === "views" ? <Eye size={14}/> : <Share2 size={14}/>} {t(entry === "views" ? "View history" : "Sharing")}</button>
+    {open && createPortal(<dialog ref={dialogRef} className={`sharing-dialog ${tab === "main" ? "is-main" : "is-advanced"} ${expanded && tab !== "main" ? "is-expanded" : ""}`} aria-label={t(tab === "main" ? "Share artifact" : tab === "members" ? "Members and collaborators" : tab === "views" ? "View history" : "Advanced sharing")}
+      onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); close(); }}
+      onClick={event => { if (event.target === event.currentTarget) { const r = event.currentTarget.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) close(); } }}>
+      <header className="sharing-dialog-head">
+        <div>{tab !== "main" && entry !== "views" && <button className="btn sm ghost" onClick={() => navigate("main")}><ArrowLeft size={14}/>{t("Back to sharing")}</button>}
+          <h2 tabIndex={-1}>{t(tab === "main" ? "Share artifact" : tab === "members" ? "Members and collaborators" : tab === "views" ? "View history" : "Advanced sharing")}</h2></div>
+        <div className="share-window-actions">{tab !== "main" && <button className="btn sm ghost" aria-label={t(expanded ? "Collapse" : "Expand")} onClick={() => setExpanded(value => !value)}>{expanded ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>}<button className="btn sm ghost" aria-label={t("Close")} onClick={close}><X size={18}/></button></div>
+      </header>
+      {tab === "links" && <div className="drawer-tabs" role="tablist" aria-label={t("Advanced sharing")}><button role="tab" aria-selected="true">{t("Share links")}</button></div>}
+      <div className="sharing-dialog-body">
+        {error && <p className="share-error" role="alert">{error}</p>}
+        {notice && <p className="sharing-notice" role="status">{notice}</p>}
+        {tab !== "views" && (snapshot.sharingError || snapshot.commentsError) && <div className="sharing-fetch-error" role="alert"><span>{t(snapshot.sharingError ? "Could not refresh access. Retry before changing settings." : "Could not load comment settings.")}</span><button className="btn sm" disabled={snapshot.sharingError ? snapshot.sharingPending : snapshot.commentsPending} onClick={() => void resource.load(true)}>{t("Try again")}</button></div>}
+        {tab === "main" && <>
+          <section className="sharing-members sharing-section">
+            <div className="sharing-members-head"><h3>{t("Members and collaborators")}</h3>
+              {sharing?.canManageMembers && <button className="sharing-manage" onClick={() => navigate("members")} disabled={snapshot.sharingError}>
+                <span className="sharing-avatars" aria-label={t("Directly authorized members")}>
+                  {sharing.members.map(member => <span className="sharing-avatar" key={member.id} title={member.name ?? t("Member")}>{Array.from(member.name ?? "?")[0]}</span>)}
+                  {sharing.moreMembers && <span className="sharing-avatar" aria-hidden="true">…</span>}
+                </span><span>{t("Manage members")}</span><ChevronRight size={14}/>
+              </button>}
+            </div>
+            <button className="sharing-navigation sharing-add" disabled={!sharing?.canManageMembers || snapshot.sharingError} onClick={() => { if (navigate("members")) setAddMember(true); }}><span><UserPlus size={17}/>{t("Add members")}</span><ChevronRight size={17}/></button>
+          </section>
+          <section className="sharing-section sharing-access">
+            <h3>{t("Link sharing")}</h3>
+            {ready ? <>
+              <div className="sharing-audience"><span className="sharing-audience-icon" aria-hidden="true">{draft === "private" ? <LockKeyhole size={19}/> : draft === "public" ? <Globe size={19}/> : <Link2 size={19}/>}</span><div>
+                <span className="sharing-audience-label" aria-hidden="true">{t(ACCESS_LABEL[draft])}<ChevronDown size={15}/></span>
+                <p id="main-access-hint">{t(ACCESS_HINT[draft])}</p>
               </div>
-            </header>
-            <div className="drawer-tabs" role="tablist" aria-label={t("Sharing")}>
-              <button type="button" role="tab" aria-selected={tab === "links"} onClick={() => { if (tab !== "links" && canLeave()) {setStartCreating(false); setTab("links"); setNotice(null); setError(null); } }}>{t("Share links")}</button>
-              <button type="button" role="tab" aria-selected={tab === "site"} onClick={() => { if (tab !== "site" && canLeave()) {setStartCreating(false); setTab("site"); setNotice(null); setError(null); } }}>{t("People and the site")}</button>
-              <button type="button" role="tab" aria-selected={tab === "views"} onClick={() => { if (tab !== "views" && canLeave()) {setStartCreating(false); setTab("views"); setNotice(null); setError(null); } }}>{t("View history")}</button>
+                <select id="main-access" aria-label={t("Who can access")} aria-describedby="main-access-hint" value={draft} disabled={busy || snapshot.sharingError} onChange={event => void saveAccess(event.target.value as Visibility)}>
+                  {(["private", "unlisted", "public"] as const).map(value => <option key={value} value={value}>{t(ACCESS_LABEL[value])}</option>)}
+                </select>
+              </div>
+              {accessPending && <p role="status">{t("Saving access…")}</p>}
+            </> : <div className="sharing-skeleton sharing-audience-skeleton" role="status" aria-label={t("Loading sharing settings")}><span/><span/></div>}
+            {settings && ready ? <div className="sharing-comment-settings">
+              {settings.readerAccess ? <>
+                <div className="sharing-toggle-row"><label htmlFor="main-comments">{t("Allow comments")}</label><input id="main-comments" type="checkbox" role="switch" checked={settings.mainPolicy !== "off"} disabled={busy || snapshot.sharingError || snapshot.commentsError} onChange={event => void saveComments(event.target.checked ? "login" : "off")}/></div>
+                <p>{t(settings.mainPolicy === "off" ? "New comments and replies are paused. Existing discussions remain readable." : "Readers can see comments. Sign in to post.")}</p>
+              </> : <>
+                <div className="sharing-legacy-row"><label htmlFor="legacy-comments">{t("Comment permissions")}</label>
+                  <select id="legacy-comments" value={settings.mainPolicy} disabled={busy || snapshot.sharingError || snapshot.commentsError} onChange={event => void saveComments(event.target.value as Settings["mainPolicy"])}>
+                    <option value="login">{t("Signed-in readers")}</option><option value="members">{t("Site members")}</option><option value="off">{t("Off")}</option>
+                  </select></div>
+                <details className="sharing-comment-help"><summary>{t("About comment permissions")}</summary><p>{t("This existing artifact keeps its original discussion visibility.")}</p></details>
+              </>}
+            </div> : !snapshot.commentsUnavailable && <div className="sharing-skeleton sharing-comments-skeleton" role="status" aria-label={t("Loading comment settings")}><span/></div>}
+          </section>
+            <div className="sharing-advanced-entry">
+              <div className="sharing-advanced-label"><b id={`${helpId}-label`}>{t("Advanced sharing")}</b><span className="sharing-help" onMouseEnter={() => setHelpOpen(true)} onMouseLeave={() => setHelpOpen(false)}><button ref={helpTrigger} type="button" className="btn sm ghost" aria-label={t("About advanced sharing")} aria-describedby={helpOpen ? helpId : undefined} onFocus={() => setHelpOpen(true)} onBlur={() => setHelpOpen(false)} onClick={() => setHelpOpen(true)} onKeyDown={event => { if (event.key === "Escape" && helpOpen) { event.preventDefault(); event.stopPropagation(); setHelpOpen(false); } }}><Info size={14}/></button></span></div>
+              <small id={`${helpId}-description`}>{t("Manage / create advanced share links")}</small>
+              <button className="sharing-navigation" aria-labelledby={`${helpId}-label ${helpId}-description`} disabled={!ready || snapshot.sharingError} onClick={() => navigate("links")}><ChevronRight size={17}/></button>
             </div>
-            <div className="drawer-body share-body">
-              {loading && <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}
-              {error && <p className="drawer-error" role="alert">{error}</p>}
-              {notice && <p className="share-warn" role="status">{notice}</p>}
-
-              {tab === "links" && <ShareLinks initialCreating={startCreating} slug={slug} visibility={visibility} onRequestPrivate={goPrivate} onDirtyChange={onDirtyChange} />}
-
-              {tab === "views" && <ShareViews slug={slug} />}
-
-              {tab === "site" && (
-                <>
-                  {siteId && <AuthorizationPanel resource={{type:"site",id:siteId}} />}
-
-                  {/* Site visibility is separate from grants and share links. */}
-                  <section className="share-sec">
-                    <h3 className="share-sec-title">{t("The site itself")}</h3>
-
-                    <div className="share-row">
-                      <span className="share-row-icon" aria-hidden="true">
-                        {visibility === "private" ? <Lock size={16} /> : <Globe size={16} />}
-                      </span>
-                      <div className="share-row-text">
-                        <label htmlFor="share-visibility">{t("Who can open /s/{slug}", { slug })}</label>
-                        <p>
-                          {visibility === "private"
-                            ? t("The site address is private. Authorized members retain access; share links have separate access rules.")
-                            : t("Anyone with this address can open it right now.")}
-                        </p>
-                      </div>
-                      <select
-                        disabled={siteSaving || loading} id="share-visibility" value={siteDraft?.visibility ?? visibility}
-                        onChange={(e) => stageSite({ visibility: e.target.value as Visibility })}
-                      >
-                        <option value="public">{t(VISIBILITY_LABEL.public)}</option>
-                        <option value="unlisted">{t(VISIBILITY_LABEL.unlisted)}</option>
-                        <option value="private">{t(VISIBILITY_LABEL.private)}</option>
-                      </select>
-                    </div>
-
-                    <div className="share-settings-footer">
-                      <span className="share-hint">{t(siteDraft ? "Unsaved changes" : "Takes effect after saving.")}</span>
-                      <div className="share-link-actions">
-                        <button className="btn sm" disabled={!siteDraft || siteSaving} onClick={() => {setSiteDraft(null); siteDirtyRef.current = false;}}>{t("Discard changes")}</button>
-                        <button className="btn sm solid" disabled={!siteDraft || siteSaving} onClick={() => {setError(null); setConfirmSite(true);}}>{t("Save changes")}</button>
-                      </div>
-                    </div>
-                  </section>
-                </>
-              )}
-            </div>
-
-            {/* Footer — the one and only copy control. It sits directly under the visibility scope, so
-                the scope is in view while copying; that is precisely why it was taken off the action
-                bar: copying there, you cannot see what you are sending out. */}
-            {tab === "site" && <footer className="share-foot">
-              <button className="btn" onClick={() => void copyCanonical()}>
-                <Link2 size={14} /> {t("Copy site address")}
-              </button>
-              <span className="share-foot-scope">{t(VISIBILITY_LABEL[visibility])}</span>
-            </footer>}
-          </aside>
-        </div>,
-        host,
-      )}
-    </>
-  );
+          </>}
+          {tab === "members" && siteId && <fieldset className="sharing-subpanel" disabled={snapshot.sharingError}><AuthorizationPanel resource={{ type: "site", id: siteId }} inline initialAdd={addMember} onSaved={() => { resource.update({}); void resource.load(true); }} onStateChange={onAuthorizationState}/></fieldset>}
+          {tab === "views" && <ShareViews slug={slug}/>}
+          {tab === "links" && ready && <fieldset className="sharing-subpanel" disabled={snapshot.sharingError}>
+            <ShareLinks slug={slug} visibility={visibility} onDirtyChange={value => { linkDirty.current = value; }} onRequestPrivate={() => { if (canLeave()) { linkDirty.current = false; setTab("main"); void saveAccess("private"); } }}/>
+            <p className="sharing-description"><Link2 size={13}/> {t("Main link access")}: {t(ACCESS_LABEL[visibility])}</p>
+          </fieldset>}
+      </div>
+      {tab === "main" && <footer className="sharing-copy">
+        <div className="sharing-copy-row"><input id="main-link" aria-label={t("Artifact link")} value={url} readOnly onFocus={event => event.currentTarget.select()}/>
+          <button className="btn solid" disabled={busy || !url || !ready || snapshot.sharingError} onClick={() => void copy()}><Copy size={15}/>{t("Copy link")}</button></div>
+      </footer>}
+      {helpOpen && tab === "main" && <span ref={helpTip} id={helpId} role="tooltip" className="sharing-tooltip">{t("Advanced links can specify audiences and expiry. Comments and replies are isolated by link.")}</span>}
+    </dialog>, document.body)}
+  </>;
 }

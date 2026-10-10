@@ -10,7 +10,10 @@ export const mcpTools = [
   ["artifact_site_get_site", "Get a site"],
   ["artifact_site_read", "Read a site"],
   ["artifact_site_fork", "Fork a site"],
-  ["artifact_site_share", "Create a share link"],
+  ["artifact_site_get_visibility", "Get access settings"],
+  ["artifact_site_set_visibility", "Set main-link access"],
+  ["artifact_site_revoke_share", "Revoke an independent share"],
+  ["artifact_site_share", "Create an independent share link"],
   ["artifact_site_set_official", "Set official version"],
   ["artifact_site_clear_official", "Clear official version"],
   ["artifact_site_rollback", "Roll back a site"],
@@ -32,5 +35,5 @@ export const mcpTools = [
  *  server publishes, and the OAuth scope gate (lib/oauth-shared) — a read-only grant may call
  *  exactly these. Keeping them apart is how the two would drift. */
 export const readOnlyMcpTools: ReadonlySet<string> = new Set(["artifact_site_comment_image", "artifact_site_comments_list", "artifact_site_comment_read", "artifact_site_comment_context",
-  "artifact_site_folders", "artifact_site_operation_status", "artifact_site_upload_status", "artifact_site_connection", "artifact_site_find", "artifact_site_get_site", "artifact_site_read", "artifact_site_export",
+  "artifact_site_get_visibility", "artifact_site_folders", "artifact_site_operation_status", "artifact_site_upload_status", "artifact_site_connection", "artifact_site_find", "artifact_site_get_site", "artifact_site_read", "artifact_site_export",
 ]);

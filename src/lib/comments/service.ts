@@ -826,10 +826,10 @@ export async function commentSettings(
         [site.id, input.mainPolicy, session!.userId, Date.now()],
       );
     const [row] = await q(
-      "SELECT main_policy FROM site_comment_settings WHERE site_id=$1",
+      "SELECT main_policy,reader_access FROM site_comment_settings WHERE site_id=$1",
       [site.id],
     );
-    return { mainPolicy: row?.main_policy ?? "login" };
+    return { mainPolicy: row?.main_policy ?? "login", readerAccess: Number(row?.reader_access) === 1 };
   };
   return input
     ? write(request, slug, (q, site, session) => run(site, session, q))

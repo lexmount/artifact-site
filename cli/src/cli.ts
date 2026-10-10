@@ -148,20 +148,30 @@ For MCP, connect to https://your-server/mcp directly, or run "artifact-site mcp"
     .description("Publish a file (.html / pdf / pptx / docx / .zip), a directory, or HTML from stdin (`-`) as a new site")
     .argument("<path>", "file, directory, or - for stdin")
     .option("-t, --title <title>", "site title")
-    .option("-s, --share <policy>", "share link to create: public (default), login, email, passcode, or none", parsePolicy, "public")
+    .option("-s, --share <policy>", "deprecated advanced share: public, login, email, passcode, or none (default); creates an independent discussion", parsePolicy, false)
     .action(async (target: string, opts: { operationKey?: string; official?: boolean; title?: string; share: SharePolicy | false }) => {
       const c = client();
       const progress = json() ? undefined : (l: string) => io.err(l);
       const out = target === "-"
         ? await publishHtml(c, await io.stdin(), { operationKey: opts.operationKey, official: opts.official, title: opts.title, share: opts.share })
         : await publishPath(c, target, { operationKey: opts.operationKey, official: opts.official, title: opts.title, share: opts.share, onProgress: progress });
-      emit({ officialVersionId: out.site.officialVersionId, officialRevision: out.site.officialRevision, slug: out.site.slug, kind: out.site.kind, title: out.site.title, siteUrl: out.siteUrl, readerUrl: out.readerUrl, share: out.share ?? null, shareError: out.shareError, route: out.route }, () => {
+      emit({ officialVersionId: out.site.officialVersionId, officialRevision: out.site.officialRevision, visibility: "visibility" in out.site ? out.site.visibility : undefined, slug: out.site.slug, kind: out.site.kind, title: out.site.title, siteUrl: out.siteUrl, readerUrl: out.readerUrl, share: out.share ?? null, shareError: out.shareError, route: out.route }, () => {
         io.out(`Published ${out.site.title} (${out.site.kind}, slug ${out.site.slug})`);
         io.out(`  site:  ${out.siteUrl}`);
+        io.out(`  access: ${"visibility" in out.site ? out.site.visibility ?? "unknown" : "unknown"} (copying does not change access)`);
         if (out.share) io.out(`  share: ${out.share.url}${out.share.passcode ? `  (passcode ${out.share.passcode})` : ""}  ← give this one to readers`);
         if ("notice" in out.site && out.site.notice) io.err(`note: ${out.site.notice}`);
       });
       if (out.shareError) throw new CliError(`The site was created but the share link was not: ${out.shareError}. Create one with: artifact-site share ${out.site.slug}`, 5);
+    });
+
+  program.command("visibility").description("Inspect or change main-link access; independent links are unchanged")
+    .argument("<slug>").argument("[state]", "private | unlisted (link access, not discoverable) | public (discoverable)")
+    .action(async (slug: string, state?: string) => {
+      if (state && !["private", "unlisted", "public"].includes(state)) throw new CliError("state must be private, unlisted or public", 2);
+      const c = client();
+      const result = state ? await c.setVisibility(slug, state as "private" | "unlisted" | "public") : await c.getVisibility(slug);
+      emit(result, () => { io.out(`${result.visibility}: ${c.absolute(result.url)}`); if (state === "private") io.out("Independent share links are not revoked."); });
     });
 
   program.command("update")
@@ -332,8 +342,11 @@ For MCP, connect to https://your-server/mcp directly, or run "artifact-site mcp"
   comments.command("context").argument("<slug>").argument("<thread-id>").description("Exact original version, anchor, quoted context and independent source/edit capabilities")
     .action(async (slug: string, threadId: string) => io.out(JSON.stringify(await client(false).commentContext(slug, threadId), null, json() ? undefined : 2)));
 
+  program.command("revoke-share").description("Revoke an independent link; main-link access is unchanged").argument("<slug>").argument("<share-id>")
+    .action(async (slug: string, shareId: string) => { const result = await client().revokeShare(slug, shareId); emit(result, () => io.out("Independent share revoked.")); });
+
   program.command("share")
-    .description("Create a share link for a site")
+    .description("Advanced: create an independent link and isolated discussion; ordinary sharing uses visibility")
     .argument("<slug>")
     .option("-p, --policy <policy>", "public | login | email | passcode", (v) => { const p = parsePolicy(v); if (!p) throw new InvalidArgumentError("policy is required"); return p; }, "public")
     .option("--mode <mode>", "view | comment | edit", (v) => { if (!["view","comment","edit"].includes(v)) throw new InvalidArgumentError("invalid share mode"); return v; }, "view")

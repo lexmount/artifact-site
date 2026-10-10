@@ -196,8 +196,9 @@ describe("wiring (source-structure constraints)", () => {
   });
 
   it("both render branches (single / folder) pass canEdit down; missing one is a false lock on half the sites", () => {
-    expect(page.match(/canEdit=\{canEdit\}/g) ?? []).toHaveLength(2);
-    expect(page.match(/<Editor$/gm) ?? []).toHaveLength(2);
+    const editors = stripComments(page).match(/<Editor\b[\s\S]*?\/>/g) ?? [];
+    expect(editors).toHaveLength(2);
+    for (const editor of editors) expect(editor).toContain("canEdit={canEdit}");
   });
 
   it("the lock screen goes through editorLocked rather than re-spelling !editToken", () => {

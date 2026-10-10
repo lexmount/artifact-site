@@ -32,7 +32,7 @@
     {
       "name": "artifact_site_publish",
       "title": "Publish a site",
-      "description": "Save a new AI-generated page, report, chart, prototype or document to the remote Artifact Site library and get its address. Use for 'publish this report' or 'give this page a link'. Supply inline HTML, a UTF-8/base64 file tree, or a completed upload_id. For requests over 2 MiB, use upload_start and upload_write first. Creates a PUBLIC share by default; use share:false for unshared work. To change an existing artifact at the same URL, use update or edit instead. Returns the created artifact and share result; if sharing fails, retry share rather than publishing again.",
+      "description": "Save a new AI-generated page, report, chart, prototype or document to the remote Artifact Site library and get its address. Use for 'publish this report' or 'give this page a link'. Supply inline HTML, a UTF-8/base64 file tree, or a completed upload_id. For requests over 2 MiB, use upload_start and upload_write first. Creates a private artifact by default without an independent share link. Giving the user a link does not authorize opening access. Use artifact_site_set_visibility with unlisted only when the user asks to share; use public only for explicit public discovery. To change an existing artifact at the same URL, use update or edit instead. Returns the artifact, main URL and actual visibility. Explicit advanced share requests also return their link; retry a failed access/share operation rather than publishing again.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -90,8 +90,8 @@
             "maxLength": 200
           },
           "share": {
-            "default": "public",
-            "description": "Share policy. Defaults to public; false creates no share link.",
+            "default": false,
+            "description": "Deprecated explicit advanced-share policy; default false. A non-false value creates an independent link and discussion. Prefer set_visibility for ordinary sharing.",
             "anyOf": [
               {
                 "type": "string",
@@ -562,9 +562,135 @@
       }
     },
     {
+      "name": "artifact_site_get_visibility",
+      "title": "Get access settings",
+      "description": "Inspect access through the main artifact link. Independent shares keep their own access rules.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Artifact identifier returned by find/publish, or the slug in its /s/ URL. Not a local path."
+          },
+          "tenant_id": {
+            "description": "Destination tenant for creation; defaults to the account tenant.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "share_token": {
+            "description": "Token from a user-provided share URL; carries only that share permission.",
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false
+      }
+    },
+    {
+      "name": "artifact_site_set_visibility",
+      "title": "Set main-link access",
+      "description": "Change main-link access only when requested by the user. private: authorized members only; unlisted: anyone with the link, excluded from discovery by unrelated users; public: public catalog and keyword search. Keeps the same URL and main discussion, creates no independent share. Changing to private does NOT revoke independent links; inspect and revoke those separately when asked to stop all sharing. If this fails after creation, retry this operation, never republish.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Artifact identifier returned by find/publish, or the slug in its /s/ URL. Not a local path."
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "private",
+              "unlisted",
+              "public"
+            ]
+          },
+          "tenant_id": {
+            "description": "Destination tenant for creation; defaults to the account tenant.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "share_token": {
+            "description": "Token from a user-provided share URL; carries only that share permission.",
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "slug",
+          "visibility"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "artifact_site_revoke_share",
+      "title": "Revoke an independent share",
+      "description": "Revoke one independent link by ID after the user asks to withdraw it. Inspect get_site include:[shares] for IDs. Does not change main-link visibility or delete discussion history.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Artifact identifier returned by find/publish, or the slug in its /s/ URL. Not a local path."
+          },
+          "share_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "tenant_id": {
+            "description": "Destination tenant for creation; defaults to the account tenant.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "share_token": {
+            "description": "Token from a user-provided share URL; carries only that share permission.",
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "slug",
+          "share_id"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
       "name": "artifact_site_share",
-      "title": "Create a share link",
-      "description": "Create a reader link for an existing remote artifact when the user wants to share a report or page. Choose public, signed-in, email-restricted or passcode access explicitly. A public link opens only that share URL; the original artifact visibility stays unchanged. Returns the new link and any generated passcode; passcodes are shown once, while new link addresses can be retrieved later. Requires owner permission. Use get_site include:[shares] to inspect existing sharing records.",
+      "title": "Create an independent share link",
+      "description": "Advanced sharing: create an independent reader link and isolated discussion only when requested. For ordinary sharing use artifact_site_set_visibility with unlisted instead. Choose public, signed-in, email-restricted or passcode access explicitly. A public link opens only that share URL; the original artifact visibility stays unchanged. Returns the new link and any generated passcode; passcodes are shown once, while new link addresses can be retrieved later. Requires owner permission. Use get_site include:[shares] to inspect existing sharing records.",
       "inputSchema": {
         "type": "object",
         "properties": {

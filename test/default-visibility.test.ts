@@ -1,7 +1,5 @@
-// The default visibility of a NEW site is decided by the deployment: ARTIFACT_DEFAULT_VISIBILITY
-// wins when set; otherwise the only distinction is "local development" (no public URL configured
-// → public) versus "a real deployment" (→ private). Existing rows are untouched — only the
-// creation path is under test here.
+// New sites are private unless the operator explicitly overrides the default.
+// Existing visibility values are unchanged.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,9 +31,9 @@ describe("a new site's default visibility follows the deployment", () => {
     expect((await getSite((await made()).id))!.visibility).toBe("private");
   });
 
-  it("local development (no public URL) → public: otherwise a clean browser sees nothing at all", async () => {
+  it("local development also defaults to private", async () => {
     delete process.env.ARTIFACT_PUBLIC_URL;
-    expect((await getSite((await made()).id))!.visibility).toBe("public");
+    expect((await getSite((await made()).id))!.visibility).toBe("private");
   });
 
   it("intranet use: an explicit ARTIFACT_DEFAULT_VISIBILITY=public makes the link open for whoever holds it", async () => {

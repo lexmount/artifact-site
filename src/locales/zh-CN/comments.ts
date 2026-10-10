@@ -1,5 +1,12 @@
 import type { Messages } from "@/lib/i18n";
 export const comments: Messages = {
+  "All authorized discussions": "所有已授权讨论",
+  "Each reply stays in its original discussion.": "每条回复仍保留在原讨论区。",
+  "Artifact discussion": "作品评论",
+  "Independent discussion": "独立讨论区",
+  "Comments follow this artifact’s access settings.": "评论遵循作品的访问设置。",
+  "Comments here are separate from the artifact and other links.": "此处评论与作品评论、其他链接的评论相互隔离。",
+  "Pause new comments": "暂停新评论",
   "Mention someone": "提及他人",
   "Finding people…": "正在查找…",
   "Keep typing to narrow the list.": "继续输入以缩小范围。",

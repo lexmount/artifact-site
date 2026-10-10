@@ -2,13 +2,13 @@ import type { Messages } from "@/lib/i18n";
 
 /** Viewer chrome (/s/[slug]), the source + visual editors, and the assistant mount. */
 export const editor: Messages = {
+  "Created · Private. Change access in Sharing when you are ready.": "已创建 · 当前私有。需要分享时可修改访问范围。",
+  "Open presentation mode. Access stays unchanged.": "打开演示模式，访问范围不变。",
   "This report has changed. Your edits are still here; copy them before refreshing to review the latest version.": "报告已有新版本。你的修改仍保留，请先复制修改内容，再刷新查看最新版。",
   "All files come from {label}; saving creates a new latest version": "所有文件均来自 {label}，保存后将创建新的最新版",
   "All files come from earlier version {label}. Saving creates a new latest version; {label} and the official version remain unchanged.": "所有文件均来自历史版本 {label}。保存后将创建新的最新版，{label} 和正式版均保持不变。",
 
   // ── site-viewer ──────────────────────────────────────────────────────────────
-  "Published · This site is private. Create a share link under Sharing settings to invite more people":
-    "已发布 · 此站点为私有站点，到「分享设置」里创建分享链接以邀请更多人",
   "Published · Copy the link under Sharing settings": "已发布 · 到「分享设置」里复制链接",
   "Rename failed": "重命名失败",
   "Renamed": "已重命名",
@@ -30,9 +30,6 @@ export const editor: Messages = {
   "Sharing settings": "分享设置",
   "Sign in required": "需登录",
   "Edit": "编辑",
-  "Open the artifact itself in a new window (without this action bar). This is not a share link — use Sharing settings to show it to others.":
-    "在新窗口打开产物本身（不含这条操作条）。这不是分享链接——给别人看请用「分享设置」。",
-  "Open the artifact itself in a new window, without this action bar.": "在新窗口打开产物本身，不含这条操作条。",
   "Open in new window": "新窗口打开",
   "Action bar: opens automatically. Click to switch to manual": "操作条：自动展开。点击改为手动",
   "Action bar: opens manually. Click to switch to automatic": "操作条：手动展开。点击改为自动",

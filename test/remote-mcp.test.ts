@@ -360,7 +360,7 @@ it("handles empty files, rejects changed retries, and removes parts after succes
   expect((await call(c, "upload_write", { ...write, index: 1, base64: "PC9odG1sPg==", final: true })).data).toMatchObject({ bytes: 13, complete: true });
   expect((await call(c, "upload_write", { ...write, index: 2 })).data).toMatchObject({ code: "file_finalized", nextIndex: 2, retryable: false });
   const result = await call(c, "publish", { upload_id });
-  expect(result.error).toBe(false); expect(result.data.share.url).toBeTruthy();
+  expect(result.error).toBe(false); expect(result.data.share).toBeUndefined();
   const file = await call(c, "export", { slug: result.data.slug, path: "empty.txt", version_id: upload_id });
   expect(file.error).toBe(false); expect(file.data.base64).toBe(""); expect(file.data.done).toBe(true);
   const { listUploadSessionsBefore } = await import("@/lib/db");
@@ -923,4 +923,38 @@ it("forwards the CLI's local stdio server (artifact-site mcp) to the real /mcp h
   expect(refused.isError).toBe(true);
   expect((refused.content as { text: string }[])[0].text).toMatch(/rejected the token.*artifact-site login/);
   await revoked.close();
+});
+
+it("shares through the main link without discovery or independent links, and revokes advanced links separately", async () => {
+  const owner = await connect((await identity("sharing-owner")).token);
+  const outsider = await connect((await identity("sharing-reader")).token);
+  const created = await call(owner, "publish", { html: "<h1>Unique mainlink acceptance</h1>", title: "Unique mainlink acceptance" });
+  expect(created.error).toBe(false);
+  expect(created.data.visibility).toBe("private");
+  expect(created.data.share).toBeUndefined();
+  const slug = created.data.slug;
+  expect((await call(owner, "get_visibility", { slug })).data.visibility).toBe("private");
+  expect((await call(outsider, "set_visibility", { slug, visibility: "unlisted" })).error).toBe(true);
+  expect((await call(owner, "set_visibility", { slug, visibility: "unlisted" })).data).toMatchObject({ visibility: "unlisted", independentLinksUnchanged: true });
+  expect((await call(outsider, "read", { slug })).error).toBe(false);
+  const found = await call(outsider, "find", { query: "Unique mainlink acceptance" });
+  expect(found.error).toBe(false);
+  expect(JSON.stringify(found.data)).not.toContain(slug);
+  expect((await call(owner, "set_visibility", { slug, visibility: "public" })).error).toBe(false);
+  expect(JSON.stringify((await call(outsider, "find", { query: "Unique mainlink acceptance" })).data)).toContain(slug);
+  expect((await call(owner, "set_visibility", { slug, visibility: "unlisted" })).error).toBe(false);
+  const { getSiteBySlug, listShares, rbacQuery } = await import("@/lib/db");
+  const site = (await getSiteBySlug(slug))!;
+  expect(await listShares(site.id)).toHaveLength(0);
+  expect((await rbacQuery("SELECT reader_access FROM site_comment_settings WHERE site_id=$1", [site.id]))[0].reader_access).toBe(1);
+  const advanced = await call(owner, "share", { slug, policy: "public", mode: "comment" });
+  expect(advanced.error).toBe(false);
+  const shares = await listShares(site.id);
+  expect(shares).toHaveLength(1);
+  expect((await call(owner, "set_visibility", { slug, visibility: "private" })).error).toBe(false);
+  expect((await listShares(site.id))[0].revokedAt).toBeNull();
+  expect((await call(outsider, "revoke_share", { slug, share_id: shares[0].id })).error).toBe(true);
+  expect((await call(owner, "revoke_share", { slug, share_id: shares[0].id })).error).toBe(false);
+  expect((await listShares(site.id))[0].revokedAt).not.toBeNull();
+  expect((await call(outsider, "read", { slug })).error).toBe(true);
 });

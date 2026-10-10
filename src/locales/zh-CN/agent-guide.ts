@@ -1,6 +1,11 @@
 import type { Messages } from "@/lib/i18n";
 
 export const agentGuide: Messages = {
+  "Revoke an independent share": "撤销独立分享",
+  "Get access settings": "查看访问设置",
+  "Set main-link access": "设置主链接访问范围",
+  "Create an independent share link": "创建独立分享链接",
+  "Replace dist/ with your build output. Publishing creates a private artifact. Use visibility unlisted only when you want to share the main link.": "将 dist/ 替换为构建目录。发布默认创建私有作品；需要分享主链接时，再使用 visibility unlisted。",
   // ── Remote MCP: sign in from the client (OAuth) or paste a token ──
   "Authorization method": "授权方式",
   "Sign in from the client": "在客户端里登录",
@@ -73,7 +78,6 @@ export const agentGuide: Messages = {
   "Install the CLI": "安装 CLI",
   "Authenticate": "完成认证",
   "Publish and verify": "发布并验证",
-  "Replace dist/ with your build output. A successful publish returns the site address. This example creates no share link; omitting --share defaults to a public share.": "将 dist/ 替换为你的构建输出目录。发布成功后会返回作品地址。此示例不创建分享链接；省略 --share 参数时默认创建公开分享。",
   "Update, search and read commands": "更新、搜索和读取命令",
   "Replace YOUR_SITE_SLUG with the identifier in the site's address. Update writes a new version; search and read respect your access permissions.": "将 YOUR_SITE_SLUG 替换为作品地址中的标识。更新会写入新版本，搜索和读取遵循你的访问权限。",
   "Verify the connection": "验证接入",
@@ -86,7 +90,6 @@ export const agentGuide: Messages = {
   "Update a site": "更新作品",
   "Get a site": "获取作品详情",
   "Read a site": "读取作品正文",
-  "Create a share link": "创建分享链接",
   "Export a site": "导出作品",
   "Roll back a site": "回滚作品",
   "Delete a site": "删除作品",
@@ -97,6 +100,6 @@ export const agentGuide: Messages = {
   "CLI and remote MCP use the same Bearer credentials and account permissions. Configure each client separately. Operator tokens have broad privileges; remote MCP requires authentication for every request.": "CLI 和远程 MCP 使用相同的 Bearer 凭据与账号权限，但需分别配置客户端。管理员 Token 权限较大；远程 MCP 的每次请求都需要认证。",
   "In CLI, an environment token overrides a saved token. Check the server address and stale ARTIFACT_SITE_TOKEN when authentication fails. CLI logout removes local credentials; revoke a personal token in My sites to stop its use by every client.": "CLI 中环境变量 Token 优先于已保存凭据。认证失败时请检查服务器地址和过期的 ARTIFACT_SITE_TOKEN。CLI logout 仅移除本地凭据；在「我的站点」撤销个人 Token 才会阻止所有客户端继续使用。",
   "A cloud agent cannot reach localhost on your computer. Use a server address reachable from the agent. The browser cannot detect whether the CLI is installed or connected on another machine.": "云端 agent 无法访问你电脑上的 localhost。请使用 agent 能访问的服务器地址。浏览器无法检测另一台机器是否安装或连接了 CLI。",
-  "CLI and MCP create public shares by default when publishing. Use --share none in the CLI or share: false in MCP to keep new work unshared; existing site visibility and sharing rules still apply.": "CLI 和 MCP 发布时默认创建公开分享。使用 CLI 的 --share none 或 MCP 的 share: false 可不创建分享；作品本身的可见性和已有分享规则仍然生效。",
+  "CLI and MCP create private artifacts by default. To share the main link, explicitly enable link access. Independent links are an advanced option; existing access rules stay unchanged.": "CLI 和 MCP 默认创建私有作品。需要分享主链接时，再主动开放链接访问。独立链接属于高级功能；历史访问规则保持不变。",
   "CLI / MCP connection →": "CLI / MCP 接入 →"
 };

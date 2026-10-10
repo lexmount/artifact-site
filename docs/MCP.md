@@ -163,7 +163,7 @@ cannot approve.
 
 ## Operations
 
-The server exposes **26 tools**. Descriptions state when to use each tool, its inputs and results,
+The server exposes **29 tools**. Descriptions state when to use each tool, its inputs and results,
 and permission or mutation boundaries. The connection also supplies server instructions for agents.
 
 | CLI | Remote tool |
@@ -179,7 +179,9 @@ and permission or mutation boundaries. The connection also supplies server instr
 | `update <slug> <path>` / `update <slug> --title <title>` | `artifact_site_update` |
 | `edit <slug> <path> --file <relpath> --expected-version <id>` | `artifact_site_edit` |
 | `fork <slug>` | `artifact_site_fork` |
-| `share <slug>` | `artifact_site_share` |
+| `visibility <slug> [private\|unlisted\|public]` | `artifact_site_get_visibility` / `artifact_site_set_visibility` |
+| `share <slug>` (advanced independent link) | `artifact_site_share` |
+| `revoke-share <slug> <share-id>` | `artifact_site_revoke_share` |
 | `export <slug> [--version-id <id>]` | `artifact_site_export` (manifest or file bytes) |
 | `rollback <slug> <version>` / `delete <slug>` | `artifact_site_rollback` / `artifact_site_delete` |
 | Publication recovery | `artifact_site_operation_status`, `artifact_site_upload_status` |
@@ -191,8 +193,9 @@ and permission or mutation boundaries. The connection also supplies server instr
 
 Inline publish accepts HTML or `files` containing `path`, `content`, and `encoding` (`utf8` or
 `base64`); a single document/ZIP is supported too. Alternatively supply a completed `upload_id`.
-Publish defaults to a public share for **both inline and staged uploads**; set `share: false`
-(CLI `--share none`) to skip it. Updating never creates a share automatically.
+Publishing creates a private artifact by default for **both inline and staged uploads**, without an independent link. Explicit operator defaults still apply; inspect the returned `visibility`. When the user requests ordinary sharing, use `artifact_site_set_visibility` with `unlisted` and return the same `/s/<slug>` URL. Unrelated users cannot discover unlisted work in Explore or search. Use `public` only for explicit public discovery. Updating preserves visibility.
+
+`artifact_site_share` is advanced: separate audience rules, expiry and an isolated discussion. The explicit publish `share` parameter and CLI `--share` are retained for compatibility but no longer default to a public share. Setting visibility to `private` does not revoke independent links; revoke each explicitly when asked to stop all sharing. New main discussions are readable by artifact readers, require login to post, and remain readable when new comments are paused. Historical discussion permissions and separate link/version scopes remain unchanged.
 
 Without search keywords, `find` ignores the search-only `limit` and returns the personal library,
 separating owned and collaborative artifacts. Keyword search includes discoverable public works;
@@ -228,7 +231,7 @@ requested through `get_site`; plain metadata access does not grant sharing permi
    and final true. File creation/assembly is automatic. Finish one file before starting another.
    Identical retries, including the final chunk, are safe until the upload is committed or cancelled.
    A finalized file is immutable in this upload; cancel and start over to change it.
-4. Call `artifact_site_publish` with `upload_id` and the desired share policy, or
+4. Call `artifact_site_publish` with `upload_id` (private by default), or
    `artifact_site_update` with `slug`, `upload_id` and `expected_version` from the earlier read.
    Unfinished files and mismatched publish/update targets are rejected.
 5. Use `artifact_site_upload_cancel` with `upload_id` if abandoning the draft.
@@ -257,7 +260,7 @@ and limits to `connection`, versions/shares to `get_site` includes, rename to ti
 and file download to `export`. Replace the old six-step upload protocol with the flow above.
 CLI `list`, `search` and `rename` remain callable compatibility commands, hidden from top-level help.
 
-Reload the client and confirm exactly 26 tools. In a new conversation, try these requests without
+Reload the client and confirm exactly 29 tools. In a new conversation, try these requests without
 mentioning MCP or a tool name: “What artifacts have I published?”, “Find last week's report”,
 “Read that report”, “Publish this page without sharing it”, and “Rename this artifact”.
 For Chinese hosts, also try “我有哪些作品”, “找一下之前的报告”, and “把这份报告发布成链接”.

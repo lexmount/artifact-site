@@ -4,6 +4,7 @@ import { cache } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import type { Metadata } from "next";
+import PresentationViewer from "@/components/presentation-viewer";
 import SiteViewer from "@/components/site-viewer";
 import RecentTracker from "@/components/recent-tracker";
 import Assistant from "@/components/assistant";
@@ -103,10 +104,10 @@ export default async function ViewerPage({
   params, searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ published?: string; version?: string }>;
+  searchParams: Promise<{ published?: string; version?: string; presentation?: string }>;
 }) {
   const { slug } = await params;
-  const { published, version: requestedVersion } = await searchParams;
+  const { published, version: requestedVersion, presentation } = await searchParams;
   // One rebuilt Request and one session resolution for the whole request — generateMetadata, the
   // gate, the permission flags and the view log all see the same reader (see pageContext). The
   // viewer Request variant carries the address / agent / prefetch headers logSiteOpen reads; the
@@ -136,6 +137,8 @@ export default async function ViewerPage({
   // a view. And after the RESPONSE: the collapse SELECT + INSERT are bookkeeping, and on a
   // Postgres deployment they were two network round-trips the reader waited on for nothing.
   afterResponse(() => logSiteOpen(request, view.site, session, anonIdFromRequest(request)));
+
+  if (presentation === "1") return <PresentationViewer title={view.site.title} src={`/api/preview/${slug}/?v=${encodeURIComponent(view.version.id)}`} returnTo={`/s/${slug}${requestedVersion ? `?version=${encodeURIComponent(requestedVersion)}` : ""}`}/>;
 
   return (
     <>

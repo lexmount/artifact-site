@@ -64,9 +64,17 @@ export async function authorizationFetch<T>(
 export default function AuthorizationPanel({
   resource,
   reason = "",
+  inline = false,
+  onStateChange,
+  initialAdd = false,
+  onSaved,
 }: {
   resource: Resource;
   reason?: string;
+  inline?: boolean;
+  onStateChange?: (editing: boolean, busy: boolean) => void;
+  initialAdd?: boolean;
+  onSaved?: () => void;
 }) {
   const t = useT();
   const [bindings, setBindings] = useState<Binding[] | null>(null);
@@ -78,12 +86,21 @@ export default function AuthorizationPanel({
   const [subjectType, setSubjectType] = useState<Subject["type"]>("user");
   const [subjectId, setSubjectId] = useState("");
   const [query, setQuery] = useState("");
+  const [finding, setFinding] = useState(initialAdd);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [roleId, setRoleId] = useState("");
-  const [opened, setOpened] = useState(false);
+  const [opened, setOpened] = useState(initialAdd);
   const [notice, setNotice] = useState("");
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useRef<HTMLDialogElement | null>(null);
+  const formRoot = useRef<HTMLElement | null>(null);
+  const formTrigger = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (inline && opened) formRoot.current?.querySelector<HTMLElement>("select")?.focus();
+    if (inline && !opened) formTrigger.current?.focus();
+  }, [inline, opened]);
+  const FormContainer = inline ? "section" : "dialog";
+  useEffect(() => { onStateChange?.(opened, busy); return () => onStateChange?.(false, false); }, [opened, busy, onStateChange]);
   const params = new URLSearchParams({
     resourceType: resource.type,
     resourceId: resource.id,
@@ -139,6 +156,7 @@ export default function AuthorizationPanel({
     ])
       .then(([catalog, subjects]) => {
         if (!alive) return;
+        setFinding(false);
         setRoles(catalog.roles.map((r) => r.id));
         setCandidates(subjects.subjects);
         setCandidateCursor(subjects.nextCursor ?? null);
@@ -146,7 +164,7 @@ export default function AuthorizationPanel({
           setSubjectId(subjects.subjects[0]?.id ?? "");
       })
       .catch((e) => {
-        if (alive) setError(e.message);
+        if (alive) { setFinding(false); setError(e.message); }
       });
     return () => {
       alive = false;
@@ -183,6 +201,7 @@ export default function AuthorizationPanel({
     }
   }
   function open(binding: Binding | null) {
+    formTrigger.current = document.activeElement as HTMLElement | null;
     setRoles([]);
     setCandidates([]);
     setEditing(binding);
@@ -191,6 +210,7 @@ export default function AuthorizationPanel({
     setRoleId(binding?.roleId ?? "");
     setQuery("");
     setError("");
+    setFinding(true);
     setOpened(true);
     dialog.current?.showModal();
   }
@@ -218,6 +238,7 @@ export default function AuthorizationPanel({
             }
           : { resource, subject, roleId },
       );
+      onSaved?.();
       await load();
       dialog.current?.close();
       setOpened(false);
@@ -229,7 +250,8 @@ export default function AuthorizationPanel({
     }
   }
   return (
-    <section className="authorization-panel">
+    <section className={`authorization-panel ${inline ? "is-inline" : ""}`}>
+      <div hidden={inline && opened}>
       <div className="authorization-heading">
         <h3>{t("Authorization")}</h3>
         <button className="btn" onClick={() => open(null)}>
@@ -292,9 +314,10 @@ export default function AuthorizationPanel({
           {t("Load more")}
         </button>
       )}
-      <dialog
-        ref={dialog}
-        className="authorization-dialog"
+      </div>
+      {(!inline || opened) && <FormContainer
+        ref={node => { formRoot.current = node; dialog.current = node instanceof HTMLDialogElement ? node : null; }}
+        className={inline ? "authorization-form" : "authorization-dialog"}
         aria-label={t(editing ? "Edit authorization" : "Add authorization")}
         onCancel={(e) => {
           if (busy) e.preventDefault();
@@ -316,7 +339,7 @@ export default function AuthorizationPanel({
               disabled={busy}
               onClick={close}
             >
-              {t("Close")}
+              {t(inline ? "Back to members" : "Close")}
             </button>
           </div>
           {error && (
@@ -330,6 +353,7 @@ export default function AuthorizationPanel({
               disabled={!!editing || busy}
               value={subjectType}
               onChange={(e) => {
+                setFinding(true);
                 setRoles([]);
                 setCandidates([]);
                 setSubjectType(e.target.value as Subject["type"]);
@@ -356,25 +380,20 @@ export default function AuthorizationPanel({
                 {t("Find workspace member")}
                 <input
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  disabled={busy}
+                  onChange={(e) => { setFinding(true); setSubjectId(""); setQuery(e.target.value); }}
                   placeholder={t("Name or email")}
                 />
               </label>
-              <label>
-                {t("Member")}
-                <select
-                  required
-                  value={subjectId}
-                  onChange={(e) => setSubjectId(e.target.value)}
-                >
-                  <option value="">{t("Select a member")}</option>
-                  {candidates.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.display_name || c.email || c.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <fieldset className="authorization-candidates" disabled={busy || finding}>
+                <legend>{t("Member")}</legend>
+                {finding ? <p role="status">{t("Loading…")}</p> : candidates.length === 0 ? <p>{t("No matching members")}</p> : candidates.map(c => (
+                  <label key={c.id} className="authorization-candidate">
+                    <input type="radio" name="authorization-member" value={c.id} checked={subjectId === c.id} onChange={() => setSubjectId(c.id)}/>
+                    <span><strong>{c.display_name || c.name || c.email || c.id}</strong>{c.email && (c.display_name || c.name) && <small>{c.email}</small>}</span>
+                  </label>
+                ))}
+              </fieldset>
               {candidateCursor && (
                 <button
                   type="button"
@@ -417,6 +436,7 @@ export default function AuthorizationPanel({
             </p>
           )}
           <div className="authorization-actions">
+            <button type="button" className="btn" disabled={busy} onClick={close}>{t("Cancel")}</button>
             {editing && (
               <button
                 type="button"
@@ -431,16 +451,16 @@ export default function AuthorizationPanel({
               type="submit"
               className="btn primary"
               disabled={
-                busy ||
+                busy || finding ||
                 !roles.includes(roleId) ||
                 (subjectType !== "everyone" && !subjectId)
               }
             >
-              {t(busy ? "Saving…" : "Save")}
+              {t(busy ? "Saving…" : "Save authorization")}
             </button>
           </div>
         </form>
-      </dialog>
+      </FormContainer>}
     </section>
   );
 }

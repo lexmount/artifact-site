@@ -45,7 +45,7 @@ export default async function PublishGuide() {
           <p>{t("CLI and remote MCP use the same Bearer credentials and account permissions. Configure each client separately. Operator tokens have broad privileges; remote MCP requires authentication for every request.")}</p>
           <p>{t("In CLI, an environment token overrides a saved token. Check the server address and stale ARTIFACT_SITE_TOKEN when authentication fails. CLI logout removes local credentials; revoke a personal token in My sites to stop its use by every client.")}</p>
           <p>{t("A cloud agent cannot reach localhost on your computer. Use a server address reachable from the agent. The browser cannot detect whether the CLI is installed or connected on another machine.")}</p>
-          <p>{t("CLI and MCP create public shares by default when publishing. Use --share none in the CLI or share: false in MCP to keep new work unshared; existing site visibility and sharing rules still apply.")}</p>
+          <p>{t("CLI and MCP create private artifacts by default. To share the main link, explicitly enable link access. Independent links are an advanced option; existing access rules stay unchanged.")}</p>
         </details>
         <details id="file-limits">
           <summary>{t("Supported files and limits")}</summary>

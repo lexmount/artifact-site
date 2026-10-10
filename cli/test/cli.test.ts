@@ -65,6 +65,26 @@ describe("artifact-site CLI", () => {
     expect(JSON.parse(await readFile(path.join(dir, "config", "config.json"), "utf8"))).toMatchObject({ baseUrl: server.url, email: "dev@example.com" });
   });
 
+  it("changes main-link access without minting a share and revokes advanced links explicitly", async () => {
+    stdinText = "<h1>CLI sharing acceptance</h1>";
+    expect(await cli("--json", "publish", "-")).toBe(0);
+    const slug = lastJson().slug;
+    const count = server.state.shares.length;
+    expect(await cli("--json", "visibility", slug)).toBe(0);
+    expect(lastJson().visibility).toBe("private");
+    expect(await cli("--json", "visibility", slug, "unlisted")).toBe(0);
+    expect(lastJson().visibility).toBe("unlisted");
+    expect(server.state.shares).toHaveLength(count);
+    expect(await cli("visibility", slug, "invalid")).toBe(2);
+    expect(await cli("--json", "share", slug)).toBe(0);
+    const share = server.state.shares.at(-1)!;
+    expect(await cli("visibility", slug, "private")).toBe(0);
+    expect(out.at(-1)).toContain("not revoked");
+    expect(server.state.shares).toHaveLength(count + 1);
+    expect(await cli("--json", "revoke-share", slug, share.token)).toBe(0);
+    expect(server.state.shares).toHaveLength(count);
+  });
+
   it("after login no --base is needed: whoami, publish, list, info, share, export, update, rollback, rename, delete", async () => {
     expect(await cli("--json", "whoami")).toBe(0);
     expect(lastJson().user.email).toBe("dev@example.com");
@@ -72,7 +92,8 @@ describe("artifact-site CLI", () => {
     expect(await cli("--json", "publish", path.join(dir, "page.html"), "--title", "CLI page")).toBe(0);
     const pub = lastJson();
     expect(pub.kind).toBe("single");
-    expect(pub.readerUrl).toMatch(/\/v\//);
+    expect(pub.readerUrl).toMatch(/\/s\//);
+    expect(pub.share).toBeNull();
 
     expect(await cli("publish", path.join(dir, "page.html"), "--share", "none")).toBe(0);
     expect(out.join("\n")).toMatch(/Published page \(single, slug \w+\)/);

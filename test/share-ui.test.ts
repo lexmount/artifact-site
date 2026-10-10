@@ -154,13 +154,9 @@ describe("quick sharing is idempotent", () => {
     expect(reusableQuickShare([different], "public", NOW)).toBeNull();
   });
 
-  it("lists before minting, gives newly minted quick links an expiry, and treats copy failure separately", () => {
-    expect(panel).toContain('appFetch(`/api/sites/${slug}/shares`, { cache: "no-store" })');
-    expect(panel).toContain("reusableQuickShare(readShares(listBody), policy, Date.now())");
-    expect(panel).toContain("expiresInDays: 30");
-    expect(panel).toContain("await copyShareLink(url)");
-    expect(panel).not.toContain("recordShareLinkCreated");
-    expect(panel).toContain("setQuickManualUrl(url)");
+  it("copies the main URL without creating an independent share", () => {
+    expect(panel).toContain("await navigator.clipboard.writeText(url)");
+    expect(panel).not.toContain('method: "POST"');
   });
 });
 
@@ -462,14 +458,14 @@ describe("read* does not assume the API's envelope shape", () => {
 
 describe("private is now a real option", () => {
   it("the dropdown has private, and the label no longer says 'not yet enabled'", () => {
-    expect(panel).toContain('<option value="private">');
+    expect(panel).toContain('["private", "unlisted", "public"]');
     expect(VISIBILITY_LABEL.private).toContain("share link");
     expect(panel).not.toContain("not yet enabled");
     expect(VISIBILITY_LABEL.private).not.toContain("not yet enabled");
   });
 
   it("with private selected, 'anyone signed in can edit' is disabled — the server answers 400 for this combination", () => {
-    expect(panel).not.toContain('<option value="login"');
+    expect(panel).not.toContain('editPolicy');
   });
 });
 
@@ -551,9 +547,10 @@ describe("the 'Copy link' in the list must not be fake", () => {
 });
 
 describe("view-log entry point", () => {
-  it("is a peer share-panel tab and fetches when that tab mounts", () => {
+  it("opens from the viewer more menu and fetches only when opened", () => {
     expect(panel).toContain('tab === "views"');
-    expect(panel).toContain('{t("View history")}');
+    expect(read("src/components/site-viewer.tsx")).toContain('entry="views"');
+    expect(panel).not.toContain('onClick={() => navigate("views")}');
     expect(panel).toContain("<ShareViews");
     expect(links).not.toContain("<ShareViews");
     expect(views).toContain("/views");
