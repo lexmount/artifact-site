@@ -1,3 +1,4 @@
+import { mainSharingActive } from "@/lib/sharing-defaults";
 import { publicationPolicy } from "@/lib/publication-policy";
 import type { Authority } from "@/lib/authz";
 import { sessionReceiptShare } from "@/lib/notifications/receipts";
@@ -205,9 +206,9 @@ export async function readAccess(request: Request, site: Site, session?: Session
     return "admin";
   }
   if (["account", "operator", "anonymous-cookie", "anonymous-token"].includes(authority.source)) return "capability";
-  if (authority.source === "everyone" && !site.takenDownAt) return "public";
+  if (["everyone", "main"].includes(authority.source) && !site.takenDownAt) return "public";
   if (site.takenDownAt) return adminRead(request,resolved,site,audit);
-  if (site.visibility !== "private") return "public";
+  if (site.visibility !== "private" && await mainSharingActive(site)) return "public";
   if (authority.source === "share") return "share";
   return adminRead(request,resolved,site,audit);
 }

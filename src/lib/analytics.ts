@@ -24,7 +24,7 @@ export function analyticsPage(href: string) {
   let route = "/other", title = "Other", type = "other";
   const pages: Record<string, [string, string]> = {
     "/": ["Home", "home"], "/explore": ["Explore", "explore"], "/me": ["My artifacts", "account"],
-    "/tenants": ["Workspaces", "workspaces"], "/activate": ["Device activation", "activation"],
+    "/tenants": ["Tenant settings", "workspaces"], "/activate": ["Device activation", "activation"],
     "/oauth/authorize": ["Authorize application", "authorization"],
     "/for-agents": ["Agent guide", "guide"], "/publish-from-page": ["Publish from page", "publish"],
   };

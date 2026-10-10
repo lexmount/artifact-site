@@ -128,7 +128,7 @@ describe("anonymous creators kept to reading", () => {
     const siteRow = (await (await import("@/lib/db")).getSiteBySlug(slug))!;
     const perms = await describePermissions(req(`/s/${slug}`, { headers: creator }), (await getSite(siteRow.id))!);
     expect(perms).toMatchObject({ canEditContent: false, canManageSharing: false, canDelete: false, needsLogin: true });
-    expect(perms.reason).toMatch(/Sign in and explicitly claim/);
+    expect(perms.reason).toBe("Sign in and add this site to your account from My sites");
 
     expect((await EDIT(req(`/api/sites/${slug}/edit`, { method: "POST", headers: creator, body: { content: "<title>x</title>" } }), params({ slug }))).status).toBe(403);
     expect((await SHARES(req(`/api/sites/${slug}/shares`, { method: "POST", headers: creator, body: { policy: "public" } }), params({ slug }))).status).toBe(403);

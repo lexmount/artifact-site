@@ -315,7 +315,7 @@ Account-owned creation returns:
 Authenticated publication defaults to the `init` tenant; anonymous artifacts belong to `anonymous`.
 Use `X-Artifact-Tenant: <id>` to select another tenant where the account is an active member. This
 header also applies when starting a chunked upload. Signing in does not claim existing anonymous
-artifacts; claiming is explicit in Workspaces and requires a destination tenant.
+artifacts; claiming is explicit from My sites and uses the account’s default publishing tenant.
 
 Permanent site editors may publish new versions, but cannot rename, roll back, manage sharing or
 manage members. Site administrators may manage sharing and editor memberships; ownership transfer,
@@ -566,7 +566,7 @@ For anonymous publication, also provide the credential file location (for exampl
 
 **A site published with a personal token is under that user's account from birth; skip this section.** Anonymous publications, operator-token publications and historical unowned sites may need ownership assignment or transfer — ask proactively when delivering: "Do you want to attach this site to your account?" If not, stop here; if yes, use the creating session to transfer ownership, or ask an administrator to assign an unowned site as described below. **Do not improvise with "fork a copy and delete the old site"**: a fork copies only the current version, the history is cut off, the slug changes, and every link already sent out becomes invalid.
 
-**Claim from the creating browser in Workspaces.** Sign in there, select an active destination tenant, then explicitly claim the anonymous artifacts. This uses the original anonymous cookie plus the account session; neither a token nor a localStorage key is ownership proof. If the creating cookie is unavailable, ask an administrator to assign the unowned site.
+**Claim from My sites in the creating browser.** Sign in there, open the browser-artifact claim notice, review the default publishing tenant shown, then explicitly confirm adding the artifacts to the account. This uses the original anonymous cookie plus the account session; neither a token nor a localStorage key is ownership proof. If the creating cookie is unavailable, ask an administrator to assign the unowned site.
 
 An account owner can transfer an already-owned site through `POST /api/sites/<slug>/ownership` with `{"email":"verified account email"}`. The destination must be an active member of the same tenant. Transfer retires anonymous tokens without changing the slug, versions, visibility or shares. Disown is disabled (`410`).
 

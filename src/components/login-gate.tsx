@@ -107,7 +107,7 @@ export default function LoginGate({
           </div>
         </div>
 
-        <p className="gate-note">{t("Signing in does not claim anonymous sites. Claim them explicitly in Workspaces using the browser that created them.")}</p>
+        <p className="gate-note">{t("Signing in does not claim anonymous sites. Open My sites in the browser that created them to add them to your account.")}</p>
 
         <div className="gate-actions">
           <a ref={primary} className="btn solid" href={appPath(loginHref)}>

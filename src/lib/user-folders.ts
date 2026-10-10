@@ -10,7 +10,7 @@
 //     source of truth the moment it exists; the local copy is evidence, not an overwrite.
 import "server-only";
 import {
-  createId, deleteFolder as deleteFolderRow, getSiteBySlug, insertFolder, listFolderAssignments, listFolders,
+  createId, rbacTransaction, getSiteBySlug, insertFolder, listFolderAssignments, listFolders,
   listSitesByOwner, listSitesForCollaborator, renameFolder as renameFolderRow, setFolderAssignment,
 } from "@/lib/db";
 import { MAX_FOLDERS, normalizeFolderName, type FolderState } from "@/lib/folders";
@@ -46,7 +46,12 @@ export async function renameUserFolder(userId: string, id: string, rawName: stri
 }
 
 export async function deleteUserFolder(userId: string, id: string): Promise<void> {
-  if (!(await deleteFolderRow(id, userId))) throw new FolderError("Folder not found", 404);
+  await rbacTransaction(async q => {
+    await (await import("@/lib/sharing-defaults")).assertUnsharedFolderMutation(q, userId, undefined, id);
+    if (!(await q("SELECT id FROM folders WHERE id=$1 AND user_id=$2", [id,userId])).length) throw new FolderError("Folder not found",404);
+    await q("DELETE FROM folder_assignments WHERE folder_id=$1 AND user_id=$2", [id,userId]);
+    await q("DELETE FROM folders WHERE id=$1 AND user_id=$2", [id,userId]);
+  });
 }
 
 /** Slugs the user may file: what "My sites" shows them when signed in. */
@@ -56,10 +61,15 @@ async function fileableSlugs(userId: string): Promise<Set<string>> {
 }
 
 export async function assignUserSite(userId: string, slug: string, folderId: string | null, now = Date.now()): Promise<void> {
-  const site = await getSiteBySlug(slug);
-  if (!site || site.deletedAt) throw new FolderError("site not found", 404);
-  if (!(await fileableSlugs(userId)).has(slug)) throw new FolderError("site not found", 404);
-  if (!(await setFolderAssignment(userId, site.id, folderId, now))) throw new FolderError("Folder not found", 404);
+  await rbacTransaction(async q => {
+    const site = await getSiteBySlug(slug);
+    if (!site || site.deletedAt || !(await fileableSlugs(userId)).has(slug)) throw new FolderError("site not found",404);
+    await (await import("@/lib/sharing-defaults")).assertUnsharedFolderMutation(q,userId,site.id,folderId);
+    if (folderId) {
+      if (!(await q("SELECT id FROM folders WHERE id=$1 AND user_id=$2",[folderId,userId])).length) throw new FolderError("Folder not found",404);
+      await q("INSERT INTO folder_assignments(user_id,site_id,folder_id,updated_at) VALUES($1,$2,$3,$4) ON CONFLICT(user_id,site_id) DO UPDATE SET folder_id=excluded.folder_id,updated_at=excluded.updated_at",[userId,site.id,folderId,now]);
+    } else await q("DELETE FROM folder_assignments WHERE user_id=$1 AND site_id=$2",[userId,site.id]);
+  });
 }
 
 /** Bounds on a one-time import: a browser's shelf is small; anything larger is not a shelf. */
@@ -102,7 +112,13 @@ export async function importFolderState(userId: string, local: FolderState, now 
     if (!folderId || !fileable.has(slug) || already.has(slug)) { report.sitesSkipped += 1; continue; }
     const site = await getSiteBySlug(slug);
     if (!site || site.deletedAt) { report.sitesSkipped += 1; continue; }
-    if (await setFolderAssignment(userId, site.id, folderId, now)) report.sitesFiled += 1;
+    const filed = await rbacTransaction(async q => {
+      // Importing browser state cannot serve as consent to widen main-address access.
+      const shared = await q("SELECT id FROM sharing_scopes WHERE owner_id=$1 AND folder_id=$2 AND enabled=1", [userId, folderId]);
+      if (shared.length) return false;
+      return setFolderAssignment(userId, site.id, folderId, now);
+    });
+    if (filed) report.sitesFiled += 1;
     else report.sitesSkipped += 1;
   }
 

@@ -142,6 +142,55 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       expect(await page.$("iframe")).toBeNull();
       await context.close();
     });
+    it.each(["tenant", "login"] as const)("loads CSS, scripts and images for a %s-only reader inside the sandbox", async (audience) => {
+      const owner = await actor(), reader = await actor();
+      if (audience === "login") {
+        const tenant = createId("tenant");
+        await rbacQuery("INSERT INTO tenants(id,name) VALUES($1,'Other')", [tenant]);
+        await rbacQuery("DELETE FROM tenant_members WHERE user_id=$1", [reader.user.id]);
+        await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)", [tenant, reader.user.id]);
+      }
+      const created = await api("/api/sites", owner.cookie, "POST", { mode: "folder", files: [
+        { path: "index.html", content: '<html><head><title>Main access assets</title><link rel="stylesheet" href="style.css"></head><body><h1>Shared resources</h1><img src="image.svg"><script src="app.js"></script></body></html>' },
+        { path: "style.css", content: 'body { color: rgb(12, 34, 56); }' },
+        { path: "app.js", content: 'document.body.dataset.scriptLoaded = "yes";' },
+        { path: "image.svg", content: '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>' },
+      ] });
+      expect(created.status).toBe(200);
+      const { slug } = await created.json();
+      async function setScope(enabled: boolean) {
+        const input = { folderId: null, enabled, policy: { audience, comments: true } };
+        const preview = await api("/api/me/sharing/scopes", owner.cookie, "POST", input);
+        expect(preview.status).toBe(200);
+        const result = await api("/api/me/sharing/scopes", owner.cookie, "POST", { ...input, confirmation: (await preview.json()).confirmation });
+        expect(result.status).toBe(200);
+      }
+      // Restore to private when this scope is stopped, regardless of deployment defaults.
+      expect((await api("/api/me/sharing/preferences", owner.cookie, "PUT", { tenantId: "init", policy: { audience: "private", comments: false } })).status).toBe(200);
+      await setScope(true);
+      const site = (await (await import("@/lib/db")).getSiteBySlug(slug))!;
+      expect(await (await import("@/lib/rbac-access")).accountSiteRole(site, { userId: reader.user.id })).toBeNull();
+      const context = await browser.createBrowserContext();
+      try {
+        const [name, value] = reader.cookie.split("=");
+        await context.setCookie({ name, value, domain: new URL(base!).hostname, path: "/" });
+        const page = await context.newPage();
+        await page.goto(`${base}/s/${slug}?lang=en`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('iframe[src*="/api/preview/"]');
+        const frame = await page.waitForFrame(frame => Boolean(frame.parentFrame()) && frame.url().includes("/api/preview/"));
+        expect(frame).toBeDefined();
+        await frame!.waitForFunction(() => document.body.dataset.scriptLoaded === "yes"
+          && getComputedStyle(document.body).color === "rgb(12, 34, 56)"
+          && document.querySelector("img")?.naturalWidth === 8);
+        const asset = await frame!.evaluate(() => new URL("style.css", document.baseURI).href);
+        expect(asset).toContain("~v3.");
+        // Fetch outside the browser: the resource key must work without a session cookie.
+        expect((await fetch(asset)).status).toBe(200);
+        await setScope(false);
+        expect((await fetch(asset)).status).toBe(404);
+      } finally { await context.close(); }
+    });
+
     it("rotates the preview key from desktop and mobile administration", async () => {
       const context = await browser.createBrowserContext();
       const page = await context.newPage();
@@ -375,9 +424,10 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.goto(`${base}/s/${created.slug}`,{waitUntil:"domcontentloaded"});
       await page.waitForSelector('button[data-analytics-button="share"]');
       await page.click('button[data-analytics-button="share"]');
-      await page.waitForSelector('#main-access:not([disabled])');
+      await page.waitForSelector('.sharing-main-policy select:not([disabled])');
       expect(await page.$('#share-policy')).toBeNull();
-      await page.select('#main-access','private');
+      await page.select('.sharing-main-policy select','private');
+      await page.click('.scope-form-actions .solid');
       await page.waitForFunction(()=>document.querySelector('.sharing-dialog')?.textContent?.includes('Access updated'));
       const saved = await (await api(`/api/sites/${created.slug}/sharing`,owner.cookie)).json();
       expect(saved.visibility).toBe('private');
@@ -402,9 +452,11 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       for (const width of [1200, 390]) {
         await page.setViewport({ width, height: 900 });
         await page.goto(`${base}/tenants`, { waitUntil: "networkidle0" });
+        await page.waitForSelector('.hm-tabs [role="tab"]');
+        await page.click('.hm-tabs [role="tab"]:first-child');
         await page.waitForSelector('input[aria-label="Existing user email"]');
         expect(await page.$eval("h1", (el) => el.textContent)).toBe(
-          "Workspaces",
+          "Tenant settings",
         );
         expect(
           await page.$('select[aria-label="Tenant role"]'),

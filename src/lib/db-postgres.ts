@@ -1,3 +1,4 @@
+import { mainSharingActiveSql } from "@/lib/sharing-sql";
 import { listSharesQuery } from "@/lib/share-queries";
 import { migrateNumbered } from "@/lib/migrations";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -628,6 +629,7 @@ export class PostgresStore implements MetadataStore {
         [version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now],
       );
       await client.query("INSERT INTO site_comment_settings(site_id,main_policy,reader_access,updated_at) VALUES($1,'login',1,$2)", [site.id, now]);
+      await (await import("@/lib/sharing-defaults")).initializeSharing(async (sql, params) => (await client.query(sql, params ? [...params] : [])).rows, toSite((await client.query("SELECT * FROM sites WHERE id=$1", [site.id])).rows[0]), undefined, version.source === "fork" ? site.visibility : undefined);
       if (audit) await this.writeAuditRow(client, audit, now);
       if (version.official) {
         await client.query("UPDATE sites SET official_version_id=$1, official_set_at=$2, official_set_by=$3, official_revision=official_revision+1 WHERE id=$4", [version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId]);
@@ -792,7 +794,7 @@ export class PostgresStore implements MetadataStore {
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
-        AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL)
+        AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL AND ${mainSharingActiveSql})
              OR (s.owner_id = $1 AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = $2)
              OR EXISTS (SELECT 1 FROM authorization_site_members c
@@ -1737,7 +1739,7 @@ export class PostgresStore implements MetadataStore {
       JOIN sites s ON s.id = t.site_id AND s.current_version_id = t.version_id,
            to_tsquery('simple', $3) q
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND t.tokens @@ q
-        AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL)
+        AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL AND ${mainSharingActiveSql})
              OR (s.owner_id = $1 AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = $2)
              OR EXISTS (SELECT 1 FROM authorization_site_members c WHERE c.site_id = s.id AND c.subject_type<>'everyone' AND c.user_id = $1))

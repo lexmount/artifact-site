@@ -4,6 +4,7 @@ import type { Visibility } from "@/lib/types";
 
 export type CommentSettings = { mainPolicy: "login" | "members" | "off"; readerAccess: boolean };
 export type SharingSettings = {
+  mainAudience?: import("@/lib/sharing-policy").SharingPolicy["audience"];
   siteId: string;
   visibility: Visibility;
   canManageMembers: boolean;

@@ -820,11 +820,13 @@ export async function commentSettings(
       ]
     )
       fail(404, "Settings not found");
-    if (input)
+    if (input) {
+      await (await import("@/lib/sharing-defaults")).markSharingManual(q, site, { comments: input.mainPolicy !== "off" });
       await q(
         "INSERT INTO site_comment_settings(site_id,main_policy,updated_by,updated_at) VALUES($1,$2,$3,$4) ON CONFLICT(site_id) DO UPDATE SET main_policy=excluded.main_policy,updated_by=excluded.updated_by,updated_at=excluded.updated_at",
         [site.id, input.mainPolicy, session!.userId, Date.now()],
       );
+    }
     const [row] = await q(
       "SELECT main_policy,reader_access FROM site_comment_settings WHERE site_id=$1",
       [site.id],
