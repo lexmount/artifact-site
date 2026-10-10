@@ -19,7 +19,7 @@ import { usePermissionsForSites } from "@/lib/site-permissions";
 import { useCallback, useEffect, useSyncExternalStore, useMemo, useState, type SyntheticEvent } from "react";
 import Link from "next/link";
 import SiteLink from "@/components/site-link";
-import { Folder, Globe, Lock, EyeOff, LayoutGrid, List, Search } from "lucide-react";
+import { Folder, Globe, Lock, Link2, LayoutGrid, List, Search } from "lucide-react";
 import type { SiteSummary } from "@/lib/types";
 import { loginHref, useAuth } from "@/lib/use-auth";
 import { useShelf, type ShelfOutcome } from "@/lib/folder-shelf";
@@ -61,8 +61,8 @@ type Sort = "updated" | "title";
 type View = "list" | "grid";
 
 export function VisibilityCell({ site, t }: { site: SiteSummary; t: (k: string) => string }) {
-  if (site.visibility === "private") return <><Lock size={15} aria-hidden="true" /> {t("Private")}</>;
-  if (site.visibility === "unlisted") return <><EyeOff size={15} aria-hidden="true" /> {t("Unlisted")}</>;
+  if (site.visibility === "private") return <><Lock size={15} aria-hidden="true" /> {t("Authorized people only")}</>;
+  if (site.visibility === "unlisted") return <><Link2 size={15} aria-hidden="true" /> {t("Anyone with the link can access")}</>;
   return <><Globe size={15} aria-hidden="true" /> {t("Public")}</>;
 }
 

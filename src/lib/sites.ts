@@ -153,7 +153,7 @@ export async function commitUploadedVersion(
     /** Given for a single-PDF chunked upload: at commit, the index.html wrapper is generated from it (the original has already streamed to disk and is never read back into memory). */
     document?: { format: DocumentFormat; name: string; relpath: string };
   },
-): Promise<{ slug: string; url: string; title: string; kind: SiteKind; versionId: string; editToken?: string; expiresAt?: number | null; officialVersionId?: string | null; officialRevision?: number }> {
+): Promise<{ slug: string; url: string; title: string; kind: SiteKind; versionId: string; visibility?: Visibility; editToken?: string; expiresAt?: number | null; officialVersionId?: string | null; officialRevision?: number }> {
   const { session, entry } = input;
   const storage = getStorage();
   // Single PDF: the original has already streamed to its relpath under session.versionId; only the
@@ -231,7 +231,7 @@ export async function commitUploadedVersion(
   );
   scheduleTextIndex(session.siteId, session.versionId);
   const site = (await getSite(session.siteId))!;
-  return { slug: site.slug, url: siteUrl(site.slug), title: site.title, kind: site.kind, versionId: session.versionId, officialVersionId: site.officialVersionId, officialRevision: site.officialRevision, ...(!site.ownerId ? {editToken} : {}), expiresAt: anonymousExpiresAt(site) };
+  return { slug: site.slug, url: siteUrl(site.slug), title: site.title, kind: site.kind, visibility: site.visibility, versionId: session.versionId, officialVersionId: site.officialVersionId, officialRevision: site.officialRevision, ...(!site.ownerId ? {editToken} : {}), expiresAt: anonymousExpiresAt(site) };
 }
 
 /** Drop → link. Parse the input, write the first version to disk, then record the site. */

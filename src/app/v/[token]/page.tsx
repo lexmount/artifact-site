@@ -21,6 +21,7 @@ import Link from "next/link";
 import ViewerBrand from "@/components/viewer-brand";
 import { ExternalLink, Pencil } from "lucide-react";
 import { config } from "@/lib/config";
+import PresentationViewer from "@/components/presentation-viewer";
 import SharedCommentShell from "@/components/comments/shared-comment-shell";
 import Assistant from "@/components/assistant";
 import { getShareByTokenHash, getSite, getVersion } from "@/lib/db";
@@ -138,10 +139,10 @@ export default async function SharedViewPage({
   params, searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ e?: string; version?: string }>;
+  searchParams: Promise<{ e?: string; presentation?: string; version?: string }>;
 }) {
   const { token } = await params;
-  const { e, version: requestedVersion } = await searchParams;
+  const { e, version: requestedVersion, presentation } = await searchParams;
 
   // Server components get no Request, so rebuild the one the gate AND the view log need — the
   // credentials (session + anonymous id + the passcode grant + scheme), plus the reader's address
@@ -168,6 +169,7 @@ export default async function SharedViewPage({
 
   // Q&A mode: the assistant appears for THIS link's readers only when its owner switched it on —
   // and it carries no edit coordinates (see buildAssistantContext's null-site arm).
+  if (presentation === "1") return <PresentationViewer title={target.site.title} src={`/api/preview/${target.site.slug}?share=${encodeURIComponent(token)}&v=${encodeURIComponent(target.version.id)}`} returnTo={`/v/${token}${requestedVersion ? `?version=${encodeURIComponent(requestedVersion)}` : ""}`}/>;
   return <>
     <RecentTracker slug={target.site.slug} title={target.site.title} kind={target.site.kind}
       entry={target.version.entry} versionCount={1} createdAt={target.site.createdAt} updatedAt={target.site.updatedAt}
@@ -291,7 +293,7 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
           <div className="controls">
             {mode === "edit" && <Link className="btn" title={t("Edit")} href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}`}><Pencil size={14} aria-hidden="true" />{t("Edit")}</Link>}
             {/* Pin this rendered preview to the same immutable version as its discussion. A reload follows the link again. */}
-            <a className="btn sm ghost" title={t("Open in a new tab")} href={appPath(`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`)} target="_blank" rel="noreferrer">
+            <a className="btn sm ghost" title={t("Open in a new tab")} href={appPath(`/v/${encodeURIComponent(token)}?presentation=1${versionId ? `&version=${encodeURIComponent(versionId)}` : ""}`)} target="_blank" rel="noreferrer">
               <ExternalLink size={14} aria-hidden="true" />
               {t("Open in a new tab")}
             </a>

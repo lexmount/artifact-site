@@ -11,7 +11,9 @@ import { Readable } from "node:stream";
 export type SiteKind = "single" | "folder" | "document";
 export type SharePolicy = "public" | "login" | "people" | "email" | "passcode";
 
+export type Visibility = "private" | "unlisted" | "public";
 export interface CreatedSite {
+  visibility?: Visibility;
   officialVersionId?: string | null; officialRevision?: number; versionId?: string;
   slug: string;
   url: string;
@@ -22,6 +24,7 @@ export interface CreatedSite {
 }
 
 export interface VersionResult {
+  visibility?: Visibility;
   officialVersionId?: string | null; officialRevision?: number;
   slug: string;
   url: string;
@@ -254,6 +257,13 @@ export class ArtifactSiteClient {
 
   // ---- sharing -------------------------------------------------------------------------------
 
+  getVisibility(slug: string): Promise<{ visibility: Visibility; url: string }> {
+    return this.json("GET", `/api/sites/${encodeURIComponent(slug)}/sharing`);
+  }
+  setVisibility(slug: string, visibility: Visibility): Promise<{ visibility: Visibility; url: string }> {
+    return this.json("PUT", `/api/sites/${encodeURIComponent(slug)}/sharing`, { body: { visibility } });
+  }
+  revokeShare(slug: string, shareId: string): Promise<{ ok: boolean }> { return this.json("DELETE", `/api/sites/${enc(slug)}/shares/${enc(shareId)}`); }
   createShare(slug: string, opts: { source?: "publish" | "manual"; mode?: "view" | "comment" | "edit"; versionId?: string; policy: SharePolicy; label?: string; expiresInDays?: number; passcode?: string; allowAi?: boolean }): Promise<ShareResult> {
     return this.json("POST", `/api/sites/${enc(slug)}/shares`, { body: opts });
   }

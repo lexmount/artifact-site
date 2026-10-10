@@ -17,6 +17,8 @@ export interface CommentAccessFacts {
   /** Explicit, audited governance for this tenant/site; never inferred from a global role alone. */
   managementRole: "platform-admin" | "tenant-admin" | null;
   mainPolicy: MainCommentPolicy;
+  /** Explicit opt-in on new sites; absent means legacy visibility. */
+  readerAccess?: boolean;
   /** Null when no active grant for this exact share AND version was verified. */
   shareMode: ShareMode | null;
 }
@@ -35,10 +37,10 @@ export function describeCommentPermissions(facts: CommentAccessFacts): CommentPe
   // Management can inspect all spaces, including revoked shares; ordinary membership cannot.
   const readable = facts.scope.entry.kind === "share"
     ? manager || facts.shareMode === "comment" || facts.shareMode === "edit"
-    : facts.canReadMainArtifact && (manager || (identity && facts.mainPolicy !== "off" && (facts.mainPolicy === "login" || allows("comment.read"))));
+    : facts.canReadMainArtifact && (manager || (facts.readerAccess && facts.mainPolicy !== "members") || (identity && facts.mainPolicy !== "off" && (facts.mainPolicy === "login" || allows("comment.read"))));
   const canRead = facts.canReadArtifact && readable;
   const write = canRead && identity && facts.canWriteArtifactDiscussion;
-  const author = write && (facts.scope.entry.kind === "main" || facts.shareMode === "comment" || facts.shareMode === "edit");
+  const author = write && (facts.scope.entry.kind === "main" ? (!facts.readerAccess || facts.mainPolicy !== "off") : facts.shareMode === "comment" || facts.shareMode === "edit");
   return {
     canRead, canCreate: author, canReply: author,
     canAggregate: facts.canReadArtifact && manager,

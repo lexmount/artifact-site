@@ -47,6 +47,7 @@ export async function recordPublishedVersion(q: RbacQuery, siteId: string, versi
   const version = active.getStore()?.edit ? toVersion((await q("SELECT * FROM versions WHERE id=$1", [versionId]))[0]) : undefined;
   await recordOperationResult(q, {
     slug: site.slug, url: `/s/${site.slug}`, title: site.title, kind: site.kind, versionId,
+    ...(created ? { visibility: site.visibility } : {}),
     ...(version ? { version } : { officialVersionId: site.officialVersionId, officialRevision: site.officialRevision }),
     ...(created && !site.ownerId && site.editToken ? { editToken: site.editToken } : {}), ...(!version ? { expiresAt: anonymousExpiresAt(site) } : {}),
   });

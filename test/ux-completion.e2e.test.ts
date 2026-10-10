@@ -104,7 +104,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("UX completion brow
       await context.close();
     }
   });
-  it("dismisses guidance with one acknowledgement and contains the mobile sheet", async () => {
+  it("contains the simplified mobile sharing sheet and restores focus", async () => {
     const user = await upsertUser({authProvider:"ux-test", providerSubject:createId("subject"), email:`${createId("user")}@example.com`, emailVerified:true});
     const {cookie} = await mintSession(new Request(base!), user.id);
     const headers = {cookie:cookie.split(";")[0], origin:base!, "content-type":"application/json"};
@@ -118,35 +118,29 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("UX completion brow
     const page = await context.newPage();
     await page.setViewport({width:1280,height:800});
     await page.goto(`${base}/s/${site.slug}?lang=en`, {waitUntil:"networkidle2"});
-    await page.waitForSelector(".private-share-education");
-    expect(await page.$eval(".private-share-education-head", el => el.textContent)).toContain("Private site — use a share link");
-    expect(await page.$eval(".private-share-education", el => el.parentElement?.className)).not.toBe("fs-bar");
-    await page.click(".private-share-education-actions button:nth-child(2)");
-    await page.waitForSelector(".private-share-education", {hidden:true});
-    await page.reload({waitUntil:"networkidle2"});
     expect(await page.$(".private-share-education")).toBeNull();
     await page.setViewport({width:390,height:844});
     await page.click('[data-analytics-button="share"]');
-    await page.waitForSelector(".share-quick");
-    expect(await page.$eval(".share-quick-options button", el => el === document.activeElement)).toBe(true);
-    expect(await page.$eval(".share-quick", el => el.matches(":modal"))).toBe(true);
+    await page.waitForSelector("#main-link");
+    expect(await page.$eval('.sharing-dialog-head button[aria-label="Close"]', el => el === document.activeElement)).toBe(true);
+    expect(await page.$eval(".sharing-dialog", el => el.matches(":modal"))).toBe(true);
     await page.$eval('[data-analytics-button="share"]', el => (el as HTMLElement).focus());
-    expect(await page.$eval(".share-quick", el => el.contains(document.activeElement))).toBe(true);
-    const box = await page.$eval(".share-quick", el => {const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height};});
+    expect(await page.$eval(".sharing-dialog", el => el.contains(document.activeElement))).toBe(true);
+    const box = await page.$eval(".sharing-dialog", el => {const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height};});
     expect(box.left).toBeGreaterThanOrEqual(0);
     expect(box.right).toBeLessThanOrEqual(390);
-    expect(box.left).toBe(8);
-    expect(box.right).toBe(382);
+    expect(box.left).toBe(0);
+    expect(box.right).toBe(390);
     expect(box.bottom).toBeLessThanOrEqual(844);
-    expect(box.height).toBeLessThan(700);
+    expect(box.height).toBeLessThanOrEqual(820);
     await page.screenshot({path:"test-results/ux-mobile-sharing.png"});
     await page.keyboard.press("Escape");
-    await page.waitForSelector(".share-quick", {hidden:true});
+    await page.waitForSelector(".sharing-dialog", {hidden:true});
     expect(await page.$eval('[data-analytics-button="share"]', el => el === document.activeElement)).toBe(true);
     await page.click('[data-analytics-button="share"]');
-    await page.waitForSelector(".share-quick:modal");
+    await page.waitForSelector(".sharing-dialog:modal");
     await page.mouse.click(2, 100);
-    await page.waitForSelector(".share-quick", {hidden:true});
+    await page.waitForSelector(".sharing-dialog", {hidden:true});
     expect(await page.$eval('[data-analytics-button="share"]', el => el === document.activeElement)).toBe(true);
     await page.setViewport({width:1280,height:800});
     await page.evaluate(() => {
@@ -196,7 +190,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("UX completion brow
     await page.waitForSelector('.fs-handle[aria-expanded="false"]');
     await page.click(".comment-rail-toggle");
     await page.waitForSelector('.comment-rail[data-collapsed="false"]');
-    // Creating links does not complete browser-local copy education.
+    // Independent links still render the same reader branding.
     let shareUrl = "";
     for (let n = 0; n < 3; n++) {
       const response = await fetch(`${base}/api/sites/${site.slug}/shares`, {method:"POST", headers, body:JSON.stringify({policy:"public"})});
@@ -211,7 +205,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("UX completion brow
       });
     }, SHARE_EDUCATION_DATABASE);
     await page.reload({waitUntil:"networkidle2"});
-    await page.waitForSelector(".private-share-education");
+    expect(await page.$(".private-share-education")).toBeNull();
     await page.goto(shareUrl, {waitUntil:"networkidle2"});
     await page.waitForFunction(() => {
       const logo = document.querySelector<HTMLImageElement>(".viewer-brand-logo img");

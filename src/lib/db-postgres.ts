@@ -627,6 +627,7 @@ export class PostgresStore implements MetadataStore {
         "INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
         [version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now],
       );
+      await client.query("INSERT INTO site_comment_settings(site_id,main_policy,reader_access,updated_at) VALUES($1,'login',1,$2)", [site.id, now]);
       if (audit) await this.writeAuditRow(client, audit, now);
       if (version.official) {
         await client.query("UPDATE sites SET official_version_id=$1, official_set_at=$2, official_set_by=$3, official_revision=official_revision+1 WHERE id=$4", [version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId]);

@@ -12,8 +12,7 @@ export interface PublishOptions {
   operationKey?: string;
   official?: boolean;
   title?: string;
-  /** Create a share link right away. Default: `public` — a freshly created site is private on
-   *  most deployments, so without a share the address is useless to anyone but the owner. */
+  /** Deprecated explicit advanced-link creation. Default: false; ordinary sharing changes visibility. */
   share?: SharePolicy | false;
   /** Progress lines for humans; silent by default. */
   onProgress?: (line: string) => void;
@@ -163,7 +162,7 @@ async function uploadWithRecovery(client: ArtifactSiteClient, files: WalkedFile[
 
 async function finish(client: ArtifactSiteClient, site: CreatedSite | VersionResult, route: PublishOutcome["route"], opts: PublishOptions): Promise<PublishOutcome> {
   const siteUrl = client.absolute(site.url);
-  const policy = opts.share === undefined ? "public" : opts.share;
+  const policy = opts.share ?? false;
   if (!policy) return { site, siteUrl, readerUrl: siteUrl, route };
   try {
     const share = await client.createShare(site.slug, { policy, source: "publish" });

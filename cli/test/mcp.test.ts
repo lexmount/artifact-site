@@ -67,13 +67,13 @@ beforeAll(async () => { remote = await startRemote(); });
 afterAll(() => remote.close());
 
 describe("signed out", () => {
-  it("starts, lists the 26 bundled tools and answers every call with how to sign in", async () => {
+  it("starts, lists the 29 bundled tools and answers every call with how to sign in", async () => {
     logs.length = 0;
     const { client, close } = await local({});
     expect(client.getServerVersion()?.name).toBe("artifact-site");
     expect(client.getInstructions()).toBe(bundledManifest().instructions);
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(26);
+    expect(tools).toHaveLength(29);
     expect(tools.every((t) => t.name.startsWith("artifact_site_") && t.inputSchema.type === "object" && t.description)).toBe(true);
     const call = await client.callTool({ name: "artifact_site_find", arguments: {} });
     expect(call.isError).toBe(true);
@@ -116,7 +116,7 @@ describe("signed in", () => {
     const { client, close } = await local({ baseUrl: remote.url, token: "ahp_revoked" });
     expect(logs.join("\n")).toMatch(/rejected the token/);
     // tools/list falls back to the bundled list rather than failing the client.
-    expect((await client.listTools()).tools).toHaveLength(26);
+    expect((await client.listTools()).tools).toHaveLength(29);
     const call = await client.callTool({ name: "artifact_site_find", arguments: {} });
     expect(call.isError).toBe(true);
     expect(text(call)).toBe(`${remote.url} rejected the token: it is invalid, expired or revoked. Run "artifact-site login --base ${remote.url}" again, or set a new ARTIFACT_SITE_TOKEN.`);
@@ -137,7 +137,7 @@ describe("signed in", () => {
     const { port } = dead.address() as { port: number }; await new Promise((r) => dead.close(r));
     const base = `http://127.0.0.1:${port}`;
     const { client, close } = await local({ baseUrl: base, token: TOKEN });
-    expect((await client.listTools()).tools).toHaveLength(26);
+    expect((await client.listTools()).tools).toHaveLength(29);
     const call = await client.callTool({ name: "artifact_site_find", arguments: {} });
     expect(call.isError).toBe(true);
     expect(text(call)).toBe(`Cannot reach ${base}/mcp: ECONNREFUSED`);
@@ -216,7 +216,7 @@ describe("artifact-site mcp (the binary)", () => {
   it("serves the bundled tools over stdio, signed out", async () => {
     const client = new Client({ name: "test", version: "1" });
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(cliDir, "bin/artifact-site.js"), "mcp"], env, stderr: "pipe" }));
-    expect((await client.listTools()).tools).toHaveLength(26);
+    expect((await client.listTools()).tools).toHaveLength(29);
     expect((await client.callTool({ name: "artifact_site_find", arguments: {} })).isError).toBe(true);
     await client.close();
   });

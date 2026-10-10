@@ -48,7 +48,7 @@ async function executePost(request: Request): Promise<NextResponse> {
     // Only anonymous publications return a management credential; account ownership needs none.
     const body: Record<string, unknown> = { slug: site.slug, url: siteUrl(site.slug), title: site.title,
       versionId: site.currentVersionId, officialVersionId: site.officialVersionId, officialRevision: site.officialRevision,
-      kind: site.kind, ...(!site.ownerId ? {editToken:site.editToken} : {}),
+      kind: site.kind, visibility: site.visibility, ...(!site.ownerId ? {editToken:site.editToken} : {}),
       // Anonymous sites live `ARTIFACT_ANON_SITE_TTL_DAYS` after their last change unless claimed; null = no clock.
       expiresAt: anonymousExpiresAt(site) };
     // The upgrade banner FOR MACHINE READERS. Agents running a stale installed SKILL.md publish

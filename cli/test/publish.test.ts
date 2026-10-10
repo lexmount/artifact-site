@@ -62,12 +62,12 @@ describe("archive", () => {
 });
 
 describe("publishPath", () => {
-  it("a single .html goes one-shot as a file and gets a public share by default", async () => {
+  it("a single .html goes one-shot as a file without creating a share by default", async () => {
     const out = await publishPath(client, path.join(dir, "page.html"));
     expect(out.route).toBe("file");
     expect(out.site.kind).toBe("single");
-    expect(out.share?.share.policy).toBe("public");
-    expect(out.readerUrl).toBe(out.share!.url);
+    expect(out.share).toBeUndefined();
+    expect(out.readerUrl).toBe(out.siteUrl);
     expect(out.siteUrl).toBe(`${server.url}/s/${out.site.slug}`);
   });
 

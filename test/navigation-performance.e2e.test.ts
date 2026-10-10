@@ -341,8 +341,8 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         await page.click('dialog[open] .btn.solid');
         await page.waitForFunction(() => location.pathname.startsWith("/s/"));
         const originalPath = new URL(page.url()).pathname;
-        await page.waitForSelector('a[aria-label="Back to sites"]');
-        await page.click('a[aria-label="Back to sites"]');
+        await page.waitForSelector('a[aria-label="Back to previous page"]');
+        await page.click('a[aria-label="Back to previous page"]');
         await page.waitForFunction(title => document.querySelector(".owned-shelf")?.textContent?.includes(title) || Array.from(document.querySelectorAll(".artifact-card")).some(e => e.textContent?.includes(title)), {}, title);
         await page.click('.site-header a[href="/me"]');
         await page.waitForSelector(".site-row");
@@ -354,11 +354,12 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         const copied = Date.now();
         await page.evaluate(() => (Array.from(document.querySelectorAll('button[role="menuitem"]')).find(e => e.textContent?.trim() === "Save as new site") as HTMLButtonElement).click());
         await page.waitForFunction(original => location.pathname.startsWith("/s/") && location.pathname !== original, {}, originalPath);
-        await page.waitForSelector('a[aria-label="Back to sites"]');
-        await page.click('a[aria-label="Back to sites"]');
-        await page.waitForSelector('.site-header a[href="/me"]');
-        await page.click('.site-header a[href="/me"]');
-        await page.waitForFunction(() => document.querySelectorAll(".site-row").length === 2);
+        await page.waitForSelector('a[aria-label="Back to previous page"]');
+        await page.click('a[aria-label="Back to previous page"]');
+        await page.waitForFunction(original => location.pathname === original, {}, originalPath);
+        await page.waitForSelector('a[aria-label="Back to previous page"][href="/me"]');
+        await page.click('a[aria-label="Back to previous page"]');
+        await page.waitForFunction(() => location.pathname === "/me" && document.querySelectorAll(".site-row").length === 2);
         expect(Date.now() - copied).toBeLessThan(30000);
       } finally { await page.close(); await rm(folder, {recursive:true,force:true}); }
     }, 60000);

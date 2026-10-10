@@ -29,7 +29,7 @@ export default function ShareSaveDialog({ label, changes, expiryChanged, busy, e
   }, []);
   return (
     <dialog ref={ref} className="admin-dialog share-confirm" aria-labelledby={id} aria-describedby={`${id}-note`}
-      onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
+      onCancel={event => { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); }}
       onKeyDown={event => event.stopPropagation()}>
       <div className="share-confirm-head">
         <h2 id={id}>{title ?? t("Confirm sharing changes")}</h2>

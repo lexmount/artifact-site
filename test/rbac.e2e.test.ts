@@ -288,13 +288,13 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.waitForFunction(()=>!document.querySelector('dialog[open]'));
       await page.click('.authorization-list li button');
       await page.waitForSelector('dialog[open]');
-      await page.click('dialog[open] .authorization-actions button[type="button"]');
+      await page.click('dialog[open] .authorization-actions button[type="button"]:nth-child(2)');
       await page.waitForFunction(()=>!document.querySelector('dialog[open]'));
       expect((await api(`/s/${created.slug}`,'')).status).toBe(404);
       await page.click('.authorization-panel .authorization-heading button');
       await page.type('dialog[open] input[placeholder="Name or email"]',member.user.email!);
-      await page.waitForFunction(id=>!!document.querySelector(`dialog[open] option[value="${id}"]`),{},member.user.id);
-      await page.select('dialog[open] label:nth-of-type(3) select',member.user.id);
+      await page.waitForFunction(id=>!!document.querySelector(`dialog[open] input[type="radio"][value="${id}"]`),{},member.user.id);
+      await page.click(`dialog[open] input[type="radio"][value="${member.user.id}"]`);
       await page.select('dialog[open] label:last-of-type select','viewer');
       await page.click('dialog[open] button[type="submit"]');
       await page.waitForFunction(()=>!document.querySelector('dialog[open]'));
@@ -322,7 +322,8 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
           await page.goto(`${base}/s/${created.slug}`, {waitUntil:"domcontentloaded"});
           await page.waitForSelector('button[data-analytics-button="share"]');
           await page.click('button[data-analytics-button="share"]');
-          await page.click('.share-quick-foot .btn.primary');
+          await page.waitForSelector('.sharing-advanced-entry .sharing-navigation:not([disabled])');
+          await page.click('.sharing-advanced-entry .sharing-navigation');
           await page.waitForSelector(`${selector} a`);
           await page.waitForFunction(() => document.getAnimations().every(animation => animation.playState !== "running"));
           expect(await page.$eval(`${selector} a`, e => ({href:(e as HTMLAnchorElement).href,title:e.getAttribute("title"),target:e.getAttribute("target"),text:e.textContent}))).toEqual({href:share.url,title:share.url,target:"_blank",text:share.url});
@@ -334,7 +335,8 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
               const style = getComputedStyle(link);
               return {nowrap:style.whiteSpace,ellipsis:style.textOverflow,truncated:link.scrollWidth>link.clientWidth,sameRow:Math.abs((a.top+a.bottom)/2-(b.top+b.bottom)/2)<2,contained:b.right<=bounds.right+1 && a.right<=b.left,noOverflow:document.documentElement.scrollWidth<=innerWidth};
             });
-            expect(layout).toEqual({nowrap:"nowrap",ellipsis:"ellipsis",truncated:true,sameRow:true,contained:true,noOverflow:true});
+            expect(layout).toMatchObject({nowrap:"nowrap",ellipsis:"ellipsis",sameRow:true,contained:true,noOverflow:true});
+            if (width <= 390) expect(layout.truncated).toBe(true);
           }
           await page.setViewport({width:390,height:844});
           await page.screenshot({path:`test-results/share-link-before-${locale}.png`,fullPage:true});
@@ -373,14 +375,10 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.goto(`${base}/s/${created.slug}`,{waitUntil:"domcontentloaded"});
       await page.waitForSelector('button[data-analytics-button="share"]');
       await page.click('button[data-analytics-button="share"]');
-      await page.click('.share-quick-foot .btn:not(.primary)');
-      await page.waitForSelector('#share-visibility:not([disabled])');
+      await page.waitForSelector('#main-access:not([disabled])');
       expect(await page.$('#share-policy')).toBeNull();
-      await page.select('#share-visibility','private');
-      await page.locator('.share-settings-footer button.solid:not([disabled])').click();
-      await page.waitForSelector('dialog.share-confirm[open]');
-      await page.locator('dialog.share-confirm button.solid:not([disabled])').click();
-      await page.waitForFunction(()=>document.querySelector('.share-drawer')?.textContent?.includes('Sharing settings saved'));
+      await page.select('#main-access','private');
+      await page.waitForFunction(()=>document.querySelector('.sharing-dialog')?.textContent?.includes('Access updated'));
       const saved = await (await api(`/api/sites/${created.slug}/sharing`,owner.cookie)).json();
       expect(saved.visibility).toBe('private');
       expect(saved).not.toHaveProperty('editPolicy');

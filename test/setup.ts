@@ -18,6 +18,8 @@ vi.mock("server-only", () => ({}));
 process.env.ARTIFACT_DATA_DIR = ".data/test";
 process.env.ARTIFACT_DB_DRIVER ??= "sqlite";
 process.env.ARTIFACT_STORAGE_DRIVER ??= "local";
+// Existing fixture suites exercise publicly readable artifacts. Default-policy tests unset this override.
+process.env.ARTIFACT_DEFAULT_VISIBILITY = "public";
 delete process.env.PUBLISH_API_TOKEN;
 delete process.env.CSP_CONNECT_SRC;
 // One shared directory for every test file — which is why vitest.config.ts runs files serially.

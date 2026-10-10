@@ -119,7 +119,7 @@ Wählen Sie den passenden Zugang für Ihren Agenten:
 - **CLI**: `npm install -g @artifact-site/cli` — erfordert Node 24+; Befehlsbeispiele finden Sie unten.
 - **MCP**: `https://your-server/mcp` — verbinden Sie ChatGPT, Claude oder einen anderen MCP-Client über die OAuth-Anmeldung des Servers; keine CLI-Installation nötig. Ein Client, der nur lokale MCP-Server startet, kann stattdessen `artifact-site mcp` aus der CLI verwenden.
 
-**CLI- und MCP-Veröffentlichungen erzeugen standardmäßig eine öffentliche Freigabe.** Verwenden Sie `--share none` (CLI) oder `share: false` (MCP), um ohne Freigabe zu veröffentlichen.
+**CLI und MCP erstellen standardmäßig private Werke ohne separate Freigabelinks.** Auf Wunsch öffnet `artifact-site visibility <slug> unlisted` oder MCP `artifact_site_set_visibility` den Hauptlink.
 
 <p align="center"><img src="assets/agent.gif" alt="Ein Coding-Agent veröffentlicht einen Build-Ordner mit der artifact-site-CLI und gibt den Freigabelink zurück" width="820"></p>
 <p align="center"><sub><b>Oder lassen Sie Ihren Coding-Agenten das erledigen.</b> Mit dem Agenten-Leitfaden (<code>/for-agents.md</code>), der CLI oder dem MCP-Server ist „veröffentliche das und gib mir einen Link“ eine einzige Anweisung – und die Website lässt sich auf demselben Weg aktualisieren, durchsuchen und lesen.</sub></p>
@@ -142,7 +142,7 @@ artifact-site read YOUR_SITE_SLUG                    # durch einen Site-Slug ers
 <details>
 <summary>Details zur Authentifizierung</summary>
 
-Öffnen Sie in Ihrer Installation **Agent guide** (den Agenten-Leitfaden), um zwischen Prompt, CLI und MCP zu wählen. `/for-agents#cli` und `/for-agents#mcp` liefern serverspezifische Befehle, Authentifizierungsschritte und Client-Konfigurationen. Remote-MCP authentifiziert jede Anfrage: ChatGPT, Claude und andere OAuth-fähige Clients melden sich über die Zustimmungsseite des Servers an, andere Clients führen ein persönliches Token mit. Veröffentlichen, Aktualisieren, Teilen und Löschen über die CLI erfordern ein Token; das Veröffentlichen erzeugt standardmäßig eine öffentliche Freigabe. Mit `--share none` (CLI) oder `share: false` (MCP) überspringen Sie die Freigabe.
+Öffnen Sie in Ihrer Installation **Agent guide** (den Agenten-Leitfaden), um zwischen Prompt, CLI und MCP zu wählen. `/for-agents#cli` und `/for-agents#mcp` liefern serverspezifische Befehle, Authentifizierungsschritte und Client-Konfigurationen. Remote-MCP authentifiziert jede Anfrage: ChatGPT, Claude und andere OAuth-fähige Clients melden sich über die Zustimmungsseite des Servers an, andere Clients führen ein persönliches Token mit.  Neue Werke sind standardmäßig privat. Der Zugriff über den Hauptlink wird ausdrücklich geändert; separate Freigaben sind eine erweiterte Funktion.
 
 Team-Installationen mit OIDC unterstützen die Bestätigung einer Geräteanmeldung; die anonyme lokale Installation oben braucht das nicht. Der Agent folgt dem Leitfaden und der Veröffentlichungsrichtlinie des Servers, um die Authentifizierung zu wählen. Ein Cloud-Agent kann `127.0.0.1` auf Ihrem Computer nicht direkt erreichen.
 

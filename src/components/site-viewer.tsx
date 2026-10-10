@@ -16,6 +16,7 @@ import CommentWorkspace from "@/components/comments/anchored-workspace";
 import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, useSyncExternalStore, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { ViewerBackLink } from "@/components/viewer-navigation";
 import VisibilityChip from "@/components/visibility-chip";
 import Link from "next/link";
 import ViewerBrand from "@/components/viewer-brand";
@@ -196,7 +197,7 @@ export default function SiteViewer(props: {
   const [toast, setToast] = useState<string | null>(
     published
       ? (props.visibility === "private"
-          ? t("Published · This site is private. Create a share link under Sharing settings to invite more people")
+          ? t("Created · Private. Change access in Sharing when you are ready.")
           : t("Published · Copy the link under Sharing settings"))
       : null,
   );
@@ -263,7 +264,7 @@ export default function SiteViewer(props: {
     if (next) revealBar();
   }, [barPinned, revealBar]);
   /** Explicit collapse (clicking the handle) — bypasses focusHeld, otherwise focus still sitting on the handle after the click would keep the bar open forever. */
-  const collapseBar = useCallback(() => { cancelHide(); if (openDrawers.current.has("share-education")) return; setBarOpen(false); }, [cancelHide]);
+  const collapseBar = useCallback(() => { cancelHide(); setBarOpen(false); }, [cancelHide]);
 
   const setDrawerOpen = useCallback((id: string, open: boolean) => {
     const drawers = openDrawers.current;
@@ -274,7 +275,6 @@ export default function SiteViewer(props: {
     else if (effect === "hide" && modeAutoHides(barMode) && !barPinned) scheduleHide();
   }, [revealBar, scheduleHide, barMode, barPinned]);
   const onHistoryOpen = useCallback((open: boolean) => setDrawerOpen("history", open), [setDrawerOpen]);
-  const onEducationOpen = useCallback((open: boolean) => setDrawerOpen("share-education", open), [setDrawerOpen]);
   const onSharingOpen = useCallback((open: boolean) => setDrawerOpen("sharing", open), [setDrawerOpen]);
   const onMenuOpen = useCallback((open: boolean) => setDrawerOpen("menu", open), [setDrawerOpen]);
   const onVersionsOpen = useCallback((open: boolean) => setDrawerOpen("versions", open), [setDrawerOpen]);
@@ -469,9 +469,9 @@ export default function SiteViewer(props: {
           {/* The frosted glass is its own layer: backdrop-filter also creates a containing block for position:fixed
               descendants; keeping it on this purely decorative layer keeps the ancestor chain of the drawers/login gate clean. */}
           <div className="fs-bar-glass" aria-hidden="true" />
-          <Link className="brand" href="/" aria-label={t("Back to sites")}>
+          <ViewerBackLink label={t("Back to previous page")}>
             <ViewerBrand />
-          </Link>
+          </ViewerBackLink>
           <div className="header-mid">
             <div className="header-title-edit">
               {!permissions.canRename ? (
@@ -495,7 +495,7 @@ export default function SiteViewer(props: {
             </div>
             <div className="viewer-meta">
               <span className="kind-chip">{kind === "single" ? t("Single file") : kind === "document" ? t("Document") : t("Folder")}</span>
-              <VisibilityChip visibility={props.visibility} contextualHint={props.visibility === "private" && permissions.canManageSharing} />
+              <VisibilityChip visibility={props.visibility} />
               <span className="dot" aria-hidden="true" />
             </div>
             <OfficialVersion slug={slug} versionId={viewedVersion} onStatus={officialStatus} onOpenChange={onVersionsOpen} />
@@ -527,25 +527,24 @@ export default function SiteViewer(props: {
             {!mayEdit && permissions.needsLogin && kind !== "document" && (
               <LockedAction label={t("Edit")} icon={<Pencil size={14} />} hint={t("Sign in required")} onOpen={() => openGate("edit")} />
             )}
-            {permissions.canManageSharing && <SharePanel key={slug} slug={slug} visibility={props.visibility} onOpenChange={onSharingOpen} onEducationOpenChange={onEducationOpen} />}
+            {permissions.canManageSharing && <SharePanel key={slug} slug={slug} visibility={props.visibility} onOpenChange={onSharingOpen} />}
             {!permissions.canManageSharing && permissions.needsLogin && (
               <LockedAction label={t("Sharing settings")} icon={<Share2 size={14} />} hint={t("Sign in required")} onOpen={() => openGate("share")} />
             )}
             {/* Secondary actions fold into one "···" menu so the bar keeps its width for the title: the device
                 preview, the bare artifact, history, forking, the reveal-mode switch. */}
             <MoreMenu label={t("More")} iconOnly onOpenChange={onMenuOpen}>
+              {permissions.canManageSharing && <SharePanel key={`views-${slug}`} slug={slug} visibility={props.visibility} entry="views" onOpenChange={onSharingOpen}/>}
               {permissions.canEditContent && <button role="menuitem" className="menu-item" onClick={openUpload}><FileUp size={14} /> {t("Upload new version")}</button>}
               {/* Named, not a bare external-link arrow: in almost every product that arrow reads as "share", and
                   on a private site the address it opens is exactly the one others cannot use. */}
               <a
                 role="menuitem"
                 className="menu-item"
-                href={appPath(`/api/preview/${slug}/${(commentVersion || props.pinnedVersionId) ? `?v=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`)}
+                href={appPath(`/s/${slug}?presentation=1${(commentVersion || props.pinnedVersionId) ? `&version=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`)}
                 target="_blank"
                 rel="noreferrer"
-                title={props.visibility === "private"
-                  ? t("Open the artifact itself in a new window (without this action bar). This is not a share link — use Sharing settings to show it to others.")
-                  : t("Open the artifact itself in a new window, without this action bar.")}
+                title={t("Open presentation mode. Access stays unchanged.")}
               >
                 <ExternalLink size={14} aria-hidden="true" /> {t("Open in new window")}
               </a>

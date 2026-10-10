@@ -60,7 +60,7 @@ async function resolveCommentFacts(request:Request,site:Site,scope:CommentScope,
   // A separate no-share path: neither token carrier nor passcode cookies are consulted here.
   const mainReadable = Boolean((accountRole && (readablePublicVersion || (await rolePermissions(accountRole)).includes("site.history.read"))) || elevated || isAnonymousCreator(resolveViewer(request, session), current)
     || (!current.takenDownAt && current.visibility !== "private" && readablePublicVersion));
-  const [settings] = await rbacQuery("SELECT main_policy FROM site_comment_settings WHERE site_id=$1", [current.id]);
+  const [settings] = await rbacQuery("SELECT main_policy,reader_access FROM site_comment_settings WHERE site_id=$1", [current.id]);
   const mainPolicy = settings ? (settings.main_policy === "login" || settings.main_policy === "members" ? settings.main_policy : "off") : "login";
   let shareMode: CommentAccessFacts["shareMode"] = null;
   let shareExists = false;
@@ -83,7 +83,7 @@ async function resolveCommentFacts(request:Request,site:Site,scope:CommentScope,
     }
   }
   return {
-    scope, userId: identity?.userId ?? null, accountRole, managementRole: elevated, mainPolicy, shareMode,
+    scope, userId: identity?.userId ?? null, accountRole, managementRole: elevated, mainPolicy, readerAccess: Number(settings?.reader_access) === 1, shareMode,
     permissions: await rolePermissions(elevated ?? accountRole),
     canReadMainArtifact: mainReadable,
     canReadArtifact: scope.entry.kind === "main" ? mainReadable : shareExists && ((manager && mainReadable) || shareReadable),

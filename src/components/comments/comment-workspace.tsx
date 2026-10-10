@@ -1,4 +1,5 @@
 "use client";
+import { replaceBrowserUrl } from "@/lib/browser-history";
 import { appPath } from "@/lib/app-path";
 import { MentionPicker } from "./mention-picker";
 import { normalizedMentions,rebaseMentions,type CommentMention } from "@/lib/comments/mention-types";
@@ -113,7 +114,7 @@ function consumeDraftRecovery(expected: string | null) {
   const url = new URL(window.location.href);
   if (!expected || url.searchParams.get("draft") !== expected) return;
   url.searchParams.delete("draft");
-  window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+  replaceBrowserUrl(url.pathname + url.search + url.hash);
 }
 
 type Access = CommentPermissions & {
@@ -249,6 +250,7 @@ function CommentWorkspaceSession(
   const [busy, setBusy] = useState(false);
   const [likes, setLikes] = useState({ count: 0, liked: false });
   const [likeBusy, setLikeBusy] = useState(false);
+  const [readerAccess, setReaderAccess] = useState(false);
   const [mainPolicy, setMainPolicy] = useState<"off" | "login" | "members" | null>(null);
   const [conflict, setConflict] = useState<CommentMessage | null>(null);
   const [deleting, setDeleting] = useState<{
@@ -300,9 +302,7 @@ function CommentWorkspaceSession(
   const resultVersions = useMemo(() => overviewAllowed && options.versions.length ? options.versions : undefined, [overviewAllowed, options.versions]);
   const unread = useCommentUnread({endpoint,versionId:scope.versionId,shareId:scope.entry.kind === "share" ? scope.entry.shareId : undefined,aggregate,userId:access?.userId,token:shareToken,enabled:Boolean(access?.canRead) && !discoveryDenied,open,workspace:workspaceRef});
   const accessKnown = access !== null;
-  const previewQuery = new URLSearchParams({ v: props.previewVersionId || scope.versionId });
-  if (shareToken) previewQuery.set("share", shareToken);
-  const previewHref = `/api/preview/${encodeURIComponent(slug)}/?${previewQuery}`;
+
 
   useEffect(() => () => onMarkersChange?.([], false), [onMarkersChange]);
   const rowsRef = useRef(rows);
@@ -457,7 +457,7 @@ function CommentWorkspaceSession(
     const url = new URL(window.location.href);
     url.hash = new URLSearchParams({ comment: detail.thread.id }).toString();
     if (overviewAllowed && detail.space.versionId !== scope.versionId) url.searchParams.set("comments", "all");
-    window.history.replaceState(null, "", url);
+    replaceBrowserUrl(url);
   }
   const chooseRef = useRef(choose);
   useEffect(() => { chooseRef.current = choose; });
@@ -477,7 +477,7 @@ function CommentWorkspaceSession(
     const url = new URL(window.location.href);
     url.hash = "";
     url.searchParams.delete("thread");
-    window.history.replaceState(null, "", url);
+    replaceBrowserUrl(url);
     requestAnimationFrame(() => {
       if (listRef.current) { listRef.current.scrollTop = listScroll.current; (returnThread ? listRef.current.querySelector<HTMLButtonElement>(`[data-thread-id="${CSS.escape(returnThread)}"]`) ?? listRef.current : listRef.current).focus({preventScroll:true}); }
     });
@@ -631,10 +631,10 @@ function CommentWorkspaceSession(
         if (permission.isAuthenticated) setNeedsReauthentication(false);
         if (permission.canManageSettings) {
           const settings = await commentRequest<{
-            mainPolicy: "off" | "login" | "members";
+            mainPolicy: "off" | "login" | "members"; readerAccess: boolean;
           }>(`/api/sites/${encodeURIComponent(slug)}/comment-settings`, shareToken);
           if (!lifecycle.current.active || sequence !== generation.current) return;
-          setMainPolicy(settings.mainPolicy);
+          setMainPolicy(settings.mainPolicy); setReaderAccess(settings.readerAccess);
         }
         if (!permission.canRead) {
           polling.current = { failures: 0, nextAt: 0 };
@@ -1538,7 +1538,7 @@ function CommentWorkspaceSession(
                 <Maximize size={16} />
                 {t("Toggle fullscreen")}
               </button>
-              <a role="menuitem" className="menu-item" href={appPath(previewHref)} target="_blank" rel="noreferrer">
+              <a role="menuitem" className="menu-item" href={appPath(`${shareToken ? `/v/${encodeURIComponent(shareToken)}` : `/s/${slug}`}?presentation=1&version=${encodeURIComponent(props.previewVersionId || scope.versionId)}`)} target="_blank" rel="noreferrer">
                 <ExternalLink size={16} />
                 {t("Open in a new tab")}
               </a>
@@ -1585,6 +1585,7 @@ function CommentWorkspaceSession(
       {open && (
         <aside id="artifact-comments" className="comment-panel" data-composing={composer?.kind === "create" || undefined} aria-label={t("Comments")}>
           <div className="comment-panel-header">
+            <p className="comment-scope-note">{t(aggregate ? "All authorized discussions" : scope.entry.kind === "main" ? "Artifact discussion" : "Independent discussion")}<br/><small>{t(aggregate ? "Each reply stays in its original discussion." : scope.entry.kind === "main" ? "Comments follow this artifact’s access settings." : "Comments here are separate from the artifact and other links.")}</small></p>
             <div className="comment-panel-heading">
               {selected ? (
                 <button type="button" onClick={backToList}>
@@ -1749,8 +1750,8 @@ function CommentWorkspaceSession(
                           }}
                         >
                           <option value="login">{t("Signed-in readers")}</option>
-                          <option value="members">{t("Site members")}</option>
-                          <option value="off">{t("Off")}</option>
+                          {!readerAccess && <option value="members">{t("Site members")}</option>}
+                          <option value="off">{t(readerAccess ? "Pause new comments" : "Off")}</option>
                         </select>
                       </label></details>
                     )}

@@ -515,6 +515,7 @@ export class SqliteStore implements MetadataStore {
         .run(site.id, site.slug, site.title, site.kind, version.id, now, now, site.editToken, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, site.tenantId ?? (site.ownerId ? "init" : "anonymous"));
       this.db.prepare("INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now);
+      this.db.prepare("INSERT INTO site_comment_settings(site_id,main_policy,reader_access,updated_at) VALUES(?,'login',1,?)").run(site.id, now);
       if (audit) this.writeAuditRow(audit, now);
       if (version.official) {
         this.db.prepare("UPDATE sites SET official_version_id=?, official_set_at=?, official_set_by=?, official_revision=official_revision+1 WHERE id=?").run(version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId);

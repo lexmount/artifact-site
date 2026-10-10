@@ -54,10 +54,10 @@ it when passing such identifiers, for example `artifact-site --json read -- -YOU
 
 | Command | What it does |
 | --- | --- |
-| `publish <path>` | New site from an `.html`, a directory (build output), a `.zip`, or a pdf/pptx/ppt/docx/doc. `-` reads HTML from stdin. Creates a **public share link** by default (`--share login\|email\|passcode\|none`). |
+| `publish <path>` | New site from an `.html`, a directory (build output), a `.zip`, or a pdf/pptx/ppt/docx/doc. `-` reads HTML from stdin. Creates privately without a share link. Explicit `--share` remains an advanced independent-link compatibility option. |
 | `update <slug> <path>` | Replace the current content. The route follows the site's kind: single page → the new `.html`; file tree → a directory or zip; document → the new file. Required `--expected-version <id>` refuses to overwrite someone else's newer version (exit 4). |
 | `export <slug> [--version-id <id>] [-o file]` | Download the selected version (default current) as a zip; prints the version id for `--expected-version`. |
-| `share <slug>` | Another share link: `--policy`, `--label`, `--expires 7\|30\|90`, `--passcode`. |
+| `share <slug>` | Advanced independent share link: `--policy`, `--label`, `--expires 7\|30\|90`, `--passcode`. |
 | `find` · `info <slug> [--shares]` | Your remote artifacts · one artifact's kind, files and history, optionally owner-only sharing summaries. |
 | `find --public` | Explicit public catalog, not a personal listing. Omit keywords. |
 | `folders list` | My flat folder labels with stable IDs; requires a personal account. |
@@ -106,7 +106,7 @@ uploaded — the platform refuses dot-leading paths anyway, and that is where se
 out is printed before the upload.
 
 ```bash
-artifact-site publish dist/ --title "Q3 dashboard"        # → prints the site URL and the share link
+artifact-site publish dist/ --title "Q3 dashboard"        # → prints the private site URL and access state
 artifact-site export k4wey6sCyFcm -o site.zip              # → version ver_… to build on
 artifact-site update k4wey6sCyFcm dist/ --expected-version ver_…
 ```
@@ -135,7 +135,7 @@ The server address and token are resolved like every other command: `--base` >
 `~/.config/artifact-site/tokens/<host>`. Create a personal token at `/for-agents#mcp` on your
 deployment, or run `artifact-site login` once on this machine.
 
-Without an address or token the server still starts and lists its 26 tools (a copy bundled with
+Without an address or token the server still starts and lists its 29 tools (a copy bundled with
 the package); each call then returns a tool error explaining how to sign in. A rejected token
 (HTTP 401/403) or an unreachable server is reported as a tool error too, and the process keeps
 running. stdout carries only JSON-RPC; diagnostics go to stderr.
@@ -257,3 +257,7 @@ Content `update` now requires `--expected-version` (title-only rename is unchang
 latest editable version separately from an old comment's evidence, then revise the same slug.
 A 409 exits 4: inspect and reconcile the winner, not a blind overwrite or new publication.
 Reuse the operation key after uncertain responses; fixed-version shares remain on the old version.
+
+### Main-link access
+
+`artifact-site visibility <slug>` reads access; append `private`, `unlisted` or `public` to change it. `unlisted` opens the same main link without exposing the work to unrelated users through discovery. `public` additionally enables public discovery. Changing to private does not revoke independent links. Ordinary sharing uses this command; `share` creates an advanced isolated discussion. Creation and copying alone never authorize sharing.

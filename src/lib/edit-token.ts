@@ -1,4 +1,5 @@
 "use client";
+import { replaceBrowserUrl } from "@/lib/browser-history";
 
 import { appFetch } from "@/lib/app-path";
 // Client helpers for the per-site edit token (selectively shared edit access). The token lives in localStorage keyed
@@ -78,7 +79,7 @@ export function useEditToken(slug: string): { token: string | null; resolved: bo
     try {
       const url = new URL(window.location.href);
       url.searchParams.delete("t");
-      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+      replaceBrowserUrl(url.pathname + url.search + url.hash);
     } catch { /* ignore */ }
   }, [queryToken, slug]);
 

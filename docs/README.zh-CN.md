@@ -119,7 +119,7 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 - **CLI**: `npm install -g @artifact-site/cli` — 需要 Node 24+，示例命令见下方。
 - **MCP**: `https://your-server/mcp` — ChatGPT、Claude 等 MCP 客户端通过服务器的 OAuth 登录连接，无需安装 CLI。只能启动本地 MCP 服务的客户端，可改用 CLI 的 `artifact-site mcp`。
 
-**CLI 和 MCP 发布默认创建公开分享。** 不分享时使用 `--share none`（CLI）或 `share: false`（MCP）。
+**CLI 和 MCP 默认创建私有作品，不自动生成独立分享链接。** 用户要求分享时，使用 `artifact-site visibility <slug> unlisted` 或 MCP `artifact_site_set_visibility` 开放主链接。
 
 <p align="center"><img src="assets/agent.zh-CN.gif" alt="coding agent 用 artifact-site 的 CLI 发布构建目录并交回分享链接" width="820"></p>
 <p align="center"><sub><b>或者交给你的 coding agent。</b>有了 agent 指南（<code>/for-agents.md</code>）、CLI 或 MCP 服务，"把这个发布了给我个链接"就是一句话的事——之后的更新、搜索、读取也一样。</sub></p>
@@ -142,7 +142,7 @@ artifact-site read YOUR_SITE_SLUG                    # 替换为作品标识，�
 <details>
 <summary>认证详情</summary>
 
-打开部署后的 **Agent 指南**，选择交给 Agent、CLI 或 MCP。`/for-agents#cli` 和 `/for-agents#mcp` 提供当前服务器的命令、认证步骤与客户端配置。远程 MCP 的每次请求都要认证：ChatGPT、Claude 等支持 OAuth 的客户端通过本服务自己的授权页登录，其他客户端携带个人 Token；CLI 发布、更新、分享和删除需要 Token；发布默认创建公开分享，不分享时使用 `--share none`（CLI）或 `share: false`（MCP）。
+打开部署后的 **Agent 指南**，选择交给 Agent、CLI 或 MCP。`/for-agents#cli` 和 `/for-agents#mcp` 提供当前服务器的命令、认证步骤与客户端配置。远程 MCP 的每次请求都要认证：ChatGPT、Claude 等支持 OAuth 的客户端通过本服务自己的授权页登录，其他客户端携带个人 Token； 发布默认私有；按需修改访问范围开放主链接，高级独立分享需主动创建。
 
 配置了 OIDC 的团队部署支持设备登录授权；本地匿名体验不需要这个步骤。agent 根据指南和服务器的发布策略选择认证方式。云端 agent 无法直接访问你电脑上的 `127.0.0.1`。
 

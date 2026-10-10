@@ -241,6 +241,18 @@ export async function startFakeServer(): Promise<FakeServer> {
       return null;
     };
 
+    if (sub === "sharing" && ["GET", "PUT"].includes(method)) {
+      if (!mayEdit()) return send(res, 403, { error: "forbidden" });
+      if (method === "PUT") site.visibility = ((await (await toRequest(req, url)).json()) as { visibility: string }).visibility;
+      return send(res, 200, { visibility: site.visibility, url: `/s/${site.slug}` });
+    }
+    if (sub.startsWith("shares/") && method === "DELETE") {
+      if (!mayEdit()) return send(res, 403, { error: "forbidden" });
+      const shareIndex = state.shares.findIndex(share => share.slug === site.slug && share.token === sub.slice(7));
+      if (shareIndex < 0) return send(res, 404, { error: "share not found" });
+      state.shares.splice(shareIndex, 1);
+      return send(res, 200, { ok: true });
+    }
     if (sub === "official") {
       if (method === "GET") return send(res, 200, { officialVersionId: site.officialVersionId ?? null, officialRevision: site.officialRevision ?? 0 });
       if (!mayEdit()) return send(res, 403, { error: "forbidden" });

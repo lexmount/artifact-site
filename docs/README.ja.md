@@ -119,7 +119,7 @@ printf '<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, arti
 - **CLI**: `npm install -g @artifact-site/cli` — Node 24 以上が必要です。コマンド例は以下をご覧ください。
 - **MCP**: `https://your-server/mcp` — ChatGPT、Claude などの MCP クライアントから、サーバーの OAuth サインインで接続します。CLI のインストールは不要です。ローカル MCP サーバーしか起動できないクライアントは、代わりに CLI の `artifact-site mcp` を使えます。
 
-**CLI と MCP での公開は、デフォルトで公開共有リンクを作成します。** 共有しない場合は `--share none`（CLI）または `share: false`（MCP）を使ってください。
+**CLI と MCP はデフォルトで非公開の作品を作成し、独立した共有リンクを自動生成しません。** 共有を依頼された場合は `artifact-site visibility <slug> unlisted` または MCP `artifact_site_set_visibility` を使います。
 
 <p align="center"><img src="assets/agent.gif" alt="コーディングエージェントが artifact-site の CLI でビルドフォルダーを公開し、共有リンクを返す" width="820"></p>
 <p align="center"><sub><b>あるいはコーディングエージェントに任せる。</b>エージェントガイド（<code>/for-agents.md</code>）、CLI、MCP サーバーがあれば、「これを公開してリンクをください」の一言で済みます。更新、検索、読み取りも同じように頼めます。</sub></p>
@@ -142,7 +142,7 @@ artifact-site read YOUR_SITE_SLUG                    # サイトのスラッグ�
 <details>
 <summary>認証の詳細</summary>
 
-デプロイ先で **Agent guide**（エージェントガイド）を開き、プロンプト、CLI、MCP のいずれかの方法を選びます。`/for-agents#cli` と `/for-agents#mcp` に、サーバー固有のコマンド、認証手順、クライアント設定があります。リモート MCP はすべてのリクエストを認証します。ChatGPT、Claude など OAuth に対応したクライアントはサーバー自身の同意ページからサインインし、その他のクライアントは個人トークンを持たせます。CLI での公開、更新、共有、削除にはトークンが必要です。公開するとデフォルトで公開共有が作成されます。共有しない場合は `--share none`（CLI）または `share: false`（MCP）を使います。
+デプロイ先で **Agent guide**（エージェントガイド）を開き、プロンプト、CLI、MCP のいずれかの方法を選びます。`/for-agents#cli` と `/for-agents#mcp` に、サーバー固有のコマンド、認証手順、クライアント設定があります。リモート MCP はすべてのリクエストを認証します。ChatGPT、Claude など OAuth に対応したクライアントはサーバー自身の同意ページからサインインし、その他のクライアントは個人トークンを持たせます。 公開直後は非公開です。メインリンクのアクセス範囲を明示的に変更してください。独立共有は高度な機能です。
 
 OIDC を設定したチーム向けのデプロイでは、デバイスサインインの承認に対応しています。上記の匿名ローカル環境では不要です。エージェントはガイドとサーバーの公開ポリシーに従って認証方法を選びます。クラウド上のエージェントは、あなたのコンピューターの `127.0.0.1` に直接アクセスできません。
 

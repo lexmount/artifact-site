@@ -119,7 +119,7 @@ Elige el punto de entrada adecuado para tu agente:
 - **CLI**: `npm install -g @artifact-site/cli` — requiere Node 24+; consulta los comandos de ejemplo a continuación.
 - **MCP**: `https://your-server/mcp` — conecta ChatGPT, Claude u otro cliente MCP mediante el inicio de sesión OAuth del servidor; no necesitas instalar la CLI. Un cliente que solo inicia servidores MCP locales puede usar `artifact-site mcp` de la CLI en su lugar.
 
-**La publicación mediante CLI o MCP crea un enlace público por defecto.** Usa `--share none` (CLI) o `share: false` (MCP) para publicar sin compartir.
+**CLI y MCP crean obras privadas por defecto, sin enlaces independientes.** Para compartir el enlace principal, usa `artifact-site visibility <slug> unlisted` o MCP `artifact_site_set_visibility`.
 
 <p align="center"><img src="assets/agent.gif" alt="Un agente de programación publica una carpeta de build con la CLI de artifact-site y devuelve el enlace para compartir" width="820"></p>
 <p align="center"><sub><b>O deja que lo haga tu agente de programación.</b> Con la guía para agentes (<code>/for-agents.md</code>), la CLI o el servidor MCP, «publica esto y dame un enlace» es una sola instrucción, y el sitio se puede actualizar, buscar y leer de la misma manera.</sub></p>
@@ -142,7 +142,7 @@ artifact-site read YOUR_SITE_SLUG                    # sustituye por el slug de 
 <details>
 <summary>Detalles de autenticación</summary>
 
-Abre **Agent guide** (la guía para agentes) en tu despliegue para elegir la vía del prompt, la CLI o MCP. `/for-agents#cli` y `/for-agents#mcp` ofrecen comandos específicos del servidor, pasos de autenticación y configuración de clientes. El MCP remoto autentica cada petición: ChatGPT, Claude y otros clientes compatibles con OAuth inician sesión en la página de consentimiento del propio servidor, y el resto de clientes lleva un token personal. Publicar, actualizar, compartir y eliminar con la CLI requieren un token; publicar crea por defecto un enlace público. Usa `--share none` (CLI) o `share: false` (MCP) para no compartir.
+Abre **Agent guide** (la guía para agentes) en tu despliegue para elegir la vía del prompt, la CLI o MCP. `/for-agents#cli` y `/for-agents#mcp` ofrecen comandos específicos del servidor, pasos de autenticación y configuración de clientes. El MCP remoto autentica cada petición: ChatGPT, Claude y otros clientes compatibles con OAuth inician sesión en la página de consentimiento del propio servidor, y el resto de clientes lleva un token personal.  La creación es privada por defecto; el acceso del enlace principal se modifica explícitamente. Los enlaces independientes son una función avanzada.
 
 Los despliegues de equipo con OIDC admiten la aprobación de inicio de sesión de dispositivo; la instalación local anónima anterior no la necesita. El agente sigue la guía y la política de publicación del servidor para elegir la autenticación. Un agente en la nube no puede llegar directamente a `127.0.0.1` en tu ordenador.
 

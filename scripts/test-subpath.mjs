@@ -166,7 +166,7 @@ try {
  browser=await puppeteer.launch({executablePath:chrome,headless:true,args:['--no-sandbox','--no-proxy-server','--host-resolver-rules=MAP a.test 127.0.0.1, MAP b.test 127.0.0.1, MAP idp.test 127.0.0.1']});
  const page=await browser.newPage();page.setDefaultTimeout(20000);
  const escaped=[],pageErrors=[];
- page.on('request',req=>{const u=new URL(req.url());if(u.hostname==='b.test'&&!u.pathname.startsWith('/artifact-site')&&!u.pathname.startsWith('/.well-known/'))escaped.push(u.href);});
+ page.on('request',req=>{const u=new URL(req.url());if(u.hostname==='b.test'&&!u.pathname.startsWith('/artifact-site')&&!u.pathname.startsWith('/.well-known/')){ escaped.push(u.href); console.error('Escaped mount request', {url:u.href, document:req.frame()?.url(), type:req.resourceType(), initiator:req.initiator()}); }});
  page.on('pageerror',error=>pageErrors.push(error.message));
  console.log('Checking gateway redirects and exact discovery rewrites');
  const root = await localFetch(`http://b.test:${port}/?from=root`);
@@ -184,6 +184,10 @@ try {
  await page.goto(A+'/',{waitUntil:'domcontentloaded'});
  assert.equal(page.url().replace(/\/$/,''),B);
  escaped.length=0;
+ // Chrome can request /favicon.ico when streamed metadata arrives after the shell.
+ const shell = await localFetch(B, {headers:{'user-agent':await browser.userAgent()}});
+ const initialHead = (await shell.text()).split('</head>')[0];
+ assert.match(initialHead, /<link(?=[^>]*rel="icon")(?=[^>]*href="\/artifact-site\/icon\.png")[^>]*>/, 'Initial head must contain the explicit mounted favicon independently of generated metadata');
  console.log('Checking first-time MCP authorization with a fresh browser context');
  for(const base of [B]){
   console.log(`First-time OAuth: ${base}`);

@@ -359,3 +359,6 @@
 .comment-mention-avatar { flex: 0 0 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--green); color: var(--focus); }
 .comment-mention-menu [role="option"] > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .comment-mention-menu small { padding: 8px; }
+
+.comment-scope-note { margin: 0 0 16px; font: 600 13px/1.6 var(--font-ui); color: var(--ink); }
+.comment-scope-note small { font-weight: 400; color: var(--muted); }

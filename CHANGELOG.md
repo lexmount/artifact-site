@@ -5,6 +5,10 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Declare the mounted favicon in the initial document head so browsers do not request a root-level icon during streamed navigation.
+
+- Keep comment URL changes synchronized with the router while preserving viewer return paths, including after sharing updates refresh the page.
+
 - Fix failed sign-outs silently reloading, stale browser account state, and sign-in celebrations without a confirmed session; preserve subpath deployment URLs and invalidate account caches across tabs.
 
 ### Added
@@ -20,20 +24,27 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ### Changed
 
+- Preserve viewer return chains through copied artifacts, browser Back/Forward and language changes without relying on Referer headers.
+
+- Save main-link visibility immediately, with pending-copy protection and failure rollback. Clarify visibility labels and icons with touch-accessible explanations. Return from a viewer to its entry page across version changes and reloads, falling back to Home for direct links.
+
+- Allow retrying failed sharing settings while the comments request is still pending; ignore replaced responses.
+
+- Adapt mobile sharing to a compact bottom sheet with inline member actions and a single-row copy footer.
+
+- Group sharing into collaborators, link access and a persistent copy footer. Prefetch basic settings, reuse session-scoped data across openings, and refresh permissions without collapsing the panel. Keep advanced data on demand and clear cached settings on account changes.
+
+- Tighten the sharing popover, restore expandable advanced-sharing drawers, move visit history to More, and edit member grants inline with searchable member choices.
+
+- Make new artifacts private by default and stop automatic CLI/MCP share creation. Add main-link visibility tools and commands, with independent sharing kept as an advanced action.
+- Simplify sharing into one main link, explicit access changes, comment settings and members. Keep new independent-link creation above the advanced list. Presentation tabs retain the host viewer and sandbox.
+- New artifacts allow authorized readers to read comments before signing in; posting requires sign-in. Pausing new discussions retains read access. Existing comment visibility and independent discussions remain unchanged.
+
 - Cloud-version links in the README and all translations now point to the current hosted address.
 
-- Share-link creation stays collapsed unless explicitly opened with New share link.
-  Quick-sharing guidance describes detailed settings and reflects current site address visibility.
-  Pending or failed visibility refreshes do not present cached access scope as current; failed reads offer retry.
-  Quick-sharing dialogs reposition after content changes to stay within short desktop viewports.
-
-- Private-site guidance stays visible until dismissed, explains the restricted `/s/` address,
-  and opens quick sharing. Reminders appear at most once per site per tab session and once
-  every 24 hours per browser, ending after three successful share-link copies or an explicit
-  "Don't remind me again" choice. Creating links and copying passcodes/site addresses do not count.
-  Cross-tab claims and copy counts use transactional browser storage, and opt-out is stored independently.
-  Successful copy feedback and button availability do not wait for background guidance updates.
-  Browsers without usable Web Locks or IndexedDB skip automatic guidance; sharing remains available.
+- Advanced share-link creation stays collapsed at the top until New share link is opened.
+  Access settings load before actions become available, and failed reads offer retry.
+  Main-link access and copy feedback replace the former private-site education bubbles.
 - A toolbar immersive-preview action opens the viewed version in a new tab without platform
   controls, retaining the preview's access checks and sandbox CSP. At widths up to 480px,
   toolbar metadata and actions use two rows to keep version and action controls reachable.
