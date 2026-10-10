@@ -1,3 +1,4 @@
+import { publicationPolicy } from "@/lib/publication-policy";
 import { appPath } from "@/lib/app-path";
 import RecentUnavailable from "@/components/recent-unavailable";
 import RecentTracker from "@/components/recent-tracker";
@@ -78,8 +79,9 @@ const PROTECTED_DESCRIPTION: Record<Exclude<SharePolicy, "public">, string> = {
 const resolveTarget = cache(async (siteId: string, versionId?: string | null): Promise<{ site: Site; version: Version } | null> => {
   const site = await getSite(siteId);
   if (!site || site.deletedAt || site.takenDownAt || !(await tenantActive(site.tenantId)) || !site.currentVersionId) return null;
-  const version = await getVersion(versionId || site.currentVersionId);
-  return version && version.siteId===site.id ? { site, version } : null;
+  const external = await publicationPolicy.externalSite(site);
+  const version = await getVersion(versionId || external.currentVersionId);
+  return version && version.siteId === site.id && await publicationPolicy.allowsVersion(site, version.id) ? { site: external, version } : null;
 });
 
 /** The artifact's own `<meta name="description">`, or null. Best-effort: unreadable storage makes

@@ -5,6 +5,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Centralize publication transactions and reader projections behind a deployment integration boundary; default publishing and access behavior remain unchanged.
+
 - Declare the mounted favicon in the initial document head so browsers do not request a root-level icon during streamed navigation.
 
 - Keep comment URL changes synchronized with the router while preserving viewer return paths, including after sharing updates refresh the page.

@@ -1,3 +1,4 @@
+import { publicationPolicy } from "@/lib/publication-policy";
 // GET /api/sites/:slug/events — the site's version feed as Server-Sent Events (contract 2).
 //
 // "The write-back tells the page itself": whoever lands a new current version is calling our
@@ -108,6 +109,8 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
         unsubscribe = subscribeSiteVersion(siteId, (event) => {
           void authorized().then(async ok=>{
             if(!ok){close();return;}
+            const latest = await getSiteView(slug);
+            if (!latest || !(await publicationPolicy.allowsRequestVersion(request, latest.site, event.versionId))) return;
             const n=await versionOrdinal(siteId,event.versionId);
             send(`event: version\ndata: ${JSON.stringify({slug,versionId:event.versionId,versionNumber:n})}\n\n`);
           }).catch(close);

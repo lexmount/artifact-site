@@ -1,3 +1,4 @@
+import { publicationPolicy } from "@/lib/publication-policy";
 import type { Authority } from "@/lib/authz";
 import { sessionReceiptShare } from "@/lib/notifications/receipts";
 import { databaseRoleAllows, everyoneRole } from "@/lib/role-bindings";
@@ -83,6 +84,9 @@ export async function resolveShareAccess(
   const site = await getSite(share.siteId);
   if (!site || site.deletedAt || site.takenDownAt || !(await tenantActive(site.tenantId))) return { ok: false, reason: "notFound" };
 
+  const external = await publicationPolicy.externalSite(site);
+  const target = share.versionId || external.currentVersionId;
+  if (!target || !(await publicationPolicy.allowsVersion(site, target))) return { ok: false, reason: "notFound" };
   return sharePolicyAccess(request, share, opts);
 }
 
@@ -234,6 +238,7 @@ export async function requestShareAccess(request: Request, site: Site, session?:
 export async function canReadVersion(request: Request, site: Site, versionId: string, session?: Session | null): Promise<boolean> {
   const version = await getVersion(versionId);
   if (site.deletedAt || !version || version.siteId !== site.id || !(await tenantActive(site.tenantId))) return false;
+  if (!(await publicationPolicy.allowsRequestVersion(request, site, versionId))) return false;
   if ((await readableVersionFilter(request, site, session))(versionId)) return true;
   if (shareTokenFromRequest(request)) return false;
   const resolved = session === undefined ? await resolveSession(request) : session;

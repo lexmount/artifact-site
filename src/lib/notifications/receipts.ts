@@ -1,3 +1,4 @@
+import { publicationPolicy } from "@/lib/publication-policy";
 import "server-only";
 import { rbacQuery, toShareRow } from "@/lib/db";
 import { readerVersionAllowed } from "@/lib/version-access";
@@ -64,6 +65,7 @@ export async function receiptShare(
   shareId?: string,
 ) {
   if (site.deletedAt || site.takenDownAt) return null;
+  if (!(await publicationPolicy.allowsVersion(site, versionId))) return null;
   const rows = await rbacQuery(
     `SELECT sh.* FROM share_access_receipts r
     JOIN comment_spaces sp ON sp.id=r.space_id JOIN site_shares sh ON sh.id=sp.share_id AND sh.site_id=sp.site_id

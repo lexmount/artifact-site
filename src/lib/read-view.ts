@@ -1,3 +1,4 @@
+import { publicationPolicy } from "@/lib/publication-policy";
 import "server-only";
 import { getVersion } from "@/lib/db";
 import { getSiteView } from "@/lib/sites";
@@ -10,12 +11,13 @@ export async function getReadableView(request: Request, slug: string, { audit = 
     const view = await getSiteView(slug);
     if (!view)
         return null;
+    view.site = await publicationPolicy.readerSite(request, view.site);
     const session = await resolveSession(request);
     if (!await canReadSite(request, view.site, session, audit))
         return { ...view, readable: false };
     const share = await requestShareAccess(request, view.site, session);
     const params = new URL(request.url).searchParams;
-    const versionId = params.get("version_id") ?? (versionAlias ? params.get("version") : null) ?? share?.versionId ?? view.version.id;
+    const versionId = params.get("version_id") ?? (versionAlias ? params.get("version") : null) ?? share?.versionId ?? view.site.currentVersionId;
     if (!await canReadVersion(request, view.site, versionId, session))
         return null;
     const version = versionId === view.version.id ? view.version : await getVersion(versionId);
