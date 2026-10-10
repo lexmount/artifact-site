@@ -1,3 +1,4 @@
+import { publicationPolicy } from "@/lib/publication-policy";
 // Viewer route /s/[slug] — resolves the live site + current version from the store and renders
 // the running site inside the sandboxed SiteViewer chrome. Unknown/deleted slug → 404.
 import { cache } from "react";
@@ -41,7 +42,10 @@ export const dynamic = "force-dynamic";
 const pageContext = cache(async (slug: string) => {
   const bag = await headers();
   const request = viewerRequestFromHeaders(bag, `/s/${slug}`);
-  const [view, session] = await Promise.all([getSiteView(slug), resolveSession(request)]);
+  const [original, session] = await Promise.all([getSiteView(slug), resolveSession(request)]);
+  const site = original ? await publicationPolicy.readerSite(request, original.site) : null;
+  const version = site && original ? (site.currentVersionId === original.version.id ? original.version : await getVersion(site.currentVersionId)) : null;
+  const view = site && version ? { site, version } : null;
   const readable = view != null && (await canReadSite(request, view.site, session));
   return { bag, request, view, session, readable };
 });

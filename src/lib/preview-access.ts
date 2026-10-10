@@ -1,3 +1,4 @@
+import { publicationPolicy } from "@/lib/publication-policy";
 import { receiptShare, sessionReceiptShare } from "@/lib/notifications/receipts";
 import { databaseRoleAllows, everyoneRole } from "@/lib/role-bindings";
 import { readerVersionAllowed } from "@/lib/version-access";
@@ -134,6 +135,7 @@ export async function authorizePreview(
     }
     return { versionId: grant.versionId, key };
   }
+  site = await publicationPolicy.readerSite(request, site);
   const session = await resolveSession(request);
   const share = await requestShareAccess(request, site, session);
   const versionId =
@@ -145,7 +147,7 @@ export async function authorizePreview(
   const independentlyReadable=(await readableVersionFilter(request,site,session))(versionId);
   const receipt=!independentlyReadable && !shareTokenFromRequest(request) ? await sessionReceiptShare(site,versionId,session):null;
   if(!independentlyReadable && !receipt)return null;
-  if (site.visibility !== "private" && !site.takenDownAt && versionId === site.currentVersionId && !share)
+  if (site.visibility !== "private" && !site.takenDownAt && versionId === site.currentVersionId && !share && await publicationPolicy.allowsVersion(site, versionId))
     return { versionId, key: null };
   // Version filtering is side-effect free; this entry point owns the administrative read audit.
   const access = await readAccess(request, site, session);

@@ -1,3 +1,4 @@
+import { publicationPolicy } from "@/lib/publication-policy";
 import { recordPublishedVersion } from "@/lib/publish-operation";
 import "server-only";
 import { createId, rbacTransaction, toSite, type InsertSiteInput, type InsertAuditInput, type InsertVersionInput, type VersionCommit } from "@/lib/db";
@@ -45,7 +46,7 @@ export async function commitAuthorizedVersion(siteId: string, version: InsertVer
         await q("INSERT INTO versions(id,site_id,entry,file_count,byte_size,source,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [version.id, siteId, version.entry, version.fileCount, version.byteSize, version.source, now]);
         await q("UPDATE sites SET current_version_id=$1,updated_at=$2 WHERE id=$3", [version.id, now, siteId]);
         await writeCommitAudit(q, { ...audit, siteId, versionId: version.id }, now);
-        if (version.official) await designateOfficial(q, siteId, version.id, audit, now);
+        await publicationPolicy.commitVersion({ q, site, versionId: version.id, request: audit.authorizationRequest!, creating: false, official: Boolean(version.official), publishOfficial: () => designateOfficial(q, siteId, version.id, audit, now) });
         await recordPublishedVersion(q, siteId, version.id);
         return "applied";
     });
@@ -72,7 +73,8 @@ export async function commitAuthorizedCreation(site: InsertSiteInput, version: I
         await q("INSERT INTO versions(id,site_id,entry,file_count,byte_size,source,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [version.id, site.id, version.entry, version.fileCount, version.byteSize, version.source, now]);
         await q("INSERT INTO site_comment_settings(site_id,main_policy,reader_access,updated_at) VALUES($1,'login',1,$2)", [site.id, now]);
         await writeCommitAudit(q, audit, now);
-        if (version.official) await designateOfficial(q, site.id, version.id, audit, now);
+        const [created] = await q("SELECT * FROM sites WHERE id=$1", [site.id]);
+        await publicationPolicy.commitVersion({ q, site: toSite(created), versionId: version.id, request, creating: true, official: Boolean(version.official), publishOfficial: () => designateOfficial(q, site.id, version.id, audit, now) });
         await recordPublishedVersion(q, site.id, version.id, true);
     }).catch(async (error) => {
         if ((error as {
