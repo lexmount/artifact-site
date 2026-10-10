@@ -1,10 +1,12 @@
+import { appBasePath } from "@/lib/app-path";
+
 /** Only fixed, read-only platform destinations cross the preview boundary. */
 export function platformDestination(value: unknown): "/" | "/me" | "/explore" | null {
   return value === "/" || value === "/me" || value === "/explore" ? value : null;
 }
 
 /** Runs inside the opaque frame; the host still treats every message as untrusted. */
-function navigationRuntime() {
+function navigationRuntime(mount: string) {
   const embedded = parent !== window;
   const platformOrigin = new URL(document.baseURI).origin;
   let enabled = false;
@@ -86,14 +88,16 @@ function navigationRuntime() {
     if (!embedded || !enabled || !(target instanceof HTMLAnchorElement)) return;
     try {
       const base = new URL(document.baseURI), url = new URL(target.href, base);
-      if (url.origin !== base.origin || url.username || url.password || !["/", "/me", "/explore"].includes(url.pathname)) return;
+      if (url.origin !== base.origin || url.username || url.password) return;
+      const path = !mount ? url.pathname : url.pathname === mount ? "/" : url.pathname.startsWith(`${mount}/`) ? url.pathname.slice(mount.length) : null;
+      if (path !== "/" && path !== "/me" && path !== "/explore") return;
       event.preventDefault();
       // No credentials or arbitrary URLs leave the frame. The host asks the reader to continue.
-      parent.postMessage({ type: "artifact:platform-navigation", path: url.pathname }, base.origin);
+      parent.postMessage({ type: "artifact:platform-navigation", path }, base.origin);
     } catch { /* Invalid links retain browser behavior. */ }
   });
 }
 
-export function previewNavigationBootstrap(): string {
-  return `<script data-artifact-bootstrap>(${navigationRuntime.toString()})();</script>`;
+export function previewNavigationBootstrap(mount = appBasePath()): string {
+  return `<script data-artifact-bootstrap>(${navigationRuntime.toString()})(${JSON.stringify(mount).replace(/</g, "\\u003c")});</script>`;
 }

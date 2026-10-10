@@ -1,3 +1,4 @@
+import { appPath } from "@/lib/app-path";
 // /oauth/authorize — the consent page of this server's OAuth authorization server (lib/oauth).
 //
 // An MCP client (ChatGPT, Claude, …) sends the person here. The request is validated first — the
@@ -119,7 +120,7 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
             {nativeApp && <b>{t("That address opens an application on your computer: continue only if you started this connection yourself.")}</b>}
             {!loopback && !nativeApp && <b>{t("Only allow connections you started yourself; never approve a request someone else sent you.")}</b>}
           </p>
-          <form method="post" action="/oauth/decision" className="consent-actions">
+          <form method="post" action={appPath("/oauth/decision")} className="consent-actions">
             <input type="hidden" name="request" value={outcome.requestId} />
             <button type="submit" name="decision" value="allow" className="primary">{t("Allow")}</button>
             <button type="submit" name="decision" value="deny" className="btn">{t("Deny")}</button>

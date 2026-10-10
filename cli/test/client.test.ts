@@ -210,3 +210,14 @@ it("retries identity lookup after a failed shared preflight", async () => {
   expect(failed.map(result => result.status)).toEqual(["rejected", "rejected"]); expect(requests).toBe(1);
   await c.recoveryIdentity(); await c.uploadLimits(); expect(requests).toBe(2);
 });
+
+it("retains a subpath once in API-returned links and API requests", async () => {
+  const base = "https://new.example/artifact-site";
+  let requested = "";
+  const client = new ArtifactSiteClient({ baseUrl: base, token: "test", fetch: async (url) => { requested = String(url); return Response.json({ user: null }); } });
+  expect(client.absolute("/s/example")).toBe(`${base}/s/example`);
+  expect(client.absolute("/artifact-site/s/example")).toBe(`${base}/s/example`);
+  expect(client.absolute("https://other.example/v/share")).toBe("https://other.example/v/share");
+  await client.me();
+  expect(requested).toBe(`${base}/api/auth/me`);
+});

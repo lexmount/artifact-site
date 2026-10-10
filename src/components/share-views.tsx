@@ -1,4 +1,5 @@
 "use client";
+import { appFetch } from "@/lib/app-path";
 // View log — who, when, and through which door (a share link, or the direct /s/ address), newest first.
 //
 // This is a peer tab in sharing settings and fetches fresh data when mounted.
@@ -36,8 +37,8 @@ export default function ShareViews({ slug }: { slug: string }) {
     setError(null);
     try {
       const [res, sharesResponse] = await Promise.all([
-        fetch(`/api/sites/${slug}/views`, { cache: "no-store", signal }),
-        fetch(`/api/sites/${slug}/shares`, { cache: "no-store", signal }),
+        appFetch(`/api/sites/${slug}/views`, { cache: "no-store", signal }),
+        appFetch(`/api/sites/${slug}/shares`, { cache: "no-store", signal }),
       ]);
       const body: unknown = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(errorText(body, t("Failed to load view history")));

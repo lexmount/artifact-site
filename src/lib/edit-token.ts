@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/app-path";
 // Client helpers for the per-site edit token (selectively shared edit access). The token lives in localStorage keyed
 // by slug, or arrives via a ?t= editable link. Reads go through useSyncExternalStore so they are
 // SSR-safe (null on the server / first paint, real value after hydration): owner-only affordances
@@ -71,7 +72,7 @@ export function useEditToken(slug: string): { token: string | null; resolved: bo
   // Filed as SHARED — the link proves someone invited you to edit, not that you made the site.
   useEffect(() => {
     const receipt = queryToken || readStored(slug);
-    if (receipt) void fetch(`/api/sites/${slug}/permissions`, { method: "POST", headers: { "x-edit-token": receipt } }).catch(() => {});
+    if (receipt) void appFetch(`/api/sites/${slug}/permissions`, { method: "POST", headers: { "x-edit-token": receipt } }).catch(() => {});
     if (!queryToken) return;
     rememberSharedToken(slug, queryToken);
     try {

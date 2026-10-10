@@ -1,4 +1,5 @@
 "use client";
+import { appFetch, appPath } from "@/lib/app-path";
 import { track } from "@/lib/analytics";
 // Share links: a site can have several, each with its own policy, expiry, people list and view log, and each can be revoked on its own.
 //
@@ -99,14 +100,14 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/sites/${slug}/shares`, { cache: "no-store" });
+      const res = await appFetch(`/api/sites/${slug}/shares`, { cache: "no-store" });
       const body: unknown = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(errorText(body, t("Failed to load share links")));
       const list = readShares(body);
       setAsOf(Date.now());
       setShares(list);
       window.dispatchEvent(new CustomEvent("artifact:shares-changed", { detail: { slug } }));
-      const versionResponse = await fetch(`/api/sites/${slug}/versions`, {cache:"no-store"});
+      const versionResponse = await appFetch(`/api/sites/${slug}/versions`, {cache:"no-store"});
       if (versionResponse.ok) setVersions((await versionResponse.json()).versions);
       // The people list comes with the list response (every "people" share carries its grants); there is no separate GET to pull.
       setGrants(Object.fromEntries(list.map((s) => [s.id, readListedGrants(s)])));
@@ -130,7 +131,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sites/${slug}/shares`, {
+      const res = await appFetch(`/api/sites/${slug}/shares`, {
         method: "POST",
         headers: writeHeaders(),
         // expiresInDays, not a timestamp — with the wrong field name the API does not complain, it just treats the expiry as unset.
@@ -167,7 +168,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
   }
 
   async function putGrant(shareId: string, person: PickedPerson): Promise<{ pending: boolean }> {
-    const res = await fetch(`/api/sites/${slug}/shares/${shareId}/grants`, {
+    const res = await appFetch(`/api/sites/${slug}/shares/${shareId}/grants`, {
       method: "POST",
       headers: writeHeaders(),
       body: JSON.stringify(person.userId ? { userId: person.userId } : { email: person.email }),
@@ -201,7 +202,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
     setSaving(true);
     try {
       // Persist first, then update local state: the other way round produces undiagnosable divergence like "the UI says 30 days, the server still says forever".
-      const res = await fetch(`/api/sites/${slug}/shares/${share.id}`, {
+      const res = await appFetch(`/api/sites/${slug}/shares/${share.id}`, {
         method: "PATCH", headers: writeHeaders(), body: JSON.stringify({ ...patch, expectedRevision: share.revision }),
       });
       const body: unknown = await res.json().catch(() => ({}));
@@ -235,7 +236,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
     setSaving(true);
     try {
     setError(null);
-    const res = await fetch(`/api/sites/${slug}/shares/${share.id}`, { method: "DELETE", headers: writeHeaders() });
+    const res = await appFetch(`/api/sites/${slug}/shares/${share.id}`, { method: "DELETE", headers: writeHeaders() });
     if (!res.ok) {
       setError(errorText(await res.json().catch(() => ({})), t("Failed to revoke")));
       return;
@@ -297,7 +298,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
 
                 {url ? (
                   <div className="copy-field">
-                    <a className="copy-field-value" href={url} title={url} target="_blank" rel="noopener noreferrer">{url}</a>
+                    <a className="copy-field-value" href={appPath(url)} title={url} target="_blank" rel="noopener noreferrer">{url}</a>
                     <CopyButton value={url} label={t("Copy the link for {label}", { label: linkName(s) })} />
                   </div>
                 ) : (
@@ -306,7 +307,7 @@ export default function ShareLinks({ slug, visibility, onRequestPrivate, onDirty
                 {state === "live" && s.mode !== "view" && url && (
                   <p className="share-hint">
                     {t("This link has its own discussion. Comments from the main discussion and other links are not included.")} {" "}
-                    <a href={shareDiscussionUrl(url)} target="_blank" rel="noopener noreferrer">{t("Open discussion")}</a>
+                    <a href={appPath(shareDiscussionUrl(url))} target="_blank" rel="noopener noreferrer">{t("Open discussion")}</a>
                   </p>
                 )}
                 {/* The passcode issued on a tier switch — likewise shown only this once. */}

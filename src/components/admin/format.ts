@@ -1,3 +1,4 @@
+import { appFetch } from "@/lib/app-path";
 // Small display helpers for the administration console (client side).
 import type { Locale } from "@/lib/i18n";
 
@@ -23,7 +24,7 @@ export function formatWhen(ts: number | null, locale: Locale): string {
  * a script cannot set it), so nothing is added here; a non-browser caller would have to send it.
  */
 export async function adminFetch<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
-  const res = await fetch(path, {
+  const res = await appFetch(path, {
     method: init.method ?? "GET",
     headers: init.body !== undefined ? { "content-type": "application/json" } : {},
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,

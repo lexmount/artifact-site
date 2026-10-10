@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch, appPath } from "@/lib/app-path";
 // The "which version to edit from" selection step before entering the editor.
 //
 // Only appears when the site really has several versions (see PICKER_MIN_VERSIONS in lib/edit-base)
@@ -64,7 +65,7 @@ export default function VersionPicker({ slug, title, kind, versions, currentVers
     setForking(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sites/${slug}/fork`, { method: "POST" });
+      const res = await appFetch(`/api/sites/${slug}/fork`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || t("Failed to save a copy"));
       if (data.editToken) rememberEditToken(data.slug, data.editToken);
@@ -141,7 +142,7 @@ export default function VersionPicker({ slug, title, kind, versions, currentVers
                       </p>
                     )}
                     <div className="ver-row-actions">
-                      <a className="btn sm ghost" href={`/api/preview/${slug}/?v=${v.id}`} target="_blank" rel="noreferrer">
+                      <a className="btn sm ghost" href={appPath(`/api/preview/${slug}/?v=${v.id}`)} target="_blank" rel="noreferrer">
                         <Eye size={13} /> {t("Preview this version")}
                       </a>
                       <button type="button" className="btn sm" disabled={!usable} onClick={() => edit(v.id)}>

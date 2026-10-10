@@ -1,4 +1,5 @@
 "use client";
+import { appFetch } from "@/lib/app-path";
 import { useState } from "react";
 import { useT } from "@/components/locale-provider";
 
@@ -7,7 +8,7 @@ export default function TokenCreate({ onCreated }: { onCreated: (token: string) 
   return <form className="connection-token-form" onSubmit={async (event) => {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      const response = await fetch("/api/me/tokens", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
+      const response = await appFetch("/api/me/tokens", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
       const result = await response.json(); if (!response.ok) throw new Error(result.error);
       onCreated(result.token); setName("");
     } catch (error) { setError(error instanceof Error ? error.message : t("Network error. Try again later.")); }

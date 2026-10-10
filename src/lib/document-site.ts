@@ -1,3 +1,4 @@
+import { appBasePath } from "@/lib/app-path";
 // Document sites — a single uploaded pdf/office file becomes a normal folder-shaped version:
 //
 //   index.html            generated wrapper (viewer or download card, decided AT BUILD TIME)
@@ -271,7 +272,7 @@ window.cancelAnimationFrame = (id) => { if (id) nativeCancelRaf(id); };
 const boot = async () => {
   // Vendored on the PLATFORM origin with ACAO — the sandbox puts this page in an opaque origin,
   // so the module import and every fetch below are cross-origin and need that header.
-  const lib = await import("/vendor/pdfjs/pdf.min.mjs");
+  const lib = await import("${appBasePath()}/vendor/pdfjs/pdf.min.mjs");
   // Worker strategy, probed rather than assumed, because the sandboxed iframe breaks each naive
   // path differently: a platform-URL Worker is cross-origin (throws); a MODULE worker from a
   // blob: URL dies asynchronously in sandboxed iframes (no exception — the handshake just hangs);
@@ -292,14 +293,14 @@ const boot = async () => {
   });
   let workerBlobUrl = null;
   if (blobWorkersViable) {
-    const workerResponse = await fetch("/vendor/pdfjs/pdf.worker.min.mjs");
+    const workerResponse = await fetch("${appBasePath()}/vendor/pdfjs/pdf.worker.min.mjs");
     if (!workerResponse.ok) throw new Error("worker fetch " + workerResponse.status);
     const workerBlob = new Blob([await workerResponse.text()], { type: "text/javascript" });
     workerBlobUrl = URL.createObjectURL(workerBlob);
     lib.GlobalWorkerOptions.workerPort = new Worker(workerBlobUrl, { type: "module" });
     beacon("worker", "dedicated");
   } else {
-    lib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.mjs";
+    lib.GlobalWorkerOptions.workerSrc = "${appBasePath()}/vendor/pdfjs/pdf.worker.min.mjs";
     beacon("worker", "fake");
   }
   // PDF.js resolves a relative url against window.location, NOT against <base> — and the preview
@@ -309,13 +310,13 @@ const boot = async () => {
   // always reported this number; nothing used to listen to it.
   const task = lib.getDocument({
     url: new URL(cfg.file, document.baseURI).href,
-    cMapUrl: "/vendor/pdfjs/cmaps/",
+    cMapUrl: "${appBasePath()}/vendor/pdfjs/cmaps/",
     cMapPacked: true,
-    standardFontDataUrl: "/vendor/pdfjs/standard_fonts/",
+    standardFontDataUrl: "${appBasePath()}/vendor/pdfjs/standard_fonts/",
     // Without these two, rendering an ICC-tagged PDF (LibreOffice output — i.e. every converted
     // office doc) stalls forever: v6 loads color-management/image-codec wasm on demand.
-    wasmUrl: "/vendor/pdfjs/wasm/",
-    iccUrl: "/vendor/pdfjs/iccs/",
+    wasmUrl: "${appBasePath()}/vendor/pdfjs/wasm/",
+    iccUrl: "${appBasePath()}/vendor/pdfjs/iccs/",
   });
   task.onProgress = (p) => {
     if (!p || !p.total) return;

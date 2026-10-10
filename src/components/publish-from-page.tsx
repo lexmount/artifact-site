@@ -1,4 +1,5 @@
 "use client";
+import { appFetch } from "@/lib/app-path";
 import { track, analyticsRequest } from "@/lib/analytics";
 
 // "Publish the page I am looking at" — the landing page for the bookmarklet.
@@ -182,7 +183,7 @@ export default function PublishFromPage() {
       body.set("mode", "paste");
       body.set("html", page.html);
       if (title.trim()) body.set("title", title.trim());
-      const res = await analyticsRequest("publish", () => fetch("/api/sites", { method: "POST", body }));
+      const res = await analyticsRequest("publish", () => appFetch("/api/sites", { method: "POST", body }));
       const data = (await res.json().catch(() => ({}))) as { slug?: string; error?: string };
       if (!res.ok || !data.slug) throw new Error(data.error || t("Publish failed"));
       track("artifact_publish_success", { upload_method: "inline" });

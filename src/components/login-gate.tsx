@@ -1,5 +1,6 @@
 "use client";
 
+import { appPath } from "@/lib/app-path";
 // The dialog shown when someone reaches for an action they are not signed in for.
 //
 // It is deliberately NOT shown on arrival. Reading is anonymous by product promise (PRODUCT.md:
@@ -109,7 +110,7 @@ export default function LoginGate({
         <p className="gate-note">{t("Signing in does not claim anonymous sites. Claim them explicitly in Workspaces using the browser that created them.")}</p>
 
         <div className="gate-actions">
-          <a ref={primary} className="btn solid" href={loginHref}>
+          <a ref={primary} className="btn solid" href={appPath(loginHref)}>
             <LogIn size={14} /> {t("Sign in with your company account")}
           </a>
           <button type="button" className="btn ghost" onClick={close}>{t("Keep browsing")}</button>

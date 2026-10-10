@@ -1,5 +1,6 @@
 "use client";
 
+import { appFetch } from "@/lib/app-path";
 // Where the "My sites" folder shelf lives, chosen by sign-in state (issue #35):
 //   · signed out (or no IdP)  → the browser's localStorage, exactly as before
 //   · signed in               → the account, through /api/me/folders — the same shelf on every device
@@ -32,7 +33,7 @@ export interface Shelf {
 
 async function call(path: string, init: RequestInit): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
   try {
-    const res = await fetch(path, { ...init, headers: { "content-type": "application/json", ...(init.headers ?? {}) } });
+    const res = await appFetch(path, { ...init, headers: { "content-type": "application/json", ...(init.headers ?? {}) } });
     const body = await res.json().catch(() => null);
     if (!res.ok) return { ok: false, error: (body as { error?: string } | null)?.error ?? `HTTP ${res.status}` };
     return { ok: true, body };

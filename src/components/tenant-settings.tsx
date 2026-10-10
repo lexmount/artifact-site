@@ -1,4 +1,5 @@
 "use client";
+import { appFetch } from "@/lib/app-path";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AppShell from "@/components/app-shell";
@@ -38,7 +39,7 @@ export default function TenantSettings() {
   const [adminId, setAdminId] = useState("");
   const [anonymousCount, setAnonymousCount] = useState(0);
   async function call(path: string, body?: unknown, method = "PUT") {
-    const res = await fetch(path, {
+    const res = await appFetch(path, {
       method: body === undefined ? "GET" : method,
       headers: { "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),

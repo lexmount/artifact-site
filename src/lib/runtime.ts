@@ -1,3 +1,6 @@
+import { parsePublicUrl } from "@/lib/public-base";
+import { validateBasePath } from "@/lib/base-path";
+import { appBasePath } from "@/lib/app-path";
 // Boot-time picture of the deployment: which backends are in effect and whether the combination
 // can work at all. Two consumers — instrumentation.ts prints it once per process and refuses to
 // start on errors; `make doctor` reproduces the same rules in shell before a container is even
@@ -74,6 +77,16 @@ export function describeRuntime(): RuntimeReport {
   const publicUrl = config.publicUrl;
   lines.push(`public url: ${publicUrl || "(unset — derived from each request's Host)"}`);
   if (!publicUrl) warnings.push("ARTIFACT_PUBLIC_URL is not set: behind a reverse proxy, the OIDC callback, CSRF checks and the addresses in /for-agents.md are all derived from the request Host.");
+
+  try {
+    const mount = appBasePath();
+    validateBasePath(mount);
+    if (publicUrl) {
+      const path = new URL(parsePublicUrl(publicUrl)).pathname;
+      if ((path === "/" ? "" : path) !== mount) errors.push("ARTIFACT_PUBLIC_URL path must match this image's build-time ARTIFACT_BASE_PATH; rebuild the image to change its path.");
+    } else if (mount) errors.push("Subpath deployments require ARTIFACT_PUBLIC_URL including the build-time path.");
+    lines.push(`build mount: ${mount || "/"}`);
+  } catch (error) { errors.push((error as Error).message); }
 
   const policy = effective.createPolicy;
   lines.push(`create policy: ${policy}; anonymous creators: ${effective.anonymousSites}; default visibility: ${effective.defaultVisibility}; ownership enforced: yes (policy values may be overridden from the console; see /admin/settings)`);

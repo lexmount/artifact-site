@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 // Header auth affordance. Renders NOTHING while no IdP is configured — an unconfigured deployment
 // should be indistinguishable from the product before identity existed, not show a dead button.
 //
@@ -11,9 +12,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Bell, Check, ChevronDown, ChevronRight, Globe2, LogIn, LogOut, ShieldCheck, User2 } from "lucide-react";
-import { loginHref, resetAuthCache, useAuth } from "@/lib/use-auth";
+import { loginHref, useAuth } from "@/lib/use-auth";
 import { setLocaleCookie, useLocale, useT } from "@/components/locale-provider";
 import { useAuthConfig } from "@/components/auth-config-provider";
+
+import { logoutAuth, refreshAuth } from "@/lib/auth-store";
 
 const AUTH_ARRIVAL_STATE_KEY = "artifact-site:auth-arrival-state";
 
@@ -52,9 +55,10 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
   const t = useT();
   const locale = useLocale();
   const path = usePathname();
-  const { user, oidcEnabled, isAdmin, loading } = useAuth();
+  const { user, oidcEnabled, isAdmin, loading, error } = useAuth();
   const { enabled: configured, hasSessionHint } = useAuthConfig();
   const [busy, setBusy] = useState(false);
+  const [logoutError, setLogoutError] = useState(false);
   const [open, setOpen] = useState(false);
   const [languageOpen, setLanguageOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -93,12 +97,14 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
 
   if (loading) {
     if (path === "/" && configured && !hasSessionHint && variant === "avatar") {
-      return <span className="auth-slot is-ready is-signed-out"><a className="primary nav-signin" href={loginHref()}><LogIn size={15} aria-hidden="true" /> {t("Sign in / Sign up")}</a></span>;
+      return <span className="auth-slot is-ready is-signed-out"><a className="primary nav-signin" href={appPath(loginHref())}><LogIn size={15} aria-hidden="true" /> {t("Sign in / Sign up")}</a></span>;
     }
     return variant === "avatar"
       ? <span className="auth-slot is-loading" role="status" aria-label={t("Checking account")}><span className="auth-placeholder" /></span>
       : null;
   }
+
+  if (error && !user) return <button type="button" className="btn" onClick={() => void refreshAuth()}>{t("Retry account check")}</button>;
 
   // Keep the server-confirmed sign-in entry usable even if account detection fails offline.
   if (!oidcEnabled && !configured) return variant === "avatar" ? <span className="auth-slot is-empty" aria-hidden="true" /> : null;
@@ -107,11 +113,11 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
     return variant === "avatar" ? (
       <AuthArrival key="signed-out" path={path} current="signed-out">{(animateArrival) => (
         <span className={`auth-slot is-ready is-signed-out${animateArrival ? " should-animate" : ""}`}>
-          <a className={`primary nav-signin${animateArrival ? " auth-arrival" : ""}`} href={loginHref()}><LogIn size={15} aria-hidden="true" /> {t("Sign in / Sign up")}</a>
+          <a className={`primary nav-signin${animateArrival ? " auth-arrival" : ""}`} href={appPath(loginHref())}><LogIn size={15} aria-hidden="true" /> {t("Sign in / Sign up")}</a>
         </span>
       )}</AuthArrival>
     ) : (
-      <a className="btn" href={loginHref()}>
+      <a className="btn" href={appPath(loginHref())}>
         <LogIn size={14} /> {t("Sign in / Sign up")}
       </a>
     );
@@ -164,6 +170,7 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
             </Link>
           )}
           <hr className="hairline" />
+          {logoutError && <p role="alert">{t("Could not sign out. Please try again.")}</p>}
           <button
             type="button"
             className="auth-menu-item"
@@ -171,13 +178,16 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
             disabled={busy}
             onClick={async () => {
               setBusy(true);
-              // Origin is checked server-side on every cookie-authenticated write, including this one.
-              const response = await fetch("/api/auth/logout", { method: "POST", headers: { origin: window.location.origin } })
-                .catch(() => null);
-              // Clear gtag's identity before unload events, not just the in-memory app state.
-              if (response?.ok) setAnalyticsUser(null);
-              resetAuthCache();
-              window.location.reload();
+              setLogoutError(false);
+              try {
+                await logoutAuth();
+                setAnalyticsUser(null);
+                // Discard cached authenticated pages and avoid restarting OIDC on a protected URL.
+                window.location.replace(new URL(appPath("/"), window.location.origin).href);
+              } catch {
+                setLogoutError(true);
+                setBusy(false);
+              }
             }}
           >
             <LogOut size={14} /> {t("Sign out")}

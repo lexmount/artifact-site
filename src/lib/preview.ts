@@ -1,3 +1,4 @@
+import { appPath } from "@/lib/app-path";
 // Serve — the read path for GET /api/preview/:slug/:path*, the vetted security core.
 // Guards (all preserved from the legacy audit): safeRelativePath, resolveInside, dotfile-segment
 // block, symlink lstat reject, realpath containment. HTML gets <base> + a storage shim + the
@@ -81,9 +82,9 @@ function selectionReporter(targetOrigin: string): string {
 }
 
 /** The selection reporter's fragment for this deployment, or "" when no assistant is configured. */
-function selectionBootstrap(): string {
+function selectionBootstrap(targetOrigin: string): string {
   if (!config.assistantUrl) return "";
-  return selectionReporter(config.publicUrl || "*");
+  return selectionReporter(targetOrigin);
 }
 
 /**
@@ -102,9 +103,9 @@ function injectAfterHead(html: string, fragment: string): string {
   return `${fragment}${html}`;
 }
 
-export function injectPreviewBootstrap(html: string, baseHref: string, filePath = "index.html", documentMode = false): string {
-  const base = `<base href="${escapeAttribute(baseHref)}">`;
-  return injectAfterHead(html, `${base}${storageShim}${previewNavigationBootstrap()}${selectionBootstrap()}${commentPreviewBootstrap(filePath, config.publicUrl || "*", documentMode)}`);
+export function injectPreviewBootstrap(html: string, baseHref: string, filePath = "index.html", documentMode = false, targetOrigin = config.publicUrl ? new URL(config.publicUrl).origin : "*"): string {
+  const base = `<base href="${escapeAttribute(appPath(baseHref))}">`;
+  return injectAfterHead(html, `${base}${storageShim}${previewNavigationBootstrap()}${selectionBootstrap(targetOrigin)}${commentPreviewBootstrap(filePath, targetOrigin, documentMode)}`);
 }
 
 /**
@@ -115,7 +116,7 @@ export function injectPreviewBootstrap(html: string, baseHref: string, filePath 
  * carries the same slug prefix as a normal preview so the page's relative assets still resolve.
  */
 export function injectVisualEditor(html: string, baseHref: string, nonce: string): string {
-  const base = `<base href="${escapeAttribute(baseHref)}">`;
+  const base = `<base href="${escapeAttribute(appPath(baseHref))}">`;
   const editor = `<script ${EDITOR_MARK}>${editorBootstrapScript(nonce)}</script>`;
   return injectAfterHead(html, `${base}${storageShim}${previewNavigationBootstrap()}${editor}`);
 }
@@ -309,6 +310,7 @@ export async function servePreviewFile(
   imageViewer = false,
   pdfNavigation = false,
   download = false,
+  targetOrigin = config.publicUrl ? new URL(config.publicUrl).origin : "*",
 ): Promise<PreviewResponse> {
   const site = await getSiteBySlug(slug);
   if (!site || site.deletedAt) return jsonResponse(404, { error: "site not found" });
@@ -335,7 +337,7 @@ export async function servePreviewFile(
     if (kind !== "file") return jsonResponse(404, { error: "file not found" });
     const extension = path.extname(target).toLowerCase();
     if (pdfNavigation && extension === ".pdf" && !download && !(site.kind === "document" && target.startsWith("original/"))) {
-      return { status: 200, body: injectPreviewBootstrap(bundledPdfViewer(target), baseHref, target, true), headers: {
+      return { status: 200, body: injectPreviewBootstrap(bundledPdfViewer(target), baseHref, target, true, targetOrigin), headers: {
         "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store",
         "content-security-policy": composePreviewCsp(config.cspConnectSrc), "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...PREVIEW_CORS_HEADER,
       } };
@@ -343,7 +345,7 @@ export async function servePreviewFile(
     if (imageViewer && /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(extension)) {
       const imagePath = target.split("/").map(encodeURIComponent).join("/");
       const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f5f1}img{max-width:100%;max-height:100vh;object-fit:contain}</style></head><body><img src="${escapeAttribute(imagePath)}" alt=""></body></html>`;
-      return { status: 200, body: injectPreviewBootstrap(html, baseHref, target), headers: {
+      return { status: 200, body: injectPreviewBootstrap(html, baseHref, target, false, targetOrigin), headers: {
         "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store",
         "content-security-policy": composePreviewCsp(config.cspConnectSrc), "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...PREVIEW_CORS_HEADER,
       } };
@@ -413,7 +415,7 @@ export async function servePreviewFile(
     if (isHtml && site.kind === "document" && target === version.entry) {
       html = refreshDocumentWrapper(html) ?? html;
     }
-    const body = isHtml ? injectPreviewBootstrap(html, baseHref, target, site.kind === "document" && target === version.entry) : raw;
+    const body = isHtml ? injectPreviewBootstrap(html, baseHref, target, site.kind === "document" && target === version.entry, targetOrigin) : raw;
     const headers: Record<string, string> = {
       "content-type": contentTypes[extension] || "application/octet-stream",
       "cache-control": isHtml ? "no-store" : "public, max-age=60",

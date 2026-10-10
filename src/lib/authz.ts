@@ -63,7 +63,7 @@ export function requestFromHeaders(bag: HeaderBag, path: string, editToken?: str
   // reason in the docblock above: this rebuilds what production (TLS) would have seen.
   const proto = forwardedProto(bag);
   const headers = new Headers();
-  for (const name of ["cookie", "authorization", "x-forwarded-proto", "x-artifact-share", "x-management-reason", "x-management-reason-encoding"]) {
+  for (const name of ["host", "cookie", "authorization", "x-forwarded-proto", "x-artifact-share", "x-management-reason", "x-management-reason-encoding"]) {
     const value = bag.get(name);
     if (value) headers.set(name, value);
   }

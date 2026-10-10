@@ -1,5 +1,6 @@
 "use client";
 
+import { appPath } from "@/lib/app-path";
 // The application shell: one horizontal header — wordmark, primary navigation, then the quiet
 // language control, the source on GitHub and the account — and the page. Black on near-white, one hairline under the header, nothing else. The
 // viewer (/s, /v) keeps its own full-screen chrome because there the artifact is the page.
@@ -58,7 +59,7 @@ function ShellContent({ children, section }: { children: ReactNode; section?: "a
         <Link className="brand" href="/" aria-label={t("artifact-site home")}>
           {/* The wordmark is a bitmap for now (the designer's), at 2× the 205×68 slot. */}
           {/* eslint-disable-next-line @next/next/no-img-element -- a static wordmark, served as is */}
-          <img src="/brand/logo.png" alt="artifact-site" width={205} height={68} />
+          <img src={appPath("/brand/logo.png")} alt="artifact-site" width={205} height={68} />
         </Link>
         {section === "admin" ? (
           <>
@@ -77,7 +78,7 @@ function ShellContent({ children, section }: { children: ReactNode; section?: "a
         <div className="header-actions">
           <LanguageMenu />
           {/* Source, notifications and identity form one compact utility group. */}
-          <a className="github-link" href={REPO_URL} target="_blank" rel="noopener noreferrer" aria-label={t("Source code on GitHub")} title={t("Source code on GitHub")}>
+          <a className="github-link" href={appPath(REPO_URL)} target="_blank" rel="noopener noreferrer" aria-label={t("Source code on GitHub")} title={t("Source code on GitHub")}>
             <GithubMark />
           </a>
           <NotificationBell />

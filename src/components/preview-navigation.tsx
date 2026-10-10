@@ -1,5 +1,6 @@
 "use client";
 
+import { appPath } from "@/lib/app-path";
 import { useEffect, useState, type RefObject } from "react";
 import ConfirmDialog from "@/components/confirm-dialog";
 import { useT } from "@/components/locale-provider";
@@ -28,5 +29,5 @@ export default function PreviewNavigation({ frameRef }: { frameRef: RefObject<HT
   return <ConfirmDialog title={t("Return to {destination}?", { destination: label })}
     body={t("Open the platform outside this preview using your current browser sign-in.")}
     confirmLabel={t("Continue")} onClose={() => setDestination(null)}
-    onConfirm={async () => { window.location.assign(destination); }} />;
+    onConfirm={async () => { window.location.assign(appPath(destination)); }} />;
 }

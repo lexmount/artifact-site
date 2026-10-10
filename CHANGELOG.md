@@ -5,6 +5,19 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Fix failed sign-outs silently reloading, stale browser account state, and sign-in celebrations without a confirmed session; preserve subpath deployment URLs and invalidate account caches across tabs.
+
+### Added
+
+- A fixed `/artifact-site` Dockerfile for platforms that cannot pass build arguments;
+  the standard Dockerfile continues to default to a root deployment.
+
+- Configurable build-time URL paths for single-address deployments, including browser APIs,
+  previews, share links, login, CLI and MCP OAuth. Existing root deployments keep their defaults.
+  Document gateway redirects and discovery rewrites for moving to a new canonical address;
+  users changing addresses sign in and authorize clients again. Reserved application prefixes
+  are rejected before deployment; publish recovery links use the current component's mount.
+
 ### Changed
 
 - Cloud-version links in the README and all translations now point to the current hosted address.

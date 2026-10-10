@@ -1,4 +1,5 @@
 "use client";
+import { appFetch } from "@/lib/app-path";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/components/locale-provider";
 import { managementReasonHeaders } from "@/lib/management-reason";
@@ -47,7 +48,7 @@ export async function authorizationFetch<T>(
   method = "GET",
   body?: unknown,
 ): Promise<T> {
-  const response = await fetch(path, {
+  const response = await appFetch(path, {
     method,
     headers: {
       ...managementReasonHeaders(reason),

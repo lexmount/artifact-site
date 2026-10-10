@@ -9,9 +9,9 @@
 // presents on /mcp. The simplest correct home for that server is next to the resource it protects:
 // same accounts, same database, same immediate revocation as sessions and publish tokens.
 import { createHash } from "node:crypto";
-import { config } from "@/lib/config";
+import { requestBase, baseFromHeaders } from "@/lib/public-base";
 import { safeEqual } from "@/lib/crypto";
-import { forwardedProto, type HeaderBag } from "@/lib/http";
+import { type HeaderBag } from "@/lib/http";
 import { readOnlyMcpTools } from "@/lib/mcp-tools";
 import { OAUTH_ACCESS_TOKEN_PREFIX } from "@/lib/publish-token";
 import { policy } from "@/lib/settings";
@@ -95,40 +95,9 @@ export function verifyPkce(verifier: string, challenge: string): boolean {
 
 // --- issuer and resource ---------------------------------------------------------------------
 
-// A hostname, optionally with a port — nothing else (the header is attacker-supplied on an exposed app port).
-const HOST_RE = /^[a-zA-Z0-9.-]+(:\d{1,5})?$/;
-
-/**
- * The one rule behind both issuer helpers: ARTIFACT_PUBLIC_URL when set (always, behind a proxy);
- * otherwise the Host the request carried, with the scheme the proxy recorded. The two helpers MUST
- * agree — the consent page stores the resource a token is bound to, and every route compares
- * against it — so neither may add a fallback the other lacks.
- */
-function issuerFromParts(host: string | null | undefined, proto: string): string | null {
-  if (config.publicUrl) return config.publicUrl;
-  if (!host || !HOST_RE.test(host)) return null;
-  return `${proto === "https" ? "https" : "http"}://${host}`;
-}
-
-/**
- * The authorization server's identity, and the origin every token is bound to, for a route
- * handler. Without ARTIFACT_PUBLIC_URL the address this request arrived on, so a local checkout
- * can be exercised without configuration. Next itself sets `x-forwarded-proto` on every request
- * it serves, so the scheme here matches what the consent page sees (issuerFromHeaders).
- */
-export function issuerFor(request: Request): string {
-  const url = new URL(request.url);
-  return issuerFromParts(request.headers.get("host"), forwardedProto(request.headers) || url.protocol.slice(0, -1)) ?? url.origin;
-}
-
-/**
- * The same answer for a server component, which has headers but no Request. Null only when
- * ARTIFACT_PUBLIC_URL is unset AND the request carries no usable Host — the page then says so
- * instead of guessing a scheme that /mcp would not agree with.
- */
-export function issuerFromHeaders(bag: HeaderBag): string | null {
-  return issuerFromParts(bag.get("host"), forwardedProto(bag) || "http");
-}
+/** The canonical address owns discovery, authorization and its token audience. */
+export function issuerFor(request: Request): string { return requestBase(request); }
+export function issuerFromHeaders(bag: HeaderBag): string | null { return baseFromHeaders(bag); }
 
 /** The canonical resource identifier of the MCP server (RFC 8707 / RFC 9728): the endpoint itself. */
 export function canonicalResource(issuer: string): string {

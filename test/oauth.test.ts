@@ -36,7 +36,7 @@ import { updateSettings } from "@/lib/settings";
 import { mintSession } from "@/lib/session";
 import type { Session } from "@/lib/types";
 
-const origin = "http://test.local";
+let origin = "http://test.local";
 const CHATGPT_CLIENT = "https://chatgpt.com/oauth/rfZCxg7PlqRp/client.json";
 const CHATGPT_REDIRECT = "https://chatgpt.com/connector/oauth/rfZCxg7PlqRp";
 const chatgptDocument = {
@@ -65,6 +65,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  origin = "http://test.local";
+  delete process.env.NEXT_PUBLIC_ARTIFACT_BASE_PATH;
   vi.useRealTimers();
   for (const c of clients.splice(0)) await c.close().catch(() => {});
   await closeDbForTests();
@@ -79,7 +81,10 @@ afterEach(async () => {
 /** This deployment, as one fetch: every address the SDK's OAuth client and MCP transport will ask for. */
 async function dispatch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const request = new Request(input, init);
-  const path = new URL(request.url).pathname;
+  const rawPath = new URL(request.url).pathname;
+  const mount = process.env.NEXT_PUBLIC_ARTIFACT_BASE_PATH || "";
+  const path = mount && rawPath.startsWith(mount + "/") ? rawPath.slice(mount.length) :
+    mount && rawPath.startsWith("/.well-known/") ? rawPath.replace(mount, "") : rawPath;
   if (path === "/mcp") return request.method === "POST" ? mcp(request) : mcpGet();
   if (path === "/.well-known/oauth-protected-resource/mcp") return protectedResourceMcp(request);
   if (path === "/.well-known/oauth-protected-resource") return protectedResource(request);
@@ -127,10 +132,10 @@ async function person(subject: string): Promise<Browser> {
 async function consent(browser: Browser, authorizeUrl: URL, decision: "allow" | "deny" = "allow"): Promise<URL> {
   // The page derives the issuer the same way the routes do: the configured public address, else the
   // request's — and a real browser's form post carries that address as its Origin.
-  const issuer = process.env.ARTIFACT_PUBLIC_URL || origin;
+  const issuer = issuerFor(new Request(authorizeUrl));
   const outcome = await prepareAuthorization(authorizeUrl.searchParams, browser.session, issuer);
   if (outcome.kind !== "consent") throw new Error(`expected the consent page, got ${JSON.stringify(outcome)}`);
-  const res = await decisionEndpoint(new Request(`${origin}/oauth/decision`, { method: "POST", headers: { ...browser.headers, origin: issuer }, body: new URLSearchParams({ request: outcome.requestId, decision }) }));
+  const res = await decisionEndpoint(new Request(`${origin}/oauth/decision`, { method: "POST", headers: { ...browser.headers, origin: new URL(issuer).origin }, body: new URLSearchParams({ request: outcome.requestId, decision }) }));
   expect(res.status).toBe(303);
   return new URL(res.headers.get("location")!);
 }
@@ -611,5 +616,51 @@ describe("console settings", () => {
     await updateSettings({ oauthClientHosts: null }, null);
     expect((await ask(CLAUDE_CLIENT, CLAUDE_REDIRECT)).kind).toBe("consent");
     expect(await ask(CHATGPT_CLIENT, CHATGPT_REDIRECT)).toMatchObject({ kind: "invalid", title: "Unknown application" });
+  });
+});
+
+
+describe("root to subpath migration", () => {
+  const A = "http://old.local", B = "http://new.local/artifact-site";
+  function entry(base: string) {
+    origin = base;
+    process.env.ARTIFACT_PUBLIC_URL = base;
+    process.env.NEXT_PUBLIC_ARTIFACT_BASE_PATH = new URL(base).pathname.replace(/\/$/, "");
+  }
+  it("reauthorizes SDK clients at B after moving the canonical address from A", async () => {
+    process.env.ARTIFACT_PUBLIC_URL = B;
+    entry(A);
+    const browserA = await person("migration");
+    const a = await connectThroughOauth(browserA, new HostProvider(CHATGPT_REDIRECT, CHATGPT_CLIENT));
+    expect((await call(a.client, "connection")).data.baseUrl).toBe(A);
+    entry(B);
+    const browserB = {...browserA, headers:{...browserA.headers,origin:new URL(B).origin}};
+    const b = await connectThroughOauth(browserB, new HostProvider(CHATGPT_REDIRECT, CHATGPT_CLIENT));
+    expect((await call(b.client, "connection")).data.baseUrl).toBe(B);
+    expect((await ping(a.tokens.access_token)).status).toBe(401);
+    // A sibling component can retain its own canonical address on the same database.
+    // Authorizing B must not revoke A's independent grant.
+    entry(A);
+    expect((await ping(a.tokens.access_token)).status).toBe(200);
+    entry(B);
+    const refreshed = await exchange({grant_type:"refresh_token", refresh_token:b.tokens.refresh_token!,client_id:CHATGPT_CLIENT,resource:`${B}/mcp`});
+    expect(refreshed.status).toBe(200);
+    expect((await ping(String(refreshed.body.access_token))).status).toBe(200);
+    expect(await (await authorizationServer(new Request(`${B}/.well-known/oauth-authorization-server`))).json()).toMatchObject({issuer:B,token_endpoint:`${B}/oauth/token`});
+  });
+  it("refuses another endpoint's code and refresh token even with no resource parameter", async () => {
+    process.env.ARTIFACT_PUBLIC_URL = B;
+    entry(A);
+    const browser = await person("bound"), v = verifier();
+    const code = await codeFor(browser,v);
+    const valid = await connectThroughOauth(browser, new HostProvider(CHATGPT_REDIRECT, CHATGPT_CLIENT));
+    entry(B);
+    const denied = await exchange({grant_type:"authorization_code",code,code_verifier:v,redirect_uri:CHATGPT_REDIRECT,client_id:CHATGPT_CLIENT});
+    expect(denied.body.error).toBe("invalid_grant");
+    const refresh = await exchange({grant_type:"refresh_token",refresh_token:valid.tokens.refresh_token!,client_id:CHATGPT_CLIENT});
+    expect(refresh.body.error).toBe("invalid_grant");
+    entry(A);
+    const stillValid = await exchange({grant_type:"refresh_token",refresh_token:valid.tokens.refresh_token!,client_id:CHATGPT_CLIENT});
+    expect(stillValid.status).toBe(200);
   });
 });

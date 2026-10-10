@@ -1,3 +1,4 @@
+import { appPath } from "@/lib/app-path";
 import { creationTenant } from "@/lib/rbac-access";
 // Verbs — the product's four actions over sites: create (upload), edit (new version),
 // list, delete. Thin orchestration over db (metadata) + store (files) + upload (parsing).
@@ -49,7 +50,7 @@ export async function claimSiteRecorded(siteId: string, ownerId: string, ctx: Au
 export const MAX_TITLE_LENGTH = 120;
 
 export function siteUrl(slug: string): string {
-  return `/s/${slug}`;
+  return appPath(`/s/${slug}`);
 }
 
 /** A Site as anyone may see it: every per-site secret removed. Named so callers can hold the

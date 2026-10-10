@@ -1,8 +1,9 @@
+"use client";
+import { appFetch } from "@/lib/app-path";
 // Connected applications — the account page's view of what reaches this account through OAuth
 // (ChatGPT, Claude and other MCP clients that signed in rather than pasting a token), and the
 // kill switch for each. Listing and disconnecting are browser-session-only, like publish tokens:
 // a leaked access token cannot hide its grant or shed its siblings.
-"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -27,7 +28,7 @@ export default function ConnectedAppsCard() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    fetch("/api/me/connections")
+    appFetch("/api/me/connections")
       .then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json()).error ?? t("Failed to load")))))
       .then((d: { connections: ConnectionRow[] }) => setRows(d.connections))
       .catch((e: Error) => setError(e.message));
@@ -41,7 +42,7 @@ export default function ConnectedAppsCard() {
     setBusyId(id);
     setError(null);
     try {
-      const res = await fetch(`/api/me/connections/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const res = await appFetch(`/api/me/connections/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setError(body.error ?? t("Failed to disconnect the application"));

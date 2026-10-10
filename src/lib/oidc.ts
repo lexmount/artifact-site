@@ -1,3 +1,4 @@
+import { appPath, localPath } from "@/lib/app-path";
 // OIDC relying party (authorization_code + PKCE). Endpoints come from the issuer's discovery
 // document, so switching IdP — or putting Feishu/WeCom behind the same one — is configuration.
 //
@@ -136,14 +137,15 @@ function buildFlowCookie(request: Request, value: string, maxAgeSec: number): st
  */
 export async function beginLogin(request: Request, rawReturnTo: string | null): Promise<{ url: string; cookie: string }> {
   const { doc } = await discover();
-  const flowId = randomBytes(32).toString("base64url");
+  const callback = redirectUri();
+  const flowId = `${randomBytes(32).toString("base64url")}.${createHash("sha256").update(callback).digest("hex")}`;
   const verifier = randomBytes(32).toString("base64url");
   const nonce = randomBytes(16).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
 
   await createOidcFlow({
     flowId, verifier, nonce,
-    returnTo: safeReturnTo(rawReturnTo),
+    returnTo: appPath(safeReturnTo(localPath(rawReturnTo || "/"))),
     expiresAt: Date.now() + FLOW_TTL_MS,
   });
 
@@ -183,6 +185,10 @@ export async function completeLogin(request: Request, code: string, state: strin
 
   // Constant-time, and length-checked first — this is the browser-binding check.
   if (!safeEqual(cookieFlow, state)) throw new OidcError("Sign-in state does not match; please sign in again");
+
+  // Bind the flow to the exact callback (origin AND mount) without changing stored rows.
+  const binding = createHash("sha256").update(redirectUri()).digest("hex");
+  if (!state.endsWith(`.${binding}`)) throw new OidcError("Sign-in callback does not match the login endpoint; please sign in again");
 
   // Atomic single-use: two replicas racing the same callback cannot both proceed.
   const flow = await consumeOidcFlow(state, Date.now());

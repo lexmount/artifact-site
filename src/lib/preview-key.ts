@@ -1,3 +1,4 @@
+import { appPath } from "@/lib/app-path";
 // Read credential for a private site's sub-resources -- carried in the URL path.
 //
 // [What this solves]
@@ -71,7 +72,7 @@ export function previewBaseHref(slug: string, key: string | null): string {
   const head = key
     ? `${encodeURIComponent(slug)}${PREVIEW_KEY_SEP}${key}`
     : encodeURIComponent(slug);
-  return `/api/preview/${head}/`;
+  return appPath(`/api/preview/${head}/`);
 }
 
 /** Version-scoped resource credential. Never accepted by write or comment APIs. */

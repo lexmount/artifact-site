@@ -1,4 +1,5 @@
 "use client";
+import { appFetch } from "@/lib/app-path";
 import { track, analyticsRequest } from "@/lib/analytics";
 
 // The product's front door: a large drag-and-drop zone that accepts a single .html, a whole
@@ -90,7 +91,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
     setQuota(null);
     setProgress({ done: 0, total: files.reduce((sum, f) => sum + f.file.size, 0) });
     try {
-      const opened = await analyticsRequest("publish", () => fetch("/api/uploads", {
+      const opened = await analyticsRequest("publish", () => appFetch("/api/uploads", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: title || undefined, official }),
       }));
@@ -100,7 +101,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
       let done = 0;
       for (const picked of files) {
         const path = picked.path.split("/").map(encodeURIComponent).join("/");
-        const res = await analyticsRequest("publish", () => fetch(`/api/uploads/${session.versionId}/files/${path}`, {
+        const res = await analyticsRequest("publish", () => appFetch(`/api/uploads/${session.versionId}/files/${path}`, {
           method: "PUT",
           // Use the File directly as the request body: the browser streams it instead of assembling a full copy in memory first.
           body: picked.file,
@@ -114,7 +115,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
         setProgress({ done, total: files.reduce((sum, f) => sum + f.file.size, 0) });
       }
 
-      const committed = await analyticsRequest("publish", () => fetch(`/api/uploads/${session.versionId}/commit`, {
+      const committed = await analyticsRequest("publish", () => appFetch(`/api/uploads/${session.versionId}/commit`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: title || undefined, official }),
       }));
@@ -139,7 +140,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
     setError(null);
     setQuota(null);
     try {
-      const res = await analyticsRequest("publish", () => fetch("/api/sites", { method: "POST", body }));
+      const res = await analyticsRequest("publish", () => appFetch("/api/sites", { method: "POST", body }));
       const data = await res.json().catch(() => ({}));
       if (!res.ok) fail(data, t("Publish failed ({status})", { status: res.status }));
       const slug: string | undefined = data.slug ?? data?.site?.slug;

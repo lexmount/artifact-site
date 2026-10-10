@@ -13,6 +13,7 @@ services:
       args:
         # Both default to the public upstreams; set them in .env on a host that has to build
         # through mirrors. Platform builds never pass them and keep the defaults.
+        ARTIFACT_BASE_PATH: ${ARTIFACT_BASE_PATH:-}
         NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
     container_name: artifact-site

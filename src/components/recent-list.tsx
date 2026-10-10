@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import ArtifactCover from "@/components/artifact-cover";
 import ProgressivePreview from "@/components/progressive-preview";
 
@@ -24,7 +25,7 @@ export default function RecentList({ shelf }: { shelf: RecentShelf }) {
   const { toast, flash } = useSiteActions(NO_TOKENS);
 
   async function copyRecentLink(href: string) {
-    const url = new URL(href, window.location.origin).href;
+    const url = new URL(appPath(href), window.location.origin).href;
     try { await navigator.clipboard.writeText(url); flash(t("Link copied")); }
     catch { flash(url); }
   }

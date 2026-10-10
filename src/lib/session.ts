@@ -1,3 +1,4 @@
+import { requestBase } from "@/lib/public-base";
 // Browser sessions. Stateful on purpose: "remove a collaborator" has to take effect immediately,
 // and a self-contained JWT cannot be un-issued. The row lives in Postgres, so any replica can
 // validate — and revoke — a cookie the moment a grant is withdrawn.
@@ -8,7 +9,6 @@
 import "server-only";
 import { SESSION_COOKIE_NAMES } from "@/lib/session-cookie";
 import { randomBytes } from "node:crypto";
-import { config } from "@/lib/config";
 import { safeEqual, sha256hex } from "@/lib/crypto";
 import { createSession, getPublishToken, getSession, revokeSession, touchPublishToken, touchSession } from "@/lib/db";
 import { isSecureRequest, readCookie } from "@/lib/http";
@@ -171,6 +171,5 @@ export function csrfSafe(request: Request): boolean {
 export function isSameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
   if (!origin || origin === "null") return false;
-  const expected = config.publicUrl || new URL(request.url).origin;
-  return safeEqual(origin, expected);
+  try { return safeEqual(origin, new URL(requestBase(request)).origin); } catch { return false; }
 }

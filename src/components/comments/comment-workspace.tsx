@@ -1,4 +1,5 @@
 "use client";
+import { appPath } from "@/lib/app-path";
 import { MentionPicker } from "./mention-picker";
 import { normalizedMentions,rebaseMentions,type CommentMention } from "@/lib/comments/mention-types";
 import { createCommentCadence, startVisiblePolling } from "./comment-polling";
@@ -1537,7 +1538,7 @@ function CommentWorkspaceSession(
                 <Maximize size={16} />
                 {t("Toggle fullscreen")}
               </button>
-              <a role="menuitem" className="menu-item" href={previewHref} target="_blank" rel="noreferrer">
+              <a role="menuitem" className="menu-item" href={appPath(previewHref)} target="_blank" rel="noreferrer">
                 <ExternalLink size={16} />
                 {t("Open in a new tab")}
               </a>
@@ -1780,9 +1781,9 @@ function CommentWorkspaceSession(
             <details className="comment-draft-recovery">
               <summary>{t("Saved drafts")}</summary>
               {Object.values(storedDrafts()).filter(visibleDraft).map(d => (
-                <a key={draftIdentity(d)} href={scope.entry.kind === "main"
+                <a key={draftIdentity(d)} href={appPath(scope.entry.kind === "main"
                   ? `/s/${encodeURIComponent(slug)}?version=${encodeURIComponent(d.scope.versionId)}&comments=all&draft=${encodeURIComponent(draftIdentity(d))}${d.threadId ? `#comment=${encodeURIComponent(d.threadId)}` : ""}`
-                  : `${window.location.pathname}${window.location.search}${d.threadId ? `#comment=${encodeURIComponent(d.threadId)}` : ""}`}
+                  : `${window.location.pathname}${window.location.search}${d.threadId ? `#comment=${encodeURIComponent(d.threadId)}` : ""}`)}
                   onClick={event => {
                     if (d.kind === "create" && d.anchor && d.scope.versionId === scope.versionId) {
                       event.preventDefault();

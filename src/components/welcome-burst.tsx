@@ -4,20 +4,26 @@
 //
 // The count arrives as ?welcome=<n> from the auth callback. It is a presentation hint only; the
 // component strips it from the URL immediately so a reload or a shared link cannot replay it.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles } from "lucide-react";
+import { refreshAuth } from "@/lib/auth-store";
+import { useAuth } from "@/lib/use-auth";
 import { useT } from "@/components/locale-provider";
 
 export default function WelcomeBurst() {
   const t = useT();
   const router = useRouter();
+  const { user, error } = useAuth();
   const [count, setCount] = useState<number | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const arrival = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     const url = new URL(window.location.href);
-    const raw = url.searchParams.get("welcome");
+    // Retain the hint across Strict Mode effect cleanup/replay after stripping the URL.
+    if (arrival.current === undefined) arrival.current = url.searchParams.get("welcome");
+    const raw = arrival.current;
     if (raw == null) return;
 
     const n = Number.parseInt(raw, 10);
@@ -25,23 +31,22 @@ export default function WelcomeBurst() {
     url.searchParams.delete("welcome");
     window.history.replaceState(null, "", url.pathname + url.search + url.hash);
 
-    // Start on the next frame rather than synchronously in the effect. Correct for an entrance
-    // animation anyway — the page paints once before anything moves — and it keeps the state
-    // update out of the commit phase.
+    // The callback hint is not proof that the browser accepted its session cookie.
+    let cancelled = false;
     let t1 = 0, t2 = 0;
-    const frame = requestAnimationFrame(async () => {
+    void refreshAuth().then((auth) => {
+      if (cancelled || auth.error || !auth.user) return;
+      setLeaving(false);
       setCount(Number.isFinite(n) ? n : 0);
-      // Reduced motion still gets the message, just without the sweep: the information is the
-      // point, the animation is decoration.
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       const hold = reduced ? 1400 : 2200;
       t1 = window.setTimeout(() => setLeaving(true), hold);
       t2 = window.setTimeout(() => { setCount(null); router.refresh(); }, hold + 420);
     });
-    return () => { cancelAnimationFrame(frame); clearTimeout(t1); clearTimeout(t2); };
+    return () => { cancelled = true; clearTimeout(t1); clearTimeout(t2); };
   }, [router]);
 
-  if (count == null) return null;
+  if (count == null || !user || error) return null;
 
   return (
     <div

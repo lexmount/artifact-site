@@ -22,7 +22,7 @@ describe.skipIf(!process.env.E2E_CHROME)("artifact feedback browser regressions"
       { relpath: "docs/报告.pdf", bytes: buildPdf(1) },
     ] }); slug = site.site.slug;
     const output = await build({ configFile: false, logLevel: "silent", resolve: { alias: { "next/navigation": path.resolve("test/fixtures/feedback-router.ts"), "@": path.resolve("src") } },
-      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      define: { "process.env.NODE_ENV": JSON.stringify("development"), "process.env.NEXT_PUBLIC_ARTIFACT_BASE_PATH": JSON.stringify("") },
       build: { write: false, minify: false, lib: { entry: path.resolve("test/fixtures/feedback-browser.tsx"), name: "FeedbackFixture", formats: ["iife"] } },
     });
     const bundle = (Array.isArray(output) ? output[0] : output) as { output: { type: string; code?: string }[] };

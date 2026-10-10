@@ -1,3 +1,4 @@
+import { localPath } from "@/lib/app-path";
 import { isSecureRequest, readCookie } from "@/lib/http";
 // One bounded cookie for recently opened artifacts, never one root cookie per site.
 const MAX_RECEIPTS = 8;
@@ -20,6 +21,6 @@ export function anonymousEditCookie(request: Request, slug: string, token: strin
     return `${cookieName(request)}=${encodeURIComponent(JSON.stringify(entries))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600${isSecureRequest(request) ? "; Secure" : ""}`;
 }
 export function anonymousEditToken(request: Request): string {
-    const match = new URL(request.url).pathname.match(/^\/(?:api\/sites|s|api\/preview)\/([A-Za-z0-9_-]+)(?:[~/]|$)/);
+    const match = localPath(new URL(request.url).pathname).match(/^\/(?:api\/sites|s|api\/preview)\/([A-Za-z0-9_-]+)(?:[~/]|$)/);
     return match ? receipts(request).find(([slug]) => slug === match[1])?.[1] ?? "" : "";
 }

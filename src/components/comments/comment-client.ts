@@ -1,3 +1,4 @@
+import { appFetch } from "@/lib/app-path";
 import type { CommentPage, CommentThreadDetail } from "@/lib/comments/contracts";
 
 /** Share credentials stay in host requests, never in preview messages or comment JSON. */
@@ -22,7 +23,7 @@ export async function commentRequest<T>(url: string, shareToken?: string, init?:
   const signal = (phase: string) => { if (endpoint && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("artifact:comment-mutation", {detail:{endpoint,phase}})); };
   signal("start");
   try {
-    const response = await fetch(url, { ...init, headers: commentHeaders(shareToken), cache: "no-store" });
+    const response = await appFetch(url, { ...init, headers: commentHeaders(shareToken), cache: "no-store" });
     if (!response.ok) {
       const detail = await response.json().catch(()=>null);
       throw new CommentRequestError(response.status, detail?.code === "image_unavailable" ? "image_unavailable" : undefined);

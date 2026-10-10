@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { AUTH_CHANGE_COOKIE, authChangeCookiePath } from "@/lib/auth-change";
+import { requestBase } from "@/lib/public-base";
+import { appPath } from "@/lib/app-path";
 // The IdP redirect target's behaviour, shared by every path we expose it on. Which of those paths
 // is actually advertised to the IdP is config.oidcRedirectPath; the handler itself is identical on
 // all of them, so an alias can never be a weaker door than the canonical one.
@@ -41,10 +45,14 @@ export async function handleOidcCallback(request: Request): Promise<NextResponse
 
   // Carry the adoption count home so the UI can acknowledge what just changed. It is a hint for
   // a transition, never an authorization input — the client strips it from the URL on arrival.
-  const base = config.publicUrl || new URL(request.url).origin;
+  const base = new URL(requestBase(request)).origin;
   const dest = new URL(`${base}${claims.returnTo}`);
   dest.searchParams.set("welcome", String(adopted));
   const res = NextResponse.redirect(dest.toString(), 302);
+  // The browser consumes this once after checking its session, independently of welcome UI.
+  res.cookies.set(AUTH_CHANGE_COOKIE, randomUUID(), {
+    path: authChangeCookiePath(), maxAge: 120, sameSite: "lax", secure: dest.protocol === "https:", httpOnly: false,
+  });
   // ResponseCookies.set rewrites Set-Cookie: always finish it before appending session/flow cookies.
   if (config.gaMeasurementId && config.gaHosts.includes(dest.hostname)) {
     res.cookies.set("artifact_analytics_auth", user.created ? "new" : "login", {
@@ -74,6 +82,6 @@ main{max-width:26rem;padding:2rem}h1{font-size:1.4rem;font-weight:600;margin:0 0
 a{display:inline-block;margin-right:.8rem;padding:.55rem .9rem;border:1px solid #e3e7e1;border-radius:7px;color:#171a17;text-decoration:none;font-weight:500;font-size:.9rem}
 a.primary{background:#171a17;border-color:#171a17;color:#fff}</style></head>
 <body><main><h1>Sign-in did not complete</h1><p>${safe}</p>
-<a class="primary" href="/api/auth/login?return_to=%2F">Sign in again</a><a href="/">Back to home</a></main></body></html>`;
+<a class="primary" href="${appPath("/api/auth/login?return_to=%2F")}">Sign in again</a><a href="${appPath("/")}">Back to home</a></main></body></html>`;
   return new NextResponse(html, { status, headers: { "content-type": "text/html; charset=utf-8" } });
 }
