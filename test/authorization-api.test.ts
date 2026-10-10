@@ -312,6 +312,11 @@ describe("authorization API acceptance", () => {
     const f = await fixture();
     await putTenantAdmin(rbacQuery, "init", f.owner.user.id, true, null);
     await grant(f, { type: "user", id: f.member.user.id }, "editor");
+    // Switch the publishing default before leaving its current workspace.
+    const destination = createId("destination");
+    await rbacQuery("INSERT INTO tenants(id,name) VALUES($1,'Destination')", [destination]);
+    await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)", [destination, f.member.user.id]);
+    await rbacQuery("UPDATE users SET tenant_id=$1 WHERE id=$2", [destination, f.member.user.id]);
     await changeTenantMember(
       request(f.owner.cookie),
       "init",

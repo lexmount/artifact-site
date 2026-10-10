@@ -45,7 +45,7 @@ it.skipIf(!process.env.ARTIFACT_DATABASE_URL)("upgrades populated 0.2.0 through 
     expect(await accountSiteRole(site, { userId: "upgrade-left" })).toBeNull();
     await rbacQuery("DELETE FROM role_bindings WHERE subject_user_id='upgrade-editor'");
     const markers = await rbacQuery("SELECT * FROM schema_migrations ORDER BY id");
-    expect(markers).toHaveLength(14);
+    expect(markers).toHaveLength(15);
     for (let restart = 0; restart < 2; restart++) {
       await closeDbForTests();
       expect(await accountSiteRole(site, { userId: "upgrade-editor" })).toBeNull();

@@ -9,6 +9,7 @@ import { useT } from "@/components/locale-provider";
 const TABS = [
   { href: "/admin", label: "Overview" },
   { href: "/admin/users", label: "Users" },
+  { href: "/admin/tenants", label: "Tenant management" },
   { href: "/admin/sites", label: "Sites" },
   { href: "/admin/authorization", label: "Authorization" },
   { href: "/admin/settings", label: "Settings" },

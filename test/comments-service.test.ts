@@ -323,7 +323,7 @@ describe("comment persistence and real routes", () => {
   it("records migration once and rejects modified history", async () => {
     await fixture();
     await rbacTransaction(q => migrateNumbered(q, migrationDialect));
-    expect(await rbacQuery("SELECT id FROM schema_migrations")).toHaveLength(14);
+    expect(await rbacQuery("SELECT id FROM schema_migrations")).toHaveLength(15);
     const [saved] = await rbacQuery(
       "SELECT checksum FROM schema_migrations WHERE id='0001-comments'",
     );

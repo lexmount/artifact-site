@@ -153,7 +153,7 @@ export async function changeTenantMember(
       throw new EditForbiddenError("The anonymous tenant has no members");
     const [tenant] = await q("SELECT * FROM tenants WHERE id=$1", [tenantId]);
     const [user] = await q(
-      "SELECT id,disabled_at FROM users WHERE id=$1",
+      "SELECT id,disabled_at,tenant_id FROM users WHERE id=$1",
       [userId],
     );
     if (!tenant || tenant.disabled_at != null || !user || (role !== null && user.disabled_at != null))
@@ -173,6 +173,8 @@ export async function changeTenantMember(
         );
     }
     if (role === null) {
+      if (existing && user.tenant_id === tenantId)
+        throw new EditForbiddenError("Change the default publishing workspace before removing this member");
       if (
         (
           await q(

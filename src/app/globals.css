@@ -1951,3 +1951,48 @@ fieldset.share-link-controls { border: 0; padding: 0; margin: 12px 0 0; min-widt
   .vis-label-short { display: inline; }
   .vis-chip { min-height: 32px; }
 }
+
+/* Tenant administration extends the existing console's table and dialog vocabulary. */
+.tenant-toolbar { display: flex; align-items: center; flex-wrap: wrap; }
+.tenant-create { margin-left: auto; }
+.tenant-status:empty { display: none; }
+.tenant-status { color: var(--muted); font-size: 14px; }
+.tenant-table th { background: transparent; }
+.tenant-table select, .tenant-member-add input, .tenant-member-add select, .tenant-member-search,
+.tenant-dialog input, .tenant-dialog select { border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); padding: 9px 12px; font: 400 14px/1.4 var(--font-ui); max-width: 100%; }
+.tenant-dialog input:disabled { background: var(--hover); color: var(--muted); }
+.tenant-dialog { box-shadow: none; }
+.tenant-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.tenant-dialog-heading .quiet { padding: 4px; }
+.tenant-fields { display: grid; gap: 14px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.tenant-dialog label { font: 500 14px/1.4 var(--font-ui); letter-spacing: 0; text-transform: none; color: var(--ink); gap: 8px; }
+.tenant-dialog .drawer-error { color: var(--critical); }
+.tenant-dialog .tenant-notice { background: var(--green); color: var(--ink); padding: 12px; border-radius: 7px; }
+.tenant-member-add { display: flex; flex-wrap: wrap; gap: 12px; margin: 22px 0 12px; }
+.tenant-member-add input { flex: 1 1 260px; max-width: 460px; }
+.tenant-member-search { margin: 10px 0; }
+.tenant-block-reason { max-width: 270px; white-space: normal; }
+.tenant-detail-title { margin: 18px 0 22px; }
+.tenant-detail-title h2 { font: 600 24px/1.3 var(--font-ui); margin: 0 0 5px; }
+.tenant-detail-title code { color: var(--muted); font-size: 13px; }
+.tenant-back { padding-left: 0; }
+.tenant-setting { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 0; border-bottom: 1px solid var(--line); }
+.tenant-setting p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.tenant-skeleton { height: 180px; background: linear-gradient(var(--hover) 0 0) 0 15px / 100% 25px no-repeat, linear-gradient(var(--hover) 0 0) 0 65px / 100% 25px no-repeat, linear-gradient(var(--hover) 0 0) 0 115px / 100% 25px no-repeat; }
+@media (max-width: 640px) {
+  .tenant-toolbar .admin-search { flex-basis: 100%; max-width: none; }
+  .tenant-member-add input { max-width: none; }
+  .tenant-table .actions { white-space: normal; }
+  .tenant-block-reason { min-width: 140px; }
+}
+.tenant-dialog p { overflow-wrap: anywhere; }
+.tenant-members { min-width: 0; }
+.tenant-members .admin-tablewrap { max-width: 100%; }
+@media (max-width: 640px) {
+  .tenant-members .tenant-table { table-layout: fixed; }
+  .tenant-members .tenant-table th:first-child { width: 38%; }
+  .tenant-members .tenant-table th:nth-child(2) { width: 34%; }
+  .tenant-members .tenant-table td { overflow-wrap: anywhere; padding-inline: 5px; }
+  .tenant-members .tenant-table select { width: 100%; min-width: 0; padding: 8px 2px; font-size: 12px; }
+  .tenant-block-reason { min-width: 0; font-size: 11px; }
+}

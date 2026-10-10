@@ -661,7 +661,7 @@ it("returns precise tenant errors and skips nonexistent member removal audits", 
     const context = { params: Promise.resolve({ tenantId: "missing" }) };
     expect((await GET(request("", headers), context)).status).toBe(404);
     expect((await PATCH(request("", headers, { name: "Missing" }), context)).status).toBe(404);
-    const body = { id: "duplicate", name: "Tenant", adminUserId: owner.user.id };
+    const body = { slug: "duplicate", name: "Tenant", adminUserId: owner.user.id };
     expect((await POST(request("", headers, body))).status).toBe(201);
     expect((await POST(request("", headers, body))).status).toBe(409);
     const missing = await PUT(request("", headers, { email: "missing@example.com", role: "member" }), { params: Promise.resolve({ tenantId: "init" }) });

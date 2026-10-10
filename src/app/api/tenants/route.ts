@@ -1,5 +1,9 @@
+import { z } from "zod";
+import { tenantSlug } from "@/lib/tenant-management";
+import { assertSessionCurrent } from "@/lib/authorized-commit";
 import { putTenantAdmin } from "@/lib/role-bindings";
 import {
+  createId,
   rbacQuery,
   rbacTransaction,
   getUser,
@@ -16,17 +20,19 @@ export async function GET(request: Request) {
     const admin = await resolveAdmin(request, session);
     if (!session && !admin) throw new AuthError("Please sign in first");
     const rows = admin
-      ? await rbacQuery("SELECT id,name,disabled_at FROM tenants ORDER BY id")
+      ? await rbacQuery("SELECT t.id,t.name,COALESCE(t.slug,t.id) AS slug,t.disabled_at,(SELECT COUNT(*) FROM users u WHERE u.tenant_id=t.id) AS default_user_count,(SELECT COUNT(*) FROM sites s WHERE s.tenant_id=t.id AND s.deleted_at IS NULL) AS site_count FROM tenants t ORDER BY t.name,t.id")
       : await rbacQuery(
-          "SELECT t.id,t.name,t.disabled_at,m.role FROM tenants t JOIN authorization_tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 ORDER BY t.id",
+          "SELECT t.id,t.name,COALESCE(t.slug,t.id) AS slug,t.disabled_at,m.role FROM tenants t JOIN authorization_tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 ORDER BY t.id",
           [session!.userId],
         );
     return json({
       tenants: rows.map((r) => ({
         id: r.id,
         name: r.name,
+        slug: r.slug,
         disabledAt: r.disabled_at,
         role: r.role ?? "platform-admin",
+        ...(admin ? { defaultUserCount: Number(r.default_user_count), siteCount: Number(r.site_count) } : {}),
       })),
     });
   } catch (e) {
@@ -36,19 +42,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const actor = await requireAdminWrite(request);
-    const body = await request.json();
-    if (
-      typeof body.id !== "string" ||
-      !/^[a-z][a-z0-9-]{1,62}$/.test(body.id) ||
-      ["init", "anonymous"].includes(body.id)
-    )
-      return json(
-        {
-          error:
-            "A unique tenant id is required (2–63 lowercase letters, digits or hyphens)",
-        },
-        400,
-      );
+    const body = z.object({ slug: z.unknown(), name: z.string().trim().min(1).max(100), adminEmail: z.string().optional(), adminUserId: z.string().optional() }).strict().parse(await request.json());
+    const slug = tenantSlug(body.slug);
+    const id = createId("tenant");
     if (
       typeof body.name !== "string" ||
       !body.name.trim() ||
@@ -63,28 +59,36 @@ export async function POST(request: Request) {
           : null;
     if (!user || user.disabledAt)
       return json({ error: "An active adminUserId is required" }, 400);
+    const session = await resolveSession(request);
     await rbacTransaction(async (q) => {
-      if ((await q("SELECT id FROM tenants WHERE id=$1", [body.id])).length)
-        throw Object.assign(new Error("Tenant already exists"), { statusCode: 409 });
-      await q("INSERT INTO tenants(id,name) VALUES($1,$2)", [
-        body.id,
+      await assertSessionCurrent(q, session);
+      await requireAdminWrite(request);
+      if (!(await q("SELECT id FROM users WHERE id=$1 AND disabled_at IS NULL", [user.id])).length)
+        throw Object.assign(new Error("An active account is required"), { statusCode: 400 });
+      if ((await q("SELECT id FROM tenants WHERE LOWER(COALESCE(slug,id))=$1", [slug])).length)
+        throw Object.assign(new Error("This workspace identifier is already in use"), { statusCode: 409 });
+      const inserted = await q("INSERT INTO tenants(id,name,slug) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING id", [
+        id,
         body.name.trim(),
+        slug,
       ]);
+      if (!inserted.length)
+        throw Object.assign(new Error("This workspace identifier is already in use"), { statusCode: 409 });
       await q(
         "INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)",
-        [body.id, user.id],
+        [id, user.id],
       );
-      await putTenantAdmin(q,body.id,user.id,true,actor.userId);
+      await putTenantAdmin(q,id,user.id,true,actor.userId);
       await recordRbacAudit(
         q,
-        body.id,
+        id,
         actor.userId,
         "tenant.create",
-        body.id,
+        id,
         "created",
       );
     });
-    return json({ id: body.id }, 201);
+    return json({ id, slug }, 201);
   } catch (e) {
     return errorResponse(e);
   }
