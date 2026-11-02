@@ -14,28 +14,7 @@ beforeAll(async () => {
   const entry = path.resolve("test/fixtures/comment-package-host.tsx");
   const output = await build({ configFile: false, logLevel: "silent",
     resolve: { alias: { "@": path.resolve("src") } },
-    plugins: [{ name: "comment-package-fixture", resolveId(id) { if (id === entry) return entry; }, load(id) { if (id === entry) return `
-    import React, {useRef, useState} from "react";
-    import {createRoot} from "react-dom/client";
-    import {useCommentPreview} from "@/components/comments/use-comment-preview";
-    function App() {
-      const frameRef = useRef(null);
-      const [version, setVersion] = useState("current");
-      const packagePaths = version !== "legacy";
-      const scope = React.useMemo(() => ({siteId:"site",versionId:version,entry:{kind:"main"}}), [version]);
-      const bridge = useCommentPreview({frameRef,scope,packagePaths});
-      const file = version === "current" ? ".git/report.html" : version === "historical" ? "node_modules/docs/index.html" : "index.html";
-      return <><button id="history" onClick={()=>setVersion("historical")}>History</button>
-        <button id="legacy" onClick={()=>setVersion("legacy")}>Legacy</button>
-        <button id="current" onClick={()=>setVersion("current")}>Current</button>
-        <button id="select" onClick={bridge.select}>Select</button>
-        <button id="locate" onClick={()=>bridge.locate({threadId:"thread",anchor:bridge.selectedAnchor})}>Locate</button>
-        <output id="state">{JSON.stringify({ready:bridge.ready,path:bridge.currentFilePath,anchor:bridge.selectedAnchor,location:bridge.locationResult})}</output>
-        <iframe key={version} ref={frameRef} sandbox="allow-scripts" src={"/frame?file="+encodeURIComponent(file)} /></>;
-    }
-    createRoot(document.getElementById("app")).render(<App/>);
-  `; } }],
-    define: { "process.env.NODE_ENV": JSON.stringify("production") },
+    define: { "process.env.NODE_ENV": JSON.stringify("development") },
     build: { write: false, minify: false, lib: { entry, name: "CommentPackageFixture", formats: ["iife"] } },
   });
   const bundle = (Array.isArray(output) ? output[0] : output) as { output: { type: string; code?: string }[] };
@@ -52,7 +31,8 @@ beforeAll(async () => {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${(server.address() as {port:number}).port}`;
   browser = await (await import("puppeteer-core")).launch({ executablePath: process.env.E2E_CHROME, headless: true, args: process.env.CI ? ["--no-sandbox"] : [] });
-  page = await browser.newPage(); await page.goto(origin);
+  page = await browser.newPage(); page.on("pageerror", error => console.error(error)); await page.goto(origin);
+  await page.waitForSelector("#current");
 }, 30000);
 afterAll(async () => { await browser?.close(); if (server) await new Promise<void>(resolve => server.close(() => resolve())); });
 it.skipIf(!enabled)("acknowledges package paths, creates anchors and relocates across current and historical policies", async () => {
