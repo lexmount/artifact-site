@@ -13,10 +13,11 @@ import { appPath } from "@/lib/app-path";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { DirectoryPage } from "@/lib/directory-query";
 import { adminFetch } from "@/components/admin/format";
+import DirectoryLoading from "@/components/directory-loading";
 import AppShell from "@/components/app-shell";
 import Link from "next/link";
 import { useCallback, useMemo, useEffect, useState } from "react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowUp, Loader2, Settings2, UserRound, ChevronDown } from "lucide-react";
 import PublishTokensCard from "@/components/publish-tokens";
 import ConnectedAppsCard from "@/components/connected-apps";
 import MySites from "@/components/my-sites";
@@ -25,6 +26,7 @@ import { useRecentShelf } from "@/components/recent-sites";
 import MoreMenu from "@/components/more-menu";
 import { useT } from "@/components/locale-provider";
 import { loginHref, useAuth } from "@/lib/use-auth";
+import { refreshAuth } from "@/lib/auth-store";
 import type { SiteSummary } from "@/lib/types";
 import { NO_SLUGS, mergeMySites, useOwnerSlugs } from "@/lib/my-sites";
 
@@ -64,7 +66,28 @@ async function loadUnclaimedCount() {
   return (await adminFetch<{ sites: unknown[] }>("/api/me/adopt")).sites.length;
 }
 
-export default function MePage({ allSites, directory, userId }: { allSites: SiteSummary[]; directory?: DirectoryPage; userId?: string }) {
+type MePageProps = { allSites: SiteSummary[]; directory?: DirectoryPage; userId?: string };
+
+export default function MePage(props: MePageProps) {
+  const auth = useAuth();
+  const router = useRouter();
+  const t = useT();
+  const currentId = auth.user?.id;
+  const stale = !auth.loading && currentId !== props.userId;
+  useEffect(() => {
+    // A failed lookup is not a confirmed account change. Refreshing the server payload
+    // cannot repair the client check and may repeatedly discard the rendered directory.
+    if (stale && !auth.error) router.refresh();
+  }, [stale, auth.error, currentId, props.userId, router]);
+
+  // A storage/focus update changes the client identity, not the server payload. Hide
+  // every account-scoped child until the payload belongs to the confirmed identity.
+  if (stale && auth.error) return <AppShell><p className="page-note" role="alert">{t("Could not verify your account. Please try again.")}</p><button className="btn" onClick={() => void refreshAuth()}>{t("Retry account check")}</button></AppShell>;
+  if (stale) return <AppShell><p className="page-note" role="status"><Loader2 size={14} className="spin" /> {t("Loading…")}</p><button className="btn" onClick={() => router.refresh()}>{t("Try again")}</button></AppShell>;
+  return <MePageContent key={props.userId ?? "guest"} {...props} />;
+}
+
+function MePageContent({ allSites, directory, userId }: MePageProps) {
   const t = useT();
   const auth = useAuth();
   const user = auth.loading && userId ? {id:userId} : auth.user;
@@ -86,7 +109,7 @@ export default function MePage({ allSites, directory, userId }: { allSites: Site
 
   return (
     <AppShell>
-      {loading && <p className="page-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}
+      {loading && <DirectoryLoading />}
 
       {!loading && !user && (
         <>
@@ -123,10 +146,10 @@ export default function MePage({ allSites, directory, userId }: { allSites: Site
           </div>
           <div className="work-tabs" role="tablist" aria-label={t("Account views")}>
             <button type="button" role="tab" id="me-tab-owned" aria-controls="me-panel" aria-selected={tab === "owned"} onClick={() => setPicked("owned")}>
-              {t("Created by me")}{directory?.query.scope === "owned" ? ` · ${directory.counts.all}` : ""}
+              {t("My works")}{directory?.query.scope === "owned" ? ` · ${directory.ownedTotal ?? directory.counts.all}` : ""}
             </button>
             <button type="button" role="tab" id="me-tab-collab" aria-controls="me-panel" aria-selected={tab === "collab"} onClick={() => setPicked("collab")}>
-              {t("I can edit")}{directory?.query.scope === "collab" ? ` · ${directory.counts.all}` : ""}
+              {t("I can edit")}{directory?.query.scope === "collab" ? ` · ${directory.ownedTotal ?? directory.counts.all}` : ""}
             </button>
             <button type="button" role="tab" id="me-tab-recent" aria-controls="me-panel" aria-selected={tab === "recent"} onClick={() => setPicked("recent")}>
               {t("Recently viewed")} · {shelf.items.length}
@@ -134,8 +157,8 @@ export default function MePage({ allSites, directory, userId }: { allSites: Site
             <span className="work-tabs-tools">
               {tab === "recent" && shelf.items.length > 0 && <button type="button" className="quiet" onClick={clearHistory}>{t("Clear history")}</button>}
               {/* Publish tokens are kept in the account tools menu. */}
-              <Link href="/me/sharing" className="quiet">{t("Sharing preferences")}</Link>
-              <MoreMenu label={t("Account tools")} buttonClassName="quiet" buttonContent={<>{t("Account tools")} ⌄</>}>
+              <Link href="/me/sharing" className="quiet account-tool-button"><Settings2 size={15} aria-hidden="true" />{t("Sharing preferences")}</Link>
+              <MoreMenu label={t("Account tools")} buttonClassName="quiet account-tool-button" buttonContent={<><UserRound size={15} aria-hidden="true" />{t("Account tools")}<ChevronDown size={13} aria-hidden="true" /></>}>
                 {auth.isAdmin ? <Link role="menuitem" className="menu-item" href="/admin/tenants">{t("Tenant management")}</Link> : tenantAccess.value && <Link role="menuitem" className="menu-item" href="/tenants">{t("Tenant settings")}</Link>}
                 <button type="button" role="menuitem" className="menu-item" data-active={tab === "tokens"} onClick={() => setPicked("tokens")}>{t("Publish tokens")}</button>
                 <button type="button" role="menuitem" className="menu-item" data-active={tab === "connections"} onClick={() => setPicked("connections")}>{t("Connected applications")}</button>

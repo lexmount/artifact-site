@@ -118,27 +118,6 @@ describe.skipIf(!base)("agent connection guide", () => {
     await page.close();
   });
 
-  it("ignores old claim links and removes the claim action from account tools", async () => {
-    const page = await browser.newPage();
-    await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
-    await page.setRequestInterception(true);
-    let claimRequests = 0;
-    page.on("request", (request) => {
-      if (request.url().includes("/claim")) claimRequests++;
-      if (request.url().endsWith("/api/auth/me")) return void request.respond({ contentType: "application/json", body: JSON.stringify({ oidcEnabled: true, user: { id: "ui-test", displayName: "UI Test" } }) });
-      if (request.url().endsWith("/api/me/sites")) return void request.respond({ contentType: "application/json", body: JSON.stringify({ owned: [], collaborating: [] }) });
-      void request.continue();
-    });
-    await page.goto(`${base}/me#claim=old-site`, { waitUntil: "networkidle0" });
-    await page.waitForSelector('.work-tabs-tools button[aria-haspopup="menu"]');
-    await page.click('.work-tabs-tools button[aria-haspopup="menu"]');
-    expect(await page.$$eval('[role="menuitem"]', (nodes) => nodes.map((node) => node.textContent))).toContain("Publish tokens");
-    expect(await page.$("#claim-address")).toBeNull();
-    expect(await page.evaluate(() => document.body.innerText)).not.toContain("Claim a site");
-    expect(claimRequests).toBe(0);
-    await page.close();
-  });
-
   it.skipIf(!process.env.MCP_E2E_TOKEN)("assigns an unowned site from the admin menu", async () => {
     const page = await browser.newPage();
     await page.setViewport({ width: 390, height: 844 });

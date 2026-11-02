@@ -95,9 +95,17 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
     };
   }, [open, languageOpen, closeMenu, closeLanguageMenu]);
 
+  const renderSignIn = (animateArrival = false) => (
+    <span className={`auth-chip auth-signin${animateArrival ? " auth-arrival" : ""}`} ref={wrapRef}>
+      <a className={variant === "avatar" ? "primary nav-signin" : "btn"} aria-label={t("Sign in / Sign up")} href={appPath(loginHref())}>
+        <LogIn size={15} aria-hidden="true" /> <span className="auth-signin-label">{t("Sign in / Sign up")}</span>
+      </a>
+    </span>
+  );
+
   if (loading) {
     if (path === "/" && configured && !hasSessionHint && variant === "avatar") {
-      return <span className="auth-slot is-ready is-signed-out"><a className="primary nav-signin" href={appPath(loginHref())}><LogIn size={15} aria-hidden="true" /> {t("Sign in / Sign up")}</a></span>;
+      return <span className="auth-slot is-ready is-signed-out">{renderSignIn()}</span>;
     }
     return variant === "avatar"
       ? <span className="auth-slot is-loading" role="status" aria-label={t("Checking account")}><span className="auth-placeholder" /></span>
@@ -113,13 +121,11 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
     return variant === "avatar" ? (
       <AuthArrival key="signed-out" path={path} current="signed-out">{(animateArrival) => (
         <span className={`auth-slot is-ready is-signed-out${animateArrival ? " should-animate" : ""}`}>
-          <a className={`primary nav-signin${animateArrival ? " auth-arrival" : ""}`} href={appPath(loginHref())}><LogIn size={15} aria-hidden="true" /> {t("Sign in / Sign up")}</a>
+          {renderSignIn(animateArrival)}
         </span>
       )}</AuthArrival>
     ) : (
-      <a className="btn" href={appPath(loginHref())}>
-        <LogIn size={14} /> {t("Sign in / Sign up")}
-      </a>
+      renderSignIn()
     );
   }
 
@@ -171,6 +177,22 @@ export default function AuthButton({ variant = "button" }: { variant?: "button" 
             </Link>
           )}
           <hr className="hairline" />
+          <button type="button" className="auth-menu-item" role="menuitem" disabled={busy}
+            onClick={async () => {
+              const destination = loginHref(undefined, true);
+              setBusy(true);
+              setLogoutError(false);
+              try {
+                await logoutAuth();
+                setAnalyticsUser(null);
+                window.location.replace(destination);
+              } catch {
+                setLogoutError(true);
+                setBusy(false);
+              }
+            }}>
+            <User2 size={14} /> {t("Switch account")}
+          </button>
           {logoutError && <p role="alert">{t("Could not sign out. Please try again.")}</p>}
           <button
             type="button"

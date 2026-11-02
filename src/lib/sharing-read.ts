@@ -1,6 +1,6 @@
 // Effective sharing reads and source precedence. Queries supplied by mutations stay in their transaction.
 import "server-only";
-import { rbacQuery, toSite } from "@/lib/db";
+import { rbacQuery, toSite, listFolders, listFolderAssignments } from "@/lib/db";
 import type { RbacQuery } from "@/lib/rbac-store";
 import type { Site, Visibility } from "@/lib/types";
 import type { SharingPolicy, SharingSource, SharingState } from "@/lib/sharing-policy";
@@ -181,8 +181,11 @@ export async function sharingCollection(request: Request, token: string) {
     [token],
   );
   if (!scope) return { state: "unavailable", items: [] };
-  const session = await resolveSession(request),
-    items = [];
+  const session = await resolveSession(request);
+  const items: { slug: string; folderId: string | null; title: string; tenantName: string; updatedAt: number; comments: boolean }[] = [];
+  const [ownerFolders, assignments] = scope.folder_id ? [[], []] : await Promise.all([listFolders(scope.owner_id as string), listFolderAssignments(scope.owner_id as string)]);
+  const folderIds = new Set(ownerFolders.map(f => f.id));
+  const bySlug = new Map(assignments.filter(a => folderIds.has(a.folderId)).map(a => [a.slug, a.folderId]));
   const { canReadVersion } = await import("@/lib/share");
   const { publicationPolicy } = await import("@/lib/publication-policy");
   for (const row of await ownedRows(
@@ -200,6 +203,7 @@ export async function sharingCollection(request: Request, token: string) {
     const sharing = await getSiteSharing(site);
     items.push({
       slug: site.slug,
+      folderId: bySlug.get(site.slug) ?? null,
       title: visible.title,
       tenantName: row.tenant_name as string,
       updatedAt: site.updatedAt,
@@ -211,6 +215,7 @@ export async function sharingCollection(request: Request, token: string) {
     state: "ready",
     name: scope.name ?? "My entire collection",
     owner: scope.display_name,
+    folders: ownerFolders.map(f => ({ id: f.id, name: f.name, count: items.filter(s => s.folderId === f.id).length })).filter(f => f.count > 0),
     items,
   };
 }

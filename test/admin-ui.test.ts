@@ -40,9 +40,9 @@ describe("/admin gate and entry", () => {
 describe("take-down surfaces outside the console", () => {
   it("the site page answers a taken-down site with the removal notice before the 404 branch, and hands the owner the reason", () => {
     const page = read("src/app/s/[slug]/page.tsx");
-    const removed = page.indexOf("if (!readable && view.site.takenDownAt) return removedNotice");
+    const removed = page.indexOf('if (state === "removed") return removedNotice');
     expect(removed).toBeGreaterThan(0);
-    expect(removed).toBeLessThan(page.indexOf("if (!readable) notFound();"));
+    expect(removed).toBeLessThan(page.indexOf('if (state === "denied") return SiteAccessDenied'));
     expect(page).toContain("takenDownReason={view.site.takenDownAt ? (view.site.takenDownReason ?? \"\") : null}");
   });
   it("the share page checks the read gate for a taken-down site instead of embedding a 410 frame", () => {

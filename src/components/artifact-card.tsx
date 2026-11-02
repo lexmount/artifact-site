@@ -14,7 +14,7 @@ export function kindLabel(kind: SiteSummary["kind"], t: (k: string) => string): 
   return kind === "single" ? t("Web page") : kind === "document" ? t("Document") : t("Site folder");
 }
 
-export default function ArtifactCard({ site, note, actions, href, preview }: { site: SiteSummary; note?: string; actions?: ReactNode; href?: string; preview?: string }) {
+export default function ArtifactCard({ site, note, actions, href, preview, sharingStatus }: { site: SiteSummary; note?: string; actions?: ReactNode; href?: string; preview?: string; sharingStatus?: ReactNode }) {
   const t = useT();
   const locale = useLocale();
   return (
@@ -28,6 +28,7 @@ export default function ArtifactCard({ site, note, actions, href, preview }: { s
       </SiteLink>
       {actions && <div className="artifact-card-actions">{actions}</div>}
       {site.officialVersionId && <SiteLink slug={site.slug} className="official-pill" href={`/s/${site.slug}?version=${encodeURIComponent(site.officialVersionId)}`}>{t("Official v{n}", { n: site.officialVersionNumber ?? "" })}</SiteLink>}
+      {sharingStatus}
       <p className="recent-meta">{kindLabel(site.kind, t)} · {note ?? relTime(site.updatedAt, t, locale)}</p>
     </article>
   );

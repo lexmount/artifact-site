@@ -12,7 +12,7 @@ describe("directory editing across delayed navigation", () => {
     expect(navigate).not.toHaveBeenCalled();
     vi.advanceTimersByTime(250);
     expect(new URLSearchParams(navigate.mock.lastCall![0]).get("q")).toBe("draft");
-    for (const key of ["sort", "folder", "tab"]) {
+    for (const key of ["sort", "folder", "tab", "sharing"]) {
       state.change("q", key, 250);
       state.change(key, "selected");
       const query = new URLSearchParams(navigate.mock.lastCall![0]);

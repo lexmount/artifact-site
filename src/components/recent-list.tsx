@@ -42,8 +42,8 @@ export default function RecentList({ shelf }: { shelf: RecentShelf }) {
   return (
     <>
       <p className="drawer-note">{t("Only in this browser. Up to 50 sites.")}</p>
-      <div className="site-list">
-        <div className="list-header"><span>{t("Site")}</span><span>{t("Who can open")}</span><span>{t("Versions")}</span><span>{t("Viewed")}</span><span /></div>
+      <div className="site-list recent-sites-list">
+        <div className="list-header"><span>{t("Site")}</span><span>{t("Author")}</span><span>{t("Who can open")}</span><span>{t("Versions")}</span><span>{t("Viewed")}</span><span /></div>
         {shelf.items.map(({ summary: s, visitedAt, href, preview }) => (
           <div className="site-row" key={s.slug}>
             <div className="site-name">
@@ -55,9 +55,10 @@ export default function RecentList({ shelf }: { shelf: RecentShelf }) {
                 <small>{kindLabel(s.kind, t)}{s.takenDownAt ? ` · ${t("Taken down")}` : ""}</small>
               </div>
             </div>
+            <span className="row-author" data-label={t("Author")} title={s.authorName ?? undefined}>{s.authorName === null ? t("Anonymous author") : s.authorName || t("Unknown author")}</span>
             <span className="row-visibility"><VisibilityCell site={s} t={t} /></span>
-            <span>{s.versionCount} {s.officialVersionId && <Link className="official-pill" href={`/s/${s.slug}?version=${encodeURIComponent(s.officialVersionId)}`}>{t("Official v{n}", { n: s.officialVersionNumber ?? "" })}</Link>}</span>
-            <span className="row-date">{relTime(visitedAt, t, locale)}</span>
+            <span className="row-versions">{s.versionCount} {s.officialVersionId && <Link className="official-pill" href={`/s/${s.slug}?version=${encodeURIComponent(s.officialVersionId)}`}>{t("Official v{n}", { n: s.officialVersionNumber ?? "" })}</Link>}</span>
+            <span className="row-date" data-label={t("Viewed")}>{relTime(visitedAt, t, locale)}</span>
             <span className="row-menu-wrap">
               <MoreMenu label={t("Actions for {title}", { title: s.title })} iconOnly buttonClassName="row-more" buttonContent="⋯">
                 <SiteLink slug={s.slug} role="menuitem" className="menu-item" href={href}>{t("Open")}</SiteLink>

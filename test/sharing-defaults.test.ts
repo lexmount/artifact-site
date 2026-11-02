@@ -690,8 +690,9 @@ it("publishes shared defaults immediately without private review schema", async 
   const migrations = await rbacQuery("SELECT id FROM schema_migrations ORDER BY id");
   expect(migrations.map(row => row.id)).toContain("0017-tenant-slugs");
   expect(migrations.map(row => row.id)).toContain("0018-sharing-defaults");
-  expect(migrations).toHaveLength(16);
-  expect(migrations.some(row => /0015|0016|0019/.test(String(row.id)))).toBe(false);
+  expect(migrations.map(row => row.id)).toContain("0021-public-author-name");
+  expect(migrations).toHaveLength(17);
+  expect(migrations.some(row => /0015|0016|0019|0020/.test(String(row.id)))).toBe(false);
   const tables = process.env.ARTIFACT_DB_DRIVER === "postgres"
     ? await rbacQuery("SELECT table_name AS name FROM information_schema.tables WHERE table_schema=current_schema()")
     : await rbacQuery("SELECT name FROM sqlite_master WHERE type='table'");
@@ -775,3 +776,36 @@ it.each(["verified-email", "unverified-email", "direct-account", "revoked", "exp
     expect(Boolean(await authorizePreview(new Request(origin), fresh, preview!.key))).toBe(allowed);
   },
 );
+it("exposes only owner folders containing readable collection documents", async () => {
+  const a = await actor(), b = await actor();
+  const shown = await createUserFolder(a.user.id, "Shown"), hidden = await createUserFolder(a.user.id, "Secret folder");
+  const visitorFolder = await createUserFolder(b.user.id, "Visitor classification");
+  const first = (await createSite({ mode: "paste", html: "first" }, { ownerId: a.user.id })).site;
+  const secret = (await createSite({ mode: "paste", html: "secret" }, { ownerId: a.user.id })).site;
+  await assignUserSite(a.user.id, first.slug, shown.id);
+  await assignUserSite(a.user.id, secret.slug, hidden.id);
+  const input = { enabled: true, policy: { audience: "anyone" as const, comments: false } };
+  const preview = await scopeChange(a.request, null, input);
+  await scopeChange(a.request, null, { ...input, confirmation: preview.confirmation });
+  await siteSharingChange(a.request, secret.id, { action: "stop" });
+  const { sharingCollection, getScope } = await import("@/lib/sharing-read");
+  const token = (await getScope(a.request, null)).url!.split("/").pop()!;
+  const result = await sharingCollection(new Request(origin), token);
+  expect(result.folders).toEqual([{ id: shown.id, name: "Shown", count: 1 }]);
+  expect(result.items.find(x => x.slug === first.slug)?.folderId).toBe(shown.id);
+  expect(JSON.stringify(result)).not.toContain(hidden.id);
+  expect(JSON.stringify(result)).not.toContain(visitorFolder.name);
+  const folderPreview = await scopeChange(a.request, shown.id, input);
+  await scopeChange(a.request, shown.id, { ...input, confirmation: folderPreview.confirmation });
+  const folderToken = (await getScope(a.request, shown.id)).url!.split("/").pop()!;
+  const single = await sharingCollection(new Request(origin), folderToken);
+  expect(single.folders).toEqual([]);
+  expect(single.items.map(x => x.slug)).toEqual([first.slug]);
+  const renamed = "Renamed folder";
+  await rbacQuery("UPDATE folders SET name=$1 WHERE id=$2", [renamed, shown.id]);
+  expect((await sharingCollection(b.request, token)).folders?.[0].name).toBe(renamed);
+  await rbacQuery("DELETE FROM folder_assignments WHERE folder_id=$1", [shown.id]);
+  const moved = await sharingCollection(b.request, token);
+  expect(moved.folders).toEqual([]);
+  expect(moved.items[0].folderId).toBeNull();
+});

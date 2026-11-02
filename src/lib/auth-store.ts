@@ -1,5 +1,5 @@
 import { AUTH_CHANGE_COOKIE, authChangeCookiePath } from "@/lib/auth-change";
-import { appFetch } from "@/lib/app-path";
+import { appFetch, appPath, localPath } from "@/lib/app-path";
 import { invalidateClientCaches } from "@/lib/client-cache";
 // One observable browser snapshot for the header, account pages and login acknowledgement.
 export interface MeUser {
@@ -20,6 +20,24 @@ let snapshot = initialAuth;
 let inflight: Promise<AuthState> | null = null;
 let generation = 0;
 let signingOut = false;
+let automaticLoginDecided = false;
+const AUTO_ATTEMPT_KEY = "artifact-site:sso-attempt:";
+function tryAutomaticLogin() {
+  if (typeof window === "undefined") return;
+  // Never navigate embedded previews or interrupt an explicit OAuth authorization flow.
+  if (window.top && window.top !== window.self) return;
+  const path = localPath(window.location.pathname);
+  if (/^\/(api|oauth|v1)(\/|$)/.test(path)) return;
+  try {
+    const key = AUTO_ATTEMPT_KEY + appPath("/");
+    const previous = Number(window.sessionStorage.getItem(key));
+    if (previous && Date.now() - previous < 60_000) return;
+    // Persist before leaving: even blocked cookies or a failed callback cannot cause a loop.
+    window.sessionStorage.setItem(key, String(Date.now()));
+    const target = window.location.pathname + window.location.search + window.location.hash;
+    window.location.replace(appPath(`/api/auth/login?silent=1&return_to=${encodeURIComponent(target)}`));
+  } catch { /* Without loop protection, leave manual sign-in available. */ }
+}
 const listeners = new Set<() => void>();
 const CHANGE_KEY = "artifact-site:auth-change";
 export const getAuthSnapshot = () => snapshot;
@@ -82,22 +100,32 @@ export function resetAuthCache() {
 export function refreshAuth(): Promise<AuthState> {
   if (signingOut) return Promise.resolve(snapshot);
   if (inflight) return inflight;
+  // Decide once at page entry, including guest cooldowns and failed lookups. Later focus,
+  // storage and navigation checks may refresh identity but must not interrupt active work.
+  const mayNavigate = !automaticLoginDecided;
+  automaticLoginDecided = true;
   const version = generation;
   const loginEvent = loginChangeMarker();
   inflight = (async () => {
+    // Bound the whole exchange, including a response body that never finishes. Otherwise
+    // focus checks and manual retries keep joining a stuck promise for this tab's lifetime.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
-      const response = await appFetch("/api/auth/me", { cache: "no-store", credentials: "same-origin" });
+      const response = await appFetch("/api/auth/me", { cache: "no-store", credentials: "same-origin", signal: controller.signal });
       if (!response.ok) throw new Error("Account lookup failed");
       const body = await response.json();
       if (!body || typeof body.oidcEnabled !== "boolean" || !("user" in body)) throw new Error("Invalid account response");
       if (version === generation) {
         publish({ user: body.user, oidcEnabled: body.oidcEnabled, isAdmin: Boolean(body.isAdmin), loading: false, error: false });
         consumeLoginChange(body.user, loginEvent);
+        if (mayNavigate && !body.user && body.oidcEnabled && body.autoLogin === true) tryAutomaticLogin();
       }
     } catch {
       // A network/server failure is not evidence of logout. Keep the last known identity.
       if (version === generation) publish({ ...snapshot, loading: false, error: true });
     } finally {
+      clearTimeout(timeout);
       if (version === generation) inflight = null;
     }
     return snapshot;

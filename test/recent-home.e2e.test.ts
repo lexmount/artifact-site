@@ -157,13 +157,13 @@ describe.skipIf(!base)("home shelves and shared history", () => {
     expect(errors).toEqual([]);
   });
 
-  it("forgets an access-denied direct entrance without revealing whether the site exists", async () => {
+  it("forgets an access-denied direct entrance without exposing its content", async () => {
     const artifact = await api<Published>(owner, "/api/sites", content("Permission-masked history"));
     await reader.goto(`${base}/s/${artifact.slug}`, { waitUntil: "domcontentloaded" });
     await reader.waitForFunction(slug => JSON.parse(localStorage.getItem("sites:recent:v1")!).items.some((item: { slug: string }) => item.slug === slug), { polling: 100 }, artifact.slug);
     await api(owner, `/api/sites/${artifact.slug}/sharing`, { visibility: "private" }, "PUT");
     await reader.reload({ waitUntil: "networkidle0" });
-    expect(await reader.$eval("h1", n => n.textContent)).toBe("Site not found");
+    expect(await reader.$eval("h1", n => n.textContent)).toBe("Access denied");
     await reader.waitForFunction(slug => !JSON.parse(localStorage.getItem("sites:recent:v1")!).items.some((item: { slug: string }) => item.slug === slug), { polling: 100 }, artifact.slug);
     // It still exists and can be opened and recorded by its owner.
     await owner.goto(`${base}/s/${artifact.slug}`, { waitUntil: "domcontentloaded" });

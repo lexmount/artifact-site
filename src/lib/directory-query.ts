@@ -8,17 +8,21 @@ export interface DirectoryQuery {
   sort: "updated" | "title";
   scope: "owned" | "collab" | "public";
   folder: string;
+  sharing?: "all" | "private" | "shared";
 }
 export function parseDirectoryQuery(
   params: URLSearchParams,
   scope?: DirectoryQuery["scope"],
 ): DirectoryQuery {
+  const resolvedScope = scope ?? (params.get("tab") === "collab" ? "collab" : "owned");
+  const sharing = params.get("sharing");
   const page = Number(params.get("page") ?? 0);
   return {
     page: Number.isSafeInteger(page) ? Math.max(0, Math.min(100000, page)) : 0,
     q: (params.get("q") ?? "").trim().slice(0, 200),
     sort: params.get("sort") === "title" ? "title" : "updated",
-    scope: scope ?? (params.get("tab") === "collab" ? "collab" : "owned"),
+    scope: resolvedScope,
+    sharing: resolvedScope === "owned" && (sharing === "private" || sharing === "shared") ? sharing : "all",
     folder: (params.get("folder") ?? "all").slice(0, 100),
   };
 }
@@ -26,6 +30,8 @@ export interface DirectoryPage {
   sites: SiteSummary[];
   permissions: Record<string, SitePermissions>;
   total: number;
+  ownedTotal?: number;
+  sharingCounts?: { all: number; private: number; shared: number };
   query: DirectoryQuery;
   counts: { all: number; unfiled: number; byId: Record<string, number> };
   folders: FolderState;

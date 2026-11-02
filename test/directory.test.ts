@@ -126,3 +126,87 @@ describe("bounded directories", () => {
     ).toBe(0);
   });
 });
+
+it("filters effective sharing before pagination and keeps folder/search counts consistent", async () => {
+  const owner = await upsertUser({authProvider:"test",providerSubject:createId("sharing-owner")});
+  const reader = await upsertUser({authProvider:"test",providerSubject:createId("sharing-reader")});
+  const ids: string[] = [];
+  for (let i=0;i<16;i++) {
+    const id=createId("s"); ids.push(id);
+    await insertSiteWithVersion({id,slug:id,title:`Sharing ${String(i).padStart(2,"0")}`,kind:"single",editToken:"secret",ownerId:owner.id,visibility:i<13?"unlisted":"private"},
+      {id:createId("v"),siteId:id,entry:"index.html",source:"upload",fileCount:1,byteSize:1});
+  }
+  const read = (query="") => readDirectory({userId:owner.id},parseDirectoryQuery(new URLSearchParams(query)));
+  expect((await read("sharing=shared")).total).toBe(13);
+  expect((await read("sharing=shared&page=1")).sites).toHaveLength(1);
+  expect((await read("sharing=private")).sites.map(s=>s.slug).sort()).toEqual(ids.slice(13).sort());
+  await putUserSiteRole(rbacQuery,ids[13],reader.id,"viewer",owner.id);
+  expect((await read("sharing=shared")).total).toBe(14);
+  await putUserSiteRole(rbacQuery,ids[13],reader.id,null,owner.id);
+  const shareId=createId("share");
+  await rbacQuery("INSERT INTO site_shares(id,site_id,token_hash,policy,created_at,mode) VALUES($1,$2,$3,'public',$4,'view')",[shareId,ids[14],createId("hash"),Date.now()]);
+  expect((await read("sharing=shared")).total).toBe(14);
+  await rbacQuery("UPDATE site_shares SET expires_at=1 WHERE id=$1",[shareId]);
+  expect((await read("sharing=shared")).total).toBe(13);
+  await rbacQuery("UPDATE site_shares SET expires_at=NULL,revoked_at=1 WHERE id=$1",[shareId]);
+  expect((await read("sharing=shared")).total).toBe(13);
+  const folder=createId("folder");
+  await insertFolder({id:folder,userId:owner.id,name:"Mixed",createdAt:1},20);
+  await setFolderAssignment(owner.id,ids[0],folder);
+  await setFolderAssignment(owner.id,ids[15],folder);
+  const filtered=await read(`sharing=private&folder=${folder}&q=Sharing`);
+  expect(filtered.total).toBe(1);
+  expect(filtered.counts.byId[folder]).toBe(1);
+  expect(filtered.sharingCounts).toEqual({all:2,private:1,shared:1});
+  expect(filtered.sites[0].sharingStatus).toMatchObject({shared:false});
+  expect((await read("sharing=shared&q=Sharing%2000")).sharingCounts).toEqual({all:1,private:0,shared:1});
+  expect(parseDirectoryQuery(new URLSearchParams("sharing=bad")).sharing).toBe("all");
+  expect(parseDirectoryQuery(new URLSearchParams("tab=collab&sharing=private")).sharing).toBe("all");
+});
+
+
+it("uses effective main sharing and ignores empty, revoked and unavailable access channels", async () => {
+  const owner = await upsertUser({authProvider:"test",providerSubject:createId("effective-owner")});
+  const id=createId("s"), version=createId("v");
+  await insertSiteWithVersion({id,slug:id,title:"Effective sharing",kind:"single",editToken:"secret",ownerId:owner.id,visibility:"private"},
+    {id:version,siteId:id,entry:"index.html",source:"upload",fileCount:1,byteSize:1});
+  const read=async () => (await readDirectory({userId:owner.id},parseDirectoryQuery(new URLSearchParams()))).sites[0].sharingStatus;
+  await rbacQuery("INSERT INTO site_sharing_state(site_id,owner_id,audience,comments,source,updated_at) VALUES($1,$2,'tenant',1,'manual',1)",[id,owner.id]);
+  expect(await read()).toMatchObject({shared:true,audience:"tenant"});
+  // A detached collection must not retain its old audience, even if stored visibility is broad.
+  await rbacQuery("UPDATE site_sharing_state SET source='all',source_id=NULL WHERE site_id=$1",[id]);
+  await rbacQuery("UPDATE sites SET visibility='unlisted' WHERE id=$1",[id]);
+  expect(await read()).toMatchObject({shared:false,audience:"private"});
+  const link=createId("link");
+  await rbacQuery("INSERT INTO site_shares(id,site_id,token_hash,policy,created_at,mode) VALUES($1,$2,$3,'people',1,'view')",[link,id,createId("hash")]);
+  expect(await read()).toMatchObject({shared:false});
+  await rbacQuery("INSERT INTO share_grants(share_id,email,granted_at) VALUES($1,'invited@example.com',1)",[link]);
+  expect(await read()).toMatchObject({shared:true,links:true});
+  await rbacQuery("UPDATE sites SET taken_down_at=1 WHERE id=$1",[id]);
+  expect(await read()).toMatchObject({shared:false});
+  await rbacQuery("UPDATE sites SET taken_down_at=NULL WHERE id=$1",[id]);
+  expect(await read()).toMatchObject({shared:true});
+  await rbacQuery("UPDATE site_shares SET revoked_at=1 WHERE id=$1",[link]);
+  expect(await read()).toMatchObject({shared:false});
+});
+
+
+it("keeps taken-down works shared while a direct collaborator can still read", async () => {
+  const { setSiteTakenDown } = await import("@/lib/db");
+  const { canReadVersion } = await import("@/lib/share");
+  const owner = await upsertUser({ authProvider: "test", providerSubject: createId("owner") });
+  const reader = await upsertUser({ authProvider: "test", providerSubject: createId("reader") });
+  const id = createId("s"), version = createId("v");
+  await insertSiteWithVersion({ id, slug: id, title: "Taken down with collaborator", kind: "single", editToken: "secret", ownerId: owner.id, visibility: "private" },
+    { id: version, siteId: id, entry: "index.html", source: "upload", fileCount: 1, byteSize: 1 });
+  await putUserSiteRole(rbacQuery, id, reader.id, "viewer", owner.id);
+  await setSiteTakenDown(id, Date.now(), "Review required");
+  const site = (await getSiteBySlug(id))!;
+  expect(await canReadVersion(new Request("http://directory/"), site, version, { userId: reader.id } as Session)).toBe(true);
+  const read = (sharing: string) => readDirectory({ userId: owner.id }, parseDirectoryQuery(new URLSearchParams({ sharing })));
+  expect((await read("shared")).sites[0]?.sharingStatus).toMatchObject({ shared: true, members: true, links: false, audience: "private" });
+  expect((await read("private")).total).toBe(0);
+  await putUserSiteRole(rbacQuery, id, reader.id, null, owner.id);
+  expect((await read("shared")).total).toBe(0);
+  expect((await read("private")).total).toBe(1);
+});

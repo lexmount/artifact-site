@@ -33,7 +33,7 @@ export function useAuth(): AuthState {
 }
 
 /** Send the browser to the IdP, returning to wherever it is now. */
-export function loginHref(returnTo?: string): string {
-  const target = returnTo ?? (typeof window === "undefined" ? "/" : window.location.pathname + window.location.search);
-  return appPath(`/api/auth/login?return_to=${encodeURIComponent(target)}`);
+export function loginHref(returnTo?: string, switchAccount = false): string {
+  const target = returnTo ?? (typeof window === "undefined" ? "/" : window.location.pathname + window.location.search + window.location.hash);
+  return appPath(`/api/auth/login?return_to=${encodeURIComponent(target)}${switchAccount ? "&switch_account=1" : ""}`);
 }

@@ -397,7 +397,13 @@ export async function backfillEditTokens(): Promise<number> {
 }
 
 export async function upsertUser(input: UpsertUserInput): Promise<User & { created: boolean }> {
-  return (await getStore()).upsertUser(input);
+  const user = await (await getStore()).upsertUser(input);
+  if (input.publicDisplayName !== undefined) {
+    const name = input.publicDisplayName?.trim();
+    const safeName = name && !name.includes("@") && name !== input.providerSubject && name.toLowerCase() !== input.email?.toLowerCase() ? name : null;
+    await rbacQuery("UPDATE users SET public_display_name=$2 WHERE id=$1", [user.id, safeName]);
+  }
+  return user;
 }
 export async function getUser(id: string): Promise<User | null> {
   return (await getStore()).getUser(id);
@@ -519,6 +525,17 @@ export async function touchSession(id: string, expiresAt: number, lastSeenAt: nu
 }
 export async function revokeSession(id: string): Promise<void> {
   return rbacTransaction(async () => (await getStore()).revokeSession(id));
+}
+/** Revoke only the credentials presented by this browser, all or nothing. */
+export async function revokeBrowserSessions(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  await rbacTransaction(async q => {
+    const now = Date.now();
+    for (const id of new Set(ids)) {
+      // Use the transaction's query connection, not the store's autocommit wrapper.
+      await q("UPDATE sessions SET revoked_at=$1 WHERE id=$2 AND revoked_at IS NULL", [now, id]);
+    }
+  });
 }
 export async function revokeUserSessions(userId: string, exceptId: string | null = null): Promise<number> {
   return rbacTransaction(async () => (await getStore()).revokeUserSessions(userId, exceptId));

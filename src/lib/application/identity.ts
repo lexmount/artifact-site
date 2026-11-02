@@ -2,6 +2,7 @@
 // page, including the fully anonymous read path, and an error status there would be noise rather
 // than signal. The one exception is a presented-but-dead Bearer: an agent checking its token
 // before publishing needs the refusal and its reason (`code`), not a quiet `user: null`.
+import { autoLoginAllowed } from "@/lib/oidc-auto-login";
 import { NextResponse } from "next/server";
 import { getUser } from "@/lib/db";
 import { resolveSession } from "@/lib/session";
@@ -26,7 +27,7 @@ async function currentUser(request: Request): Promise<NextResponse> {
     const oidcEnabled = config.oidcEnabled;
     const operator = isAdmin(request);
     const uploadLimits = { maxBytes: limits.maxBytes, maxFileBytes: limits.maxFileBytes, maxFiles: limits.maxFiles };
-    if (!session) return json({ user: null, operator, oidcEnabled, uploadLimits }, 200);
+    if (!session) return json({ user: null, operator, oidcEnabled, uploadLimits, autoLogin: oidcEnabled && !operator && !request.headers.has("authorization") && autoLoginAllowed(request) }, 200);
     const user = await getUser(session.userId);
     if (!user) return json({ user: null, operator, oidcEnabled, uploadLimits }, 200);
     return json({

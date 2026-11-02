@@ -31,8 +31,26 @@ const idp=http.createServer(async(req,res)=>{
   if(url.pathname.endsWith('/.well-known/openid-configuration'))return res.end(JSON.stringify({issuer,authorization_endpoint:issuer+'/auth',token_endpoint:issuer+'/token',jwks_uri:issuer+'/jwks'}));
   if(url.pathname.endsWith('/jwks'))return res.end(JSON.stringify({keys:[jwk]}));
   if(url.pathname.endsWith('/auth')){
+   const dest=new URL(url.searchParams.get('redirect_uri'));dest.searchParams.set('state',url.searchParams.get('state'));
+   const accountCookie=(req.headers.cookie||'').split(';').map(part=>part.trim()).find(part=>part.startsWith('mock_idp_session='))?.split('=')[1];
+   const signedIn=Boolean(accountCookie);
+   if(url.searchParams.get('prompt')==='login'&&!url.searchParams.has('mock_account')){
+    res.setHeader('content-type','text/html');
+    const option=(account,label)=>{const target=new URL(url);target.searchParams.set('mock_account',account);return `<a id="account-${account}" href="${target.href.replaceAll('&','&amp;')}">${label}</a>`;};
+    return res.end(`<h1>Choose a test account</h1>${option('1','Account A')}${option('2','Account B')}${option('cancel','Cancel')}`);
+   }
+   if(url.searchParams.get('mock_account')==='cancel'){
+    dest.searchParams.set('error','access_denied');res.writeHead(302,{location:dest.href});return res.end();
+   }
+   const account=url.searchParams.get('mock_account')||accountCookie||'1';
+   url.searchParams.set('mock_account',account);
+   if(url.searchParams.get('prompt')==='none'&&!signedIn){
+    dest.searchParams.set('error','login_required');res.writeHead(302,{location:dest.href});return res.end();
+   }
+   // Interactive authorization establishes the IdP session; silent attempts only reuse it.
+   if(url.searchParams.get('prompt')!=='none')res.setHeader('set-cookie',`mock_idp_session=${account}; Path=/; HttpOnly; SameSite=Lax`);
    const code=randomBytes(16).toString('hex');codes.set(code,url.searchParams);
-   const dest=new URL(url.searchParams.get('redirect_uri'));dest.searchParams.set('code',code);dest.searchParams.set('state',url.searchParams.get('state'));
+   dest.searchParams.set('code',code);
    res.writeHead(302,{location:dest.href});return res.end();
   }
   if(url.pathname.endsWith('/token')){
@@ -40,7 +58,7 @@ const idp=http.createServer(async(req,res)=>{
    const form=new URLSearchParams(body), flow=codes.get(form.get('code'));codes.delete(form.get('code'));
    assert(flow);assert.equal(form.get('redirect_uri'),flow.get('redirect_uri'));
    assert.equal(createHash('sha256').update(form.get('code_verifier')).digest('base64url'),flow.get('code_challenge'));
-   const token=await new SignJWT({sub:'migration-person',email:'migration@example.test',email_verified:true,name:'Migration Test',nonce:flow.get('nonce')})
+   const token=await new SignJWT({sub:flow.get('mock_account')==='2'?'switch-person':'migration-person',email:flow.get('mock_account')==='2'?'switch@example.test':'migration@example.test',email_verified:true,name:flow.get('mock_account')==='2'?'Switch Test':'Migration Test',nonce:flow.get('nonce')})
      .setProtectedHeader({alg:'RS256',kid:jwk.kid}).setIssuer(issuer).setAudience('migration').setIssuedAt().setExpirationTime('5m').sign(keys.privateKey);
    return res.end(JSON.stringify({id_token:token}));
   }
@@ -193,7 +211,7 @@ try {
   console.log(`First-time OAuth: ${base}`);
   const context=await browser.createBrowserContext(), fresh=await context.newPage();
   const requests=[];fresh.on('request',req=>requests.push(req.url()));
-  await fresh.goto(base+'/',{waitUntil:'domcontentloaded'});
+  await fresh.goto(base+'/',{waitUntil:'networkidle0'});
   assert.equal((await api(fresh,base,'/api/auth/me')).user,null);
   try { await connect(base,fresh); } catch(error) {
    console.error('First-time OAuth failed',base,fresh.url(),await fresh.$eval('body',el=>el.innerText),requests);throw error;
@@ -204,12 +222,122 @@ try {
   assert((await api(fresh,base,'/api/auth/me')).user);
   await context.close();
  }
+ console.log('Checking account switch, cancellation, cross-tab identity and local sign-out');
+ {
+  const context=await browser.createBrowserContext(), tab=await context.newPage();
+  await tab.goto(B+'/api/auth/login?return_to=%2Fme',{waitUntil:'networkidle0'});
+  await tab.evaluate(()=>{document.cookie='ah_locale=en; Path=/';});
+  await tab.reload({waitUntil:'networkidle0'});
+  const accountA=(await api(tab,B,'/api/auth/me')).user;
+  const oldCookies=(await context.cookies()).filter(c=>c.name==='ah_session').map(c=>`${c.name}=${c.value}`).join('; ');
+  const seedPrivate=async(page,title)=>{
+   const created=await api(page,B,'/api/sites',{mode:'paste',html:`<h1>${title}</h1>`,title},'POST',{'idempotency-key':randomBytes(16).toString('hex')});
+   await api(page,B,`/api/sites/${created.slug}/sharing`,{visibility:'private'},'PUT');
+  };
+  await seedPrivate(tab,'Private account A artifact');
+  const bContext=await browser.createBrowserContext(), bTab=await bContext.newPage();
+  await bTab.goto(B+'/api/auth/login?switch_account=1&return_to=%2Fme',{waitUntil:'networkidle0'});
+  await Promise.all([bTab.waitForNavigation({waitUntil:'networkidle0'}),bTab.click('#account-2')]);
+  await seedPrivate(bTab,'Private account B artifact one');
+  await seedPrivate(bTab,'Private account B artifact two');
+  await bContext.close();
+  const peer=await context.newPage();await peer.goto(B+'/me',{waitUntil:'networkidle0'});
+  await peer.waitForFunction(()=>document.body.innerText.includes('Private account A artifact'));
+  assert((await peer.$eval('#me-tab-owned',el=>el.textContent)).includes('1'));
+  await peer.evaluate(()=>{
+   window.staleAccountDataShown=false;
+   new MutationObserver(()=>{
+    if(document.querySelector('.auth-chip > button')?.getAttribute('title')==='switch@example.test' && document.body.innerText.includes('Private account A artifact'))window.staleAccountDataShown=true;
+   }).observe(document.body,{subtree:true,childList:true,attributes:true,characterData:true});
+  });
+  const startSwitch=async(failLogout=false)=>{
+   await tab.bringToFront();
+   console.log('Opening switch menu');
+   await tab.waitForSelector('.auth-chip > button[title]');
+   await tab.waitForSelector('.welcome-burst',{hidden:true});
+   await tab.click('.auth-chip > button[title]');
+   await tab.waitForFunction(()=>getComputedStyle(document.querySelector('.auth-menu')).opacity==='1');
+   const link=await tab.waitForSelector('::-p-text(Switch account)');
+   if(failLogout){
+    const intercept=request=>request.url().endsWith('/api/auth/logout')
+     ? request.respond({status:503,contentType:'application/json',body:JSON.stringify({error:'unavailable'})})
+     : request.continue();
+    await tab.setRequestInterception(true);tab.on('request',intercept);
+    await link.click();await tab.waitForSelector('.auth-menu [role="alert"]');
+    await tab.setRequestInterception(false);tab.off('request',intercept);
+    assert.equal(new URL(tab.url()).pathname,'/artifact-site/me','Failed logout must not start authorization');
+    assert.equal((await api(tab,B,'/api/auth/me')).user.id,accountA.id);
+    await tab.click('.auth-chip > button[title]');
+    return;
+   }
+   await Promise.all([tab.waitForFunction(()=>location.hostname==='idp.test' && new URL(location.href).searchParams.get('prompt')==='login'),link.click()]);
+   await tab.waitForSelector('#account-cancel');
+   assert.equal(new URL(tab.url()).searchParams.get('prompt'),'login',`${tab.url()} ${await tab.$eval('body',el=>el.innerText)}`);
+  };
+  await startSwitch(true);
+  await startSwitch();
+  assert.equal((await (await localFetch(B+'/api/auth/me',{headers:{cookie:oldCookies}})).json()).user,null,'Old session must be revoked before IdP interaction');
+  // HTTP fixture origins have no crypto.randomUUID; exercise the focus sync fallback.
+  await peer.bringToFront();
+  await peer.waitForSelector('a[aria-label="Sign in / Sign up"]');
+  await tab.bringToFront();
+  console.log('Cancelling switch');
+  await Promise.all([tab.waitForNavigation({waitUntil:'networkidle0'}),tab.click('#account-cancel')]);
+  assert(await tab.$('a[href*="switch_account=1"]'),'Failed switch must retry in switch mode');
+  await tab.goto(B+'/me',{waitUntil:'networkidle0'});
+  assert.equal((await api(tab,B,'/api/auth/me')).user,null,'Cancelled switch must stay anonymous');
+  assert.equal((await (await localFetch(B+'/api/auth/me',{headers:{cookie:oldCookies}})).json()).user,null,'Switch must revoke old credentials before authentication');
+  await tab.reload({waitUntil:'networkidle0'});
+  assert.equal((await api(tab,B,'/api/auth/me')).user,null,'Cancelled switch must suppress automatic SSO');
+  await Promise.all([tab.waitForNavigation({waitUntil:'networkidle0'}),tab.click('a[aria-label="Sign in / Sign up"]')]);
+  assert.equal(new URL(tab.url()).searchParams.get('prompt'),'login');
+  await Promise.all([tab.waitForNavigation({waitUntil:'networkidle0'}),tab.click('#account-2')]);
+  console.log('Switched to account B');
+  const accountB=(await api(tab,B,'/api/auth/me')).user;
+  assert.notEqual(accountB.id,accountA.id);
+  await peer.waitForFunction(()=>document.querySelector('.auth-chip > button')?.getAttribute('title')==='switch@example.test');
+  await peer.waitForFunction(()=>document.body.innerText.includes('Private account B artifact one') && document.body.innerText.includes('Private account B artifact two') && !document.body.innerText.includes('Private account A artifact'));
+  assert((await peer.$eval('#me-tab-owned',el=>el.textContent)).includes('2'),'Peer count must belong to B');
+  assert.equal(await peer.evaluate(()=>window.staleAccountDataShown),false,'A data must never render under B identity');
+  assert.equal((await (await localFetch(B+'/api/auth/me',{headers:{cookie:oldCookies}})).json()).user,null,'Old session must be revoked');
+  await tab.waitForSelector('.welcome-burst',{hidden:true});
+  await tab.click('.auth-chip > button');
+  await tab.waitForFunction(()=>getComputedStyle(document.querySelector('.auth-menu')).opacity==='1');
+  await tab.screenshot({path:'test-results/account-switch-menu.png'});
+  await Promise.all([tab.waitForNavigation({waitUntil:'networkidle0'}),tab.evaluate(()=>[...document.querySelectorAll('button[role="menuitem"]')].find(b=>b.textContent.includes('Sign out')).click())]);
+  await tab.waitForSelector('a[aria-label="Sign in / Sign up"]');
+  assert.equal(await tab.$('[aria-label="More sign-in options"]'),null,'Guests have one sign-in entry');
+  assert.equal((await api(tab,B,'/api/auth/me')).user,null);
+  await tab.reload({waitUntil:'networkidle0'});
+  assert.equal((await api(tab,B,'/api/auth/me')).user,null,'Reload after sign-out must stay anonymous');
+  await tab.setViewport({width:390,height:844});
+  assert(await tab.$eval('.brand img',el=>el.getBoundingClientRect().width>=90),'Mobile brand must remain readable');
+  await tab.screenshot({path:'test-results/account-switch-guest-mobile.png'});
+  await Promise.all([tab.waitForNavigation({waitUntil:'networkidle0'}),tab.click('a[aria-label="Sign in / Sign up"]')]);
+  assert.equal(new URL(tab.url()).searchParams.get('prompt'),'login');
+  await Promise.all([tab.waitForNavigation({waitUntil:'networkidle0'}),tab.click('#account-1')]);
+  assert.equal((await api(tab,B,'/api/auth/me')).user.id,accountA.id);
+  await startSwitch();
+  await Promise.all([tab.waitForNavigation({waitUntil:'networkidle0'}),tab.click('#account-2')]);
+  assert.equal((await api(tab,B,'/api/auth/me')).user.id,accountB.id,'Direct account switch succeeds');
+  assert(!(await context.cookies()).some(c=>c.name==='artifact_sso_opt_out'),'Successful sign-in clears suppression');
+  await context.close();
+ }
  let site,user;
  for(const base of [B]){
   console.log(`Checking browser login, shared data, preview, editing and downloads: ${base}`);
   await page.goto(base+'/api/auth/login?return_to=%2Fme',{waitUntil:'domcontentloaded'});
   assert.equal(new URL(page.url()).pathname,new URL(base).pathname.replace(/\/$/,'')+'/me');
   const me=await api(page,base,'/api/auth/me');assert(me.user);if(user)assert.equal(me.user.id,user);else user=me.user.id;
+  console.log('Checking automatic sign-in with an existing IdP session');
+  const cookies=await page.browserContext().cookies();
+  await page.browserContext().deleteCookie(...cookies.filter(cookie=>cookie.name==='ah_session'||cookie.name==='artifact_sso_retry'));
+  await page.evaluate(()=>Object.keys(sessionStorage).filter(key=>key.startsWith('artifact-site:sso-attempt:')).forEach(key=>sessionStorage.removeItem(key)));
+  const automatic=page.waitForRequest(request=>request.url().startsWith(issuer+'/auth?')&&new URL(request.url()).searchParams.get('prompt')==='none');
+  await page.goto(base+'/me?tab=recent#sso-return',{waitUntil:'networkidle0'});
+  await automatic;
+  assert.equal((await api(page,base,'/api/auth/me')).user.id,user);
+  assert.equal(page.url(),base+'/me?tab=recent#sso-return');
   const createBody={mode:'paste',html:'<!doctype html><html><head><title>Migration</title></head><body><h1>Migration content</h1></body></html>',title:'Migration'};
   const createKey=randomBytes(16).toString('hex'), createHeaders={'idempotency-key':createKey};
   site=await api(page,base,'/api/sites',createBody,'POST',createHeaders);
@@ -268,7 +396,12 @@ try {
   }
   const guest=await browser.createBrowserContext(), guestPage=await guest.newPage();
   const localShare=base+'/v/'+share.token;
-  await guestPage.goto(localShare,{waitUntil:'domcontentloaded'});
+  console.log('Checking anonymous share after silent login fallback');
+  const silentReturn=guestPage.waitForResponse(response=>new URL(response.url()).pathname.endsWith('/callback') && new URL(response.url()).searchParams.get('state')?.startsWith('silent.'))
+   .then(()=>guestPage.waitForNavigation({waitUntil:'networkidle0'}));
+  await guestPage.goto(localShare,{waitUntil:'networkidle0'});
+  await silentReturn;
+  assert.equal((await api(guestPage,base,'/api/auth/me')).user,null);
   await guestPage.type('input[name="passcode"]','migration-test');
   await Promise.all([guestPage.waitForNavigation({waitUntil:'domcontentloaded'}),guestPage.click('button[type="submit"]')]);
   assert(guestPage.url().startsWith(localShare));await guestPage.waitForSelector('iframe');await guest.close();
@@ -300,16 +433,25 @@ try {
  await client.connect(new StreamableHTTPClientTransport(new URL(B+'/mcp'),{authProvider:b,fetch:localFetch}));
  assert((await client.listTools()).tools.length>0);
  await api(page,B,'/api/auth/logout',{});assert.equal((await api(page,B,'/api/auth/me')).user,null);
- await page.goto(B+'/api/auth/login?return_to=%2Fme',{waitUntil:'domcontentloaded'});assert.equal((await api(page,B,'/api/auth/me')).user.id,user);
+ await page.goto(B+'/api/auth/login?return_to=%2Fme',{waitUntil:'networkidle0'});
+ assert.equal(new URL(page.url()).searchParams.get('prompt'),'login');
+ await Promise.all([page.waitForNavigation({waitUntil:'networkidle0'}),page.click('#account-1')]);
+ assert.equal((await api(page,B,'/api/auth/me')).user.id,user);
  assert.deepEqual(escaped,[],'B requests escaped its mount');assert.deepEqual(pageErrors,[],'Browser JavaScript errors');
  assert(discoveryRequests.has('/.well-known/oauth-authorization-server/artifact-site'));
  assert.equal((await fetch(`http://127.0.0.1:${appPort}/artifact-site/api/auth/me`)).status,200);
  console.log('PASS: canonical subpath, gateway redirects, login, edit/download, share unlock, UI upload/PDF, SDK OAuth/refresh and old-entry removal');
 }finally{
  for(const client of clients)await client.close().catch(()=>{});
- if(browser)await browser.close();
+ if(browser){
+  const child=browser.process();
+  await browser.close();
+  // Chrome descendants can retain these log pipes after the browser has exited on macOS.
+  child?.stdout?.destroy();child?.stderr?.destroy();
+ }
  await writeFile('test-results/migration-server.log',await docker('logs',app).catch(()=>''));
  await docker('rm','-f',app,pg).catch(()=>{});await docker('volume','rm',volume).catch(()=>{});await docker('network','rm',network).catch(()=>{});
  gateway.closeAllConnections();await new Promise(resolve=>gateway.close(resolve));
- await new Promise(resolve=>idp.close(resolve));
+ idp.closeAllConnections();await new Promise(resolve=>idp.close(resolve));
+
 }

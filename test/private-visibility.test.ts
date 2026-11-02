@@ -129,7 +129,7 @@ describe("metadata is gated too — the leak that hid behind a clean <head>", ()
 
     const meta = await generateSiteMetadata({ params: Promise.resolve({ slug: site.slug }) });
 
-    expect(meta.title).toBe("Site not found — artifact-site");
+    expect(meta.title).toBe("Access denied — artifact-site");
     expect(meta.description).toBeNull();                  // null, not absent — absent means inherit
     expect(JSON.stringify(meta)).not.toContain("裁员名单第三批");
     expect(JSON.stringify(meta)).not.toContain("-desc");

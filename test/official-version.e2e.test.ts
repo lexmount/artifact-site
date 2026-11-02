@@ -329,8 +329,12 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     await page.setViewport({ width: 1440, height: 960 });
     await page.goto(`${base}/me?tab=recent`, { waitUntil: "networkidle2" });
     await page.waitForSelector('.site-list:not(.my-sites-list) .site-row');
-    expect(await page.$eval('.site-list .list-header', el => getComputedStyle(el).gridTemplateColumns.split(" ").length)).toBe(5);
+    expect(await page.$eval('.site-list .list-header', el => getComputedStyle(el).gridTemplateColumns.split(" ").length)).toBe(6);
+    expect(await page.$eval(".recent-sites-list .list-header", el => el.textContent)).toContain("Author");
+    expect(await page.$eval(".recent-sites-list .row-author", el => el.textContent?.trim().length)).toBeGreaterThan(0);
     await page.setViewport({ width: 390, height: 844 });
+    expect(await page.$eval(".recent-sites-list .row-author", el => getComputedStyle(el).display)).not.toBe("none");
+    expect(await page.$eval(".recent-sites-list .row-date", el => getComputedStyle(el).display)).not.toBe("none");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.setViewport({ width: 1440, height: 960 });
   }, 60000);

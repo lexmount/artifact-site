@@ -45,9 +45,24 @@ export const pages: Messages = {
     "请把当前项目的产物（网页或 PDF/Office 文档）发布到 artifact-site，发布手册：{url}",
 
   // Not found
-  "Site not found — artifact-site": "站点未找到 — artifact-site",
-  "Site not found": "站点未找到",
-  "The site this link points to does not exist or has been deleted.": "这个链接指向的站点不存在，或者已经被删除。",
+  "Site not found — artifact-site": "站点不存在 — artifact-site",
+  "Site not found": "站点不存在",
+  "The site this link points to does not exist or has been deleted. Check that the link is correct.": "该链接指向的站点不存在或已被删除，请检查链接是否正确。",
+  "Back to site": "返回站点",
+  "Retry access": "重新尝试",
+  "You do not have permission to edit this site. Contact the site owner or the person who sent you the link to request edit access.": "你没有编辑此站点的权限。请联系站点所有者或向你发送链接的人申请编辑权限。",
+  "Access denied": "暂无访问权限",
+  "Access denied — artifact-site": "暂无访问权限 — artifact-site",
+  "You are not signed in. Sign in, then try opening this link again.": "你尚未登录。请先登录，再尝试打开此链接。",
+  "Your current account does not have access to this site. Contact the site owner or the person who sent you the link, then retry once access is granted.": "当前账号没有访问此站点的权限。请联系站点所有者或向你发送链接的人，获得授权后重试。",
+  "You do not have access to this site. Contact the site owner or the person who sent you the link, then retry once access is granted.": "你没有访问此站点的权限。请联系站点所有者或向你发送链接的人，获得授权后重试。",
+  "Current account: {account}": "当前账号：{account}",
+  "Sign in and retry": "登录后重试",
+  "Version not found": "版本不存在",
+  "Version not found — artifact-site": "版本不存在 — artifact-site",
+  "The version this link points to does not exist or has been deleted. Try opening the current version of the site.": "该链接指向的版本不存在或已被删除，请尝试打开站点的当前版本。",
+  "Open current version": "打开当前版本",
+  "Site taken down": "站点已下架",
 
   // /activate
   "Device authorization": "设备授权",
@@ -71,7 +86,6 @@ export const pages: Messages = {
 
   // /me
   "Account views": "个人中心视图",
-  "Created by me": "我创建的",
   "I can edit": "我可以编辑的",
   "Publish tokens": "发布令牌",
 

@@ -105,6 +105,10 @@ jobs:
           THUMBNAIL_BROWSER: "1"
           E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - uses: docker/setup-buildx-action@v3
+      - name: Test browser account recovery
+        run: npx vitest run test/auth-recovery.browser.test.ts
+        env:
+          E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - uses: docker/build-push-action@v7
         with:
           context: .

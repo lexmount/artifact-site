@@ -1,3 +1,6 @@
+import { siteAuthorName } from "@/lib/site-author";
+import SiteAccessDenied from "@/components/site-access-denied";
+import SiteVersionMissing from "@/components/site-version-missing";
 import { publicationPolicy } from "@/lib/publication-policy";
 // Viewer route /s/[slug] — resolves the live site + current version from the store and renders
 // the running site inside the sandboxed SiteViewer chrome. Unknown/deleted slug → 404.
@@ -39,7 +42,7 @@ export const dynamic = "force-dynamic";
  * directly, as the tests do — there is no request scope to cache in, which is also why the pair
  * can never leak between requests).
  */
-const pageContext = cache(async (slug: string) => {
+const pageContext = cache(async (slug: string, requestedVersion?: string) => {
   const bag = await headers();
   const request = viewerRequestFromHeaders(bag, `/s/${slug}`);
   const [original, session] = await Promise.all([getSiteView(slug), resolveSession(request)]);
@@ -47,7 +50,13 @@ const pageContext = cache(async (slug: string) => {
   const version = site && original ? (site.currentVersionId === original.version.id ? original.version : await getVersion(site.currentVersionId)) : null;
   const view = site && version ? { site, version } : null;
   const readable = view != null && (await canReadSite(request, view.site, session));
-  return { bag, request, view, session, readable };
+  const selected = requestedVersion ? await getVersion(requestedVersion) : view?.version;
+  const selectedView = view && selected && selected.siteId === view.site.id ? { site: view.site, version: selected } : null;
+  const state = !original ? "missing"
+    : !readable && original.site.takenDownAt ? "removed"
+    : !readable ? "denied" : !selectedView ? "version-missing"
+    : !(await canReadVersion(request, selectedView.site, selectedView.version.id, session)) ? "denied" : "ready";
+  return { bag, request, view: selectedView, session, state };
 });
 
 /** How much of the entry document to scan for a description. `<head>` lives at the top, and a large
@@ -66,15 +75,22 @@ const META_SCAN_BYTES = 64 * 1024;
  * 2. Open Graph tags, so the card renders as a card at all. There were none, which is why the
  *    scrapers were falling back to the bare <title> + <meta description> in the first place.
  */
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+export async function generateMetadata({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams?: Promise<{ version?: string }> }): Promise<Metadata> {
   const { slug } = await params;
   // Gate the METADATA too, not just the page. generateMetadata runs on its own — the page calling
   // notFound() replaces the <head> from the not-found boundary, but this function's result is still
   // serialised into the RSC flight payload, so a plain `curl` on a private site's URL hands out its
   // title and description. Verified: without this check the title appeared 3× in the response body
   // while <head> looked clean, which is exactly how it slipped past the first round of testing.
-  const { bag, view, readable } = await pageContext(slug);
-  if (!view || !readable) return { title: (await getT())("Site not found — artifact-site"), description: null };
+  const sp = await searchParams;
+  const { bag, view, state } = await pageContext(slug, sp?.version);
+  if (state !== "ready" || !view) {
+    const t = await getT();
+    const title = state === "missing" ? t("Site not found — artifact-site")
+      : state === "version-missing" ? t("Version not found — artifact-site")
+      : state === "removed" ? t("Site taken down") : t("Access denied — artifact-site");
+    return { title, description: null, robots: { index: false, follow: false } };
+  }
 
   const title = `${view.site.title} — artifact-site`;
   // Best-effort: a missing/unreadable entry must never fail the page, only leave the card plainer.
@@ -116,25 +132,20 @@ export default async function ViewerPage({
   // gate, the permission flags and the view log all see the same reader (see pageContext). The
   // viewer Request variant carries the address / agent / prefetch headers logSiteOpen reads; the
   // authorization path ignores them.
-  const { request, view: latestView, session, readable } = await pageContext(slug);
-  const selected = requestedVersion ? await getVersion(requestedVersion) : latestView?.version;
-  const view = latestView && selected && selected.siteId === latestView.site.id ? { site: latestView.site, version: selected } : null;
-  if (!view) notFound();
-  // Taken down: the link was public and people hold it, so the honest answer is a sentence, not a
-  // 404. No reason is shown — it was written for the owner and the administrators.
-  if (!readable && view.site.takenDownAt) return removedNotice(await getT());
-  // A private site's own address is for its owner and collaborators; readers arrive at /v/<token>.
-  // notFound() rather than a refusal screen — same reason the API outlets answer 404.
-  if (!readable) notFound();
-  if (!(await canReadVersion(request, view.site, view.version.id, session))) notFound();
+  const { request, view, session, state } = await pageContext(slug, requestedVersion);
+  if (state === "missing") notFound();
+  if (state === "removed") return removedNotice(await getT());
+  if (state === "denied") return SiteAccessDenied({ session });
+  if (state === "version-missing" || !view) return SiteVersionMissing({ slug });
   // Independent lookups, one round-trip's worth of waiting. `session` is threaded into
   // describePermissions so nothing on this page resolves the cookie twice.
-  const [versionCount, permissions] = await Promise.all([
+  const [versionCount, permissions, authorName] = await Promise.all([
     countVersions(view.site.id),
     // Permissions are computed server-side and handed down as flags. The client never decides who
     // may do what — after identity landed only the server can know, and rendering a control the
     // viewer cannot use is worse than not rendering it.
     describePermissions(request, view.site, session),
+    siteAuthorName(view.site),
   ]);
   // Recorded HERE and nowhere else — the /s/ twin of /v/[token]'s logShareView, same contract
   // (page only, 30-minute collapse, best-effort). After the read gate: a refused opening is not
@@ -147,8 +158,9 @@ export default async function ViewerPage({
   return (
     <>
       {/* Renders nothing — it files this visit into the browser's "Recently viewed" shelf. Everything it
-          needs was already resolved above, so the shelf costs no extra query and no extra fetch. */}
+          needs was resolved after the read gate; no client fetch is needed. */}
       <RecentTracker
+        authorName={authorName}
         slug={slug}
         versionId={requestedVersion}
         title={view.site.title}

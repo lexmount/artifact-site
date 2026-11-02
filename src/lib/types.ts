@@ -384,6 +384,10 @@ export type VersionInfo = Version & { current: boolean; official?: boolean; numb
 
 /** Site + its current version + how many versions it has — the shape the list UI wants. */
 export interface SiteSummary {
+  /** Browser history snapshot: null is anonymous; absent means not recorded. */
+  authorName?: string | null;
+  /** Effective access channels, provided only by the owner directory. */
+  sharingStatus?: { shared: boolean; audience: import("@/lib/sharing-policy").SharingPolicy["audience"]; members: boolean; links: boolean };
   /** All recorded direct and share opens, available only to the owner. */
   totalViews?: number;
   officialVersionId?: string | null;

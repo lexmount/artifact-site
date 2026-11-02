@@ -7,10 +7,11 @@ import { requestBase } from "@/lib/public-base";
 // Server-only: this module reaches the database / object store / secrets, and must never be
 // bundled into a client component. The import is a build-time tripwire (see next.js docs).
 import "server-only";
+import { autoLoginOptedOut } from "@/lib/oidc-auto-login";
 import { SESSION_COOKIE_NAMES } from "@/lib/session-cookie";
 import { randomBytes } from "node:crypto";
 import { safeEqual, sha256hex } from "@/lib/crypto";
-import { createSession, getPublishToken, getSession, revokeSession, touchPublishToken, touchSession } from "@/lib/db";
+import { createSession, getPublishToken, getSession, revokeBrowserSessions, touchPublishToken, touchSession } from "@/lib/db";
 import { isSecureRequest, readCookie } from "@/lib/http";
 import { InsufficientScopeError, isAdmin } from "@/lib/auth";
 import { resolveOauthAccessToken } from "@/lib/oauth";
@@ -41,9 +42,17 @@ const hashSecret = sha256hex;
  * the prefix's entire point — but it can set `ah_session` with Domain=.example.com, and a fallback
  * would happily accept it.
  */
+function sessionCookieName(request: Request, automatic = false): string {
+  if (automatic) return isSecureRequest(request) ? SESSION_COOKIE_NAMES.secureAutomatic : SESSION_COOKIE_NAMES.developmentAutomatic;
+  return isSecureRequest(request) ? SESSION_COOKIE_NAMES.secure : SESSION_COOKIE_NAMES.development;
+}
 function readSessionSecret(request: Request): string | null {
-  if (isSecureRequest(request)) return readCookie(request, SESSION_COOKIE_NAMES.secure);
-  return readCookie(request, SESSION_COOKIE_NAMES.development);
+  // Silent responses never write the explicit cookie. This priority survives even responses
+  // delivered out of order, after a newer login/logout has completed in a different tab.
+  const explicit = readCookie(request, sessionCookieName(request));
+  if (explicit) return explicit;
+  if (autoLoginOptedOut(request)) return null;
+  return readCookie(request, sessionCookieName(request, true));
 }
 
 export interface MintedSession {
@@ -55,7 +64,7 @@ export interface MintedSession {
 export async function mintSession(
   request: Request,
   userId: string,
-  opts: { oidcSid?: string | null; ip?: string | null; userAgent?: string | null } = {},
+  opts: { automatic?: boolean; oidcSid?: string | null; ip?: string | null; userAgent?: string | null } = {},
 ): Promise<MintedSession> {
   const secret = randomBytes(32).toString("base64url");
   const id = hashSecret(secret);
@@ -73,19 +82,19 @@ export async function mintSession(
     expiresAt, absoluteExpiresAt: now + SESSION_ABSOLUTE_MS, lastSeenAt: now, revokedAt: null,
     ip: opts.ip ?? null, userAgent: opts.userAgent ?? null,
   };
-  return { session, cookie: buildCookie(request, secret, SESSION_TTL_MS / 1000) };
+  return { session, cookie: buildCookie(request, secret, SESSION_TTL_MS / 1000, opts.automatic) };
 }
 
-function buildCookie(request: Request, value: string, maxAgeSec: number): string {
+function buildCookie(request: Request, value: string, maxAgeSec: number, automatic = false): string {
   const secure = isSecureRequest(request);
-  const name = secure ? SESSION_COOKIE_NAMES.secure : SESSION_COOKIE_NAMES.development;
+  const name = sessionCookieName(request, automatic);
   const parts = [`${name}=${encodeURIComponent(value)}`, "Path=/", "HttpOnly", "SameSite=Lax", `Max-Age=${maxAgeSec}`];
   if (secure) parts.push("Secure");
   return parts.join("; ");
 }
 
-export function clearSessionCookie(request: Request): string {
-  return buildCookie(request, "", 0);
+export function clearSessionCookie(request: Request, automatic = false): string {
+  return buildCookie(request, "", 0, automatic);
 }
 
 /**
@@ -147,8 +156,12 @@ export async function resolveSession(request: Request): Promise<Session | null> 
 }
 
 export async function endSession(request: Request): Promise<void> {
-  const secret = readSessionSecret(request);
-  if (secret) await revokeSession(hashSecret(secret));
+  const ids: string[] = [];
+  for (const automatic of [false, true]) {
+    const secret = readCookie(request, sessionCookieName(request, automatic));
+    if (secret) ids.push(hashSecret(secret));
+  }
+  await revokeBrowserSessions(ids);
 }
 
 /**

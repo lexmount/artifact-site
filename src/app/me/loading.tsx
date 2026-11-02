@@ -1,1 +1,1 @@
-export { default } from "@/components/page-skeleton";
+export { default } from "@/components/directory-loading";

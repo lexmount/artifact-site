@@ -13,6 +13,27 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("account navigation
     browser = await puppeteer.launch({ executablePath: process.env.E2E_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, args: process.env.CI ? ["--no-sandbox"] : [] });
   });
   afterAll(async () => { await browser?.close(); await closeDbForTests(); });
+  it("ignores old claim links and removes the claim action from account tools", async () => {
+    const user = await upsertUser({ authProvider: "claim-link", providerSubject: createId("user") });
+    const context = await browser.createBrowserContext();
+    const pair = (await mintSession(new Request(base!), user.id)).cookie.split(";")[0];
+    await context.setCookie({ name: pair.split("=")[0], value: pair.split("=")[1], domain: new URL(base!).hostname, path: "/" });
+    const page = await context.newPage();
+    await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
+    let claimRequests = 0;
+    page.on("request", (request) => {
+      if (request.url().includes("/claim")) claimRequests++;
+    });
+    await page.goto(`${base}/me#claim=old-site`, { waitUntil: "networkidle0" });
+    await page.waitForSelector('.work-tabs-tools button[aria-haspopup="menu"]');
+    await page.click('.work-tabs-tools button[aria-haspopup="menu"]');
+    expect(await page.$$eval('[role="menuitem"]', (nodes) => nodes.map((node) => node.textContent))).toContain("Publish tokens");
+    expect(await page.$("#claim-address")).toBeNull();
+    expect(await page.evaluate(() => document.body.innerText)).not.toContain("Claim a site");
+    expect(claimRequests).toBe(0);
+    await context.close();
+  });
+
   it.each([
     ["tenants", "en"], ["claims", "zh-CN"],
   ])("recovers a failed %s lookup without reloading (%s)", async (failed, locale) => {
