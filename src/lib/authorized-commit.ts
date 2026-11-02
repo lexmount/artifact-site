@@ -1,7 +1,8 @@
-import { publicationPolicy } from "@/lib/publication-policy";
-import { recordPublishedVersion } from "@/lib/publish-operation";
+import { writePublicationCreation, writePublicationVersion, translateSlugConflict } from "@/lib/publication-commit";
+export { writeCommitAudit } from "@/lib/publication-commit";
 import "server-only";
-import { createId, rbacTransaction, toSite, type InsertSiteInput, type InsertAuditInput, type InsertVersionInput, type VersionCommit } from "@/lib/db";
+import { config } from "@/lib/config";
+import { rbacTransaction, toSite, type InsertSiteInput, type InsertAuditInput, type InsertVersionInput, type VersionCommit } from "@/lib/db";
 import { AuthError, EditForbiddenError, assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
 import { requirePermission } from "@/lib/authz";
 import { resolveSession } from "@/lib/session";
@@ -22,12 +23,14 @@ export async function assertSessionCurrent(q: RbacQuery, session: Pick<Session, 
         throw new AuthError("The credential has expired or been revoked");
 }
 /** Only database work belongs in work; prepare request bodies and file bytes before calling. */
-export async function withPermissionCommit<T>(request: Request, siteId: string, permission: Permission, work: (q: RbacQuery, site: Site, session: Session | null) => Promise<T>): Promise<T> {
+export async function withPermissionCommit<T>(request: Request, siteId: string, permission: Permission, work: (q: RbacQuery, site: Site, session: Session | null) => Promise<T>, options: { lockSite?: boolean } = {}): Promise<T> {
     const session = await resolveSession(request);
     await assertPresentedBearerAlive(request, session);
     return rbacTransaction(async (q) => {
         await assertSessionCurrent(q, session);
-        const [row] = await q("SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL", [siteId]);
+        // Only publication callbacks opt in: they use q for every write. Generic callbacks
+        // may use another connection whose FK check would block on its own outer row lock.
+        const [row] = await q(`SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL${options.lockSite && config.dbDriver === "postgres" ? " FOR UPDATE" : ""}`, [siteId]);
         if (!row)
             throw new EditForbiddenError("Site no longer exists");
         const site = toSite(row);
@@ -42,14 +45,9 @@ export async function commitAuthorizedVersion(siteId: string, version: InsertVer
     return withPermissionCommit(audit.authorizationRequest, siteId, version.official ? "site.version.official.manage" : audit.action === "rollback" ? "site.version.rollback" : "site.content.edit", async (q, site) => {
         if (expected && site.currentVersionId !== expected)
             return "stale";
-        const now = Date.now();
-        await q("INSERT INTO versions(id,site_id,entry,file_count,byte_size,source,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [version.id, siteId, version.entry, version.fileCount, version.byteSize, version.source, now]);
-        await q("UPDATE sites SET current_version_id=$1,updated_at=$2 WHERE id=$3", [version.id, now, siteId]);
-        await writeCommitAudit(q, { ...audit, siteId, versionId: version.id }, now);
-        await publicationPolicy.commitVersion({ q, site, versionId: version.id, request: audit.authorizationRequest!, creating: false, official: Boolean(version.official), publishOfficial: () => designateOfficial(q, siteId, version.id, audit, now) });
-        await recordPublishedVersion(q, siteId, version.id);
+        await writePublicationVersion(q, site, version, { kind: "authorized", audit, request: audit.authorizationRequest! });
         return "applied";
-    });
+    }, { lockSite: true });
 }
 export async function commitAuthorizedCreation(site: InsertSiteInput, version: InsertVersionInput, audit: InsertAuditInput): Promise<void> {
     if (!audit.authorizationRequest) throw new Error("authorizationRequest is required for an authorized creation commit");
@@ -70,33 +68,6 @@ export async function commitAuthorizedCreation(site: InsertSiteInput, version: I
             // Source sharing may change while the copied files are being prepared.
             site = { ...site, visibility: await (await import("@/lib/sharing-defaults")).forkVisibilityCeiling(toSite(source), site.visibility, q) };
         }
-        const now = Date.now();
-        await q("INSERT INTO sites(id,slug,title,kind,current_version_id,created_at,updated_at,edit_token,anon_owner_id,owner_id,visibility,tenant_id) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11)", [site.id, site.slug, site.title, site.kind, version.id, now, site.ownerId ? "" : site.editToken, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, tenantId]);
-        await q("INSERT INTO versions(id,site_id,entry,file_count,byte_size,source,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [version.id, site.id, version.entry, version.fileCount, version.byteSize, version.source, now]);
-        await q("INSERT INTO site_comment_settings(site_id,main_policy,reader_access,updated_at) VALUES($1,'login',1,$2)", [site.id, now]);
-        await writeCommitAudit(q, audit, now);
-        const [created] = await q("SELECT * FROM sites WHERE id=$1", [site.id]);
-        await publicationPolicy.commitVersion({ q, site: toSite(created), versionId: version.id, request, creating: true, official: Boolean(version.official), publishOfficial: () => designateOfficial(q, site.id, version.id, audit, now) });
-        const [initialized] = await q("SELECT * FROM sites WHERE id=$1", [site.id]);
-        await (await import("@/lib/sharing-defaults")).initializeSharing(q, toSite(initialized), request, version.source === "fork" ? site.visibility : undefined);
-        await recordPublishedVersion(q, site.id, version.id, true);
-    }).catch(async (error) => {
-        if ((error as {
-            code?: string;
-            constraint?: string;
-        }).code === "23505" && (error as {
-            constraint?: string;
-        }).constraint?.includes("slug") || String(error).includes("UNIQUE constraint failed: sites.slug"))
-            throw new (await import("@/lib/db")).SlugConflictError();
-        throw error;
-    });
-}
-export async function writeCommitAudit(q: RbacQuery, audit: InsertAuditInput, now = Date.now()): Promise<void> {
-    await q("INSERT INTO audit_log(id,site_id,version_id,action,editor_kind,actor_user_id,actor_anon_id,method,ip,user_agent,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", [audit.id, audit.siteId, audit.versionId, audit.action, audit.editorKind, audit.actorUserId, audit.actorAnonId, audit.method, audit.ip, audit.userAgent, now]);
-}
-
-/** Publication and its designation share the final authorization check and transaction. */
-async function designateOfficial(q: RbacQuery, siteId: string, versionId: string, audit: InsertAuditInput, now: number): Promise<void> {
-    await q("UPDATE sites SET official_version_id=$1,official_set_at=$2,official_set_by=$3,official_revision=official_revision+1 WHERE id=$4", [versionId, now, audit.actorUserId ?? audit.actorAnonId, siteId]);
-    await writeCommitAudit(q, { ...audit, id: createId("aud"), siteId, versionId, action: "official.set" }, now);
+        await writePublicationCreation(q, { ...site, tenantId, editToken: site.ownerId ? "" : site.editToken }, version, { kind: "authorized", audit, request });
+    }).catch(translateSlugConflict);
 }

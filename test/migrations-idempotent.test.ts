@@ -1,3 +1,4 @@
+import { insertSiteWithVersionForTests } from "@/lib/publication-fixtures";
 // The migration array runs on EVERY startup, so any non-idempotent statement turns the second
 // boot into a crash loop that only surfaces on some unrelated restart days later. This test calls
 // init() twice — it catches both a missing IF NOT EXISTS and a syntax error the first pass hid.
@@ -40,7 +41,7 @@ describe("migrations", () => {
     await store.init();
 
     // A site round-trip must still work with the new columns present.
-    await store.insertSiteWithVersion(
+    await insertSiteWithVersionForTests(store,
       { id: "site_x", slug: "sx", title: "t", kind: "single", editToken: "tok", visibility: "public" },
       { id: "ver_x", siteId: "site_x", entry: "index.html", fileCount: 1, byteSize: 4, source: "upload" },
     );
