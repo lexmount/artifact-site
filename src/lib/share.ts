@@ -1,4 +1,5 @@
-import { mainSharingActive } from "@/lib/sharing-defaults";
+import { sharePeopleAdmit } from "@/lib/share-admission";
+import { mainSharingActive } from "@/lib/sharing-read";
 import { publicationPolicy } from "@/lib/publication-policy";
 import type { Authority } from "@/lib/authz";
 import { sessionReceiptShare } from "@/lib/notifications/receipts";
@@ -113,11 +114,7 @@ export async function sharePolicyAccess(
       // `people`: the account may be named directly, or by an e-mail address that had not signed in
       // when the owner added it. Only a VERIFIED address may satisfy the latter — an unverified one
       // is attacker-controllable, so someone could claim their way onto any list.
-      const grants = await rbacQuery(
-        "SELECT g.share_id FROM share_grants g JOIN users u ON u.id=$2 WHERE g.share_id=$1 AND (g.user_id=$2 OR (u.email_verified=TRUE AND u.email IS NOT NULL AND u.email<>'' AND g.email IS NOT NULL AND LOWER(g.email)=LOWER(u.email))) LIMIT 1",
-        [share.id, session.userId],
-      );
-      return grants.length
+      return await sharePeopleAdmit(share.id, session.userId)
         ? { ok: true, share }
         : { ok: false, reason: "notInvited", share };
     }

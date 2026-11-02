@@ -1,4 +1,4 @@
-import { mainSharingActiveSql } from "@/lib/sharing-sql";
+import { publicDiscoverySql } from "@/lib/sharing-sql";
 import { listSharesQuery } from "@/lib/share-queries";
 import { migrateNumbered } from "@/lib/migrations";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -681,7 +681,7 @@ export class PostgresStore implements MetadataStore {
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
-        AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL AND ${mainSharingActiveSql})
+        AND ((${publicDiscoverySql})
              OR (s.owner_id = $1 AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = $2)
              OR EXISTS (SELECT 1 FROM authorization_site_members c
@@ -827,7 +827,7 @@ export class PostgresStore implements MetadataStore {
 
   // --- share links -------------------------------------------------------------
   // Every statement below is written to match db-sqlite.ts predicate for predicate, ORDER BY for
-  // ORDER BY. listLiveShares and shareAdmits are the read gate: a divergence between the two
+  // ORDER BY. listLiveShares feeds the read gate: a divergence between the two
   // backends is not a cosmetic drift, it is someone reading an artifact they were never admitted to
   // — and only in production, since the suite runs on SQLite.
 
@@ -945,25 +945,6 @@ export class PostgresStore implements MetadataStore {
         WHERE g.share_id=$1
         ORDER BY g.granted_at, COALESCE(g.user_id, g.email)`, [shareId]);
     return (rows as Row[]).map(toShareGrantRow);
-  }
-
-  async shareAdmits(shareId: string, userId: string, verifiedEmail: string | null): Promise<boolean> {
-    // `|| null` so an empty string cannot stand in for a verified address.
-    const email = verifiedEmail || null;
-    // Two arms, and the e-mail arm is explicitly gated on the PARAMETER being non-null. SQL's own
-    // NULL semantics would already refuse to match (`lower(email) = lower(NULL)` is NULL, not true),
-    // but this is the one predicate in the file where "no verified address admits nobody" must be
-    // legible rather than inferred — a later edit that reaches for COALESCE would otherwise turn
-    // every e-mail grant into a wildcard.
-    // An e-mail row can never be admitted by the account arm either: its user_id is NULL, and
-    // `NULL = $2` is NULL.
-    const row = await this.one(
-      `SELECT 1 AS ok FROM share_grants
-        WHERE share_id=$1
-          AND (user_id = $2 OR ($3::text IS NOT NULL AND email IS NOT NULL AND lower(email) = lower($3)))
-        LIMIT 1`,
-      [shareId, userId, email]);
-    return row != null;
   }
 
   async recordShareView(view: ShareView): Promise<void> {
@@ -1626,7 +1607,7 @@ export class PostgresStore implements MetadataStore {
       JOIN sites s ON s.id = t.site_id AND s.current_version_id = t.version_id,
            to_tsquery('simple', $3) q
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND t.tokens @@ q
-        AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL AND ${mainSharingActiveSql})
+        AND ((${publicDiscoverySql})
              OR (s.owner_id = $1 AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = $2)
              OR EXISTS (SELECT 1 FROM authorization_site_members c WHERE c.site_id = s.id AND c.subject_type<>'everyone' AND c.user_id = $1))

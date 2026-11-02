@@ -1,4 +1,5 @@
-import { mainSharingActive, mainSharingRole } from "@/lib/sharing-defaults";
+import { sharePeopleAdmit } from "@/lib/share-admission";
+import { mainSharingActive, mainSharingRole } from "@/lib/sharing-read";
 import { publicationPolicy } from "@/lib/publication-policy";
 import { receiptShare, sessionReceiptShare } from "@/lib/notifications/receipts";
 import { databaseRoleAllows, everyoneRole } from "@/lib/role-bindings";
@@ -11,7 +12,6 @@ import {
   getShare,
   getUser,
   getVersion,
-  shareAdmits,
 } from "@/lib/db";
 import {
   accountSiteRole,
@@ -86,18 +86,7 @@ export async function authorizePreview(
         return null;
       if (!readerVersionAllowed(site, grant.versionId, share.versionId)) return null;
       if (share.policy === "login" && !grant.userId) return null;
-      if (share.policy === "people") {
-        const user = grant.userId ? await getUser(grant.userId) : null;
-        if (
-          !user ||
-          !(await shareAdmits(
-            share.id,
-            user.id,
-            user.emailVerified ? user.email : null,
-          ))
-        )
-          return null;
-      }
+      if (share.policy === "people" && (!grant.userId || !await sharePeopleAdmit(share.id, grant.userId))) return null;
     } else if (
       site.visibility === "private" || !(await mainSharingActive(site)) ||
       site.takenDownAt ||

@@ -1,3 +1,4 @@
+import { sharePeopleAdmit } from "@/lib/share-admission";
 import { publicationPolicy } from "@/lib/publication-policy";
 import "server-only";
 import { rbacQuery, toShareRow } from "@/lib/db";
@@ -80,13 +81,7 @@ export async function receiptShare(
   for (const row of rows) {
     const share = toShareRow(row);
     if (!readerVersionAllowed(site, versionId, share.versionId)) continue;
-    if (share.policy === "people") {
-      const grant = await rbacQuery(
-        `SELECT g.share_id FROM share_grants g JOIN users u ON u.id=$2 WHERE g.share_id=$1 AND (g.user_id=$2 OR (u.email_verified=TRUE AND u.email IS NOT NULL AND u.email<>'' AND LOWER(g.email)=LOWER(u.email))) LIMIT 1`,
-        [share.id, userId],
-      );
-      if (!grant.length) continue;
-    }
+    if (share.policy === "people" && !await sharePeopleAdmit(share.id, userId)) continue;
     return share;
   }
   return null;

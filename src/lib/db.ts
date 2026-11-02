@@ -421,9 +421,6 @@ export interface MetadataStore {
   addShareGrant(shareId: string, target: { userId?: string | null; email?: string | null }, grantedBy: string | null): Promise<void>;
   removeShareGrant(shareId: string, target: { userId?: string | null; email?: string | null }): Promise<void>;
   listShareGrants(shareId: string): Promise<ShareGrant[]>;
-  /** Does this share admit this person? Matches the account, or an e-mail grant against their
-   *  VERIFIED address — which is why the address is passed in rather than looked up here. */
-  shareAdmits(shareId: string, userId: string, verifiedEmail: string | null): Promise<boolean>;
 
   recordShareView(view: ShareView): Promise<void>;
   /** Has this exact reader been recorded on this share since `since`? Collapses refreshes. */
@@ -823,9 +820,7 @@ export async function removeShareGrant(
 export async function listShareGrants(shareId: string): Promise<ShareGrant[]> {
   return (await getStore()).listShareGrants(shareId);
 }
-export async function shareAdmits(shareId: string, userId: string, verifiedEmail: string | null): Promise<boolean> {
-  return (await getStore()).shareAdmits(shareId, userId, verifiedEmail);
-}
+
 export async function recordShareView(view: ShareView): Promise<void> {
   return (await getStore()).recordShareView(view);
 }
