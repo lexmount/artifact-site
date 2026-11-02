@@ -211,7 +211,13 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
       expect(await page.evaluate(() => document.documentElement.dataset.copiedUrl)).toBe(`${base}/s/${slug}`);
       expect((await (await api("sharing")).json()).visibility).toBe("private");
       expect((await (await api("shares")).json()).shares).toHaveLength(0);
-      expect((await fetch(`${base}/s/${slug}`)).status).toBe(404);
+      const denied = await fetch(`${base}/s/${slug}?lang=en`);
+      expect(denied.status).toBe(200);
+      const deniedHtml = await denied.text();
+      expect(deniedHtml).toContain("Access denied");
+      expect(deniedHtml).not.toContain('<iframe');
+      expect(deniedHtml).not.toContain("Sharing acceptance");
+      expect((await fetch(`${base}/api/preview/${slug}`)).status).toBe(404);
       await page.screenshot({ path: "test-results/sharing-main.png" });
       expect(await page.$eval('.sharing-advanced-entry', el => {
         const row = el.getBoundingClientRect();
@@ -624,7 +630,13 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
       expect(await iframe!.evaluate(el => el.getAttribute("src"))).toContain(`v=${version}`);
       expect(await page.$eval(".presentation-exit", el => el.getAttribute("href"))).toBe(`/s/${slug}?version=${version}`);
       await api("sharing", "PUT", { visibility: "private" });
-      expect((await fetch(`${base}/s/${slug}?presentation=1`)).status).toBe(404);
+      const denied = await fetch(`${base}/s/${slug}?presentation=1&lang=en`);
+      expect(denied.status).toBe(200);
+      const deniedHtml = await denied.text();
+      expect(deniedHtml).toContain("Access denied");
+      expect(deniedHtml).not.toContain('<iframe');
+      expect(deniedHtml).not.toContain("Sharing acceptance");
+      expect((await fetch(`${base}/api/preview/${slug}`)).status).toBe(404);
     } finally { await context.close(); }
   });
 });
