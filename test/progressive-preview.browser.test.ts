@@ -7,6 +7,7 @@ import path from "node:path";
 describe.skipIf(!process.env.E2E_CHROME)("preview eligibility regressions", () => {
   let browser: Browser, server: Server, base: string;
   let requests = 0;
+  const thumbnailQueries: string[] = [];
   beforeAll(async () => {
     const output = await build({configFile:false,logLevel:"silent",resolve:{alias:{"@":path.resolve("src")}},
       define:{"process.env.NODE_ENV":JSON.stringify("development"),"process.env.NEXT_PUBLIC_ARTIFACT_BASE_PATH":JSON.stringify("")},
@@ -14,8 +15,9 @@ describe.skipIf(!process.env.E2E_CHROME)("preview eligibility regressions", () =
     const bundle = (Array.isArray(output) ? output[0] : output) as {output:{type:string;code?:string}[]};
     const code = bundle.output.find(item => item.type === "chunk")!.code!;
     server = createServer((req,res) => {
+      const url = new URL(req.url!, "http://fixture.test");
       if (req.url === "/bundle.js") { res.setHeader("content-type","text/javascript"); res.end(code); }
-      else if (req.url === "/content") { requests++; res.setHeader("content-type","text/html"); res.end("<h1>Preview</h1>"); }
+      else if (url.pathname === "/content") { thumbnailQueries.push(url.searchParams.get("__artifact_thumb") ?? ""); requests++; res.setHeader("content-type","text/html"); res.end("<h1>Preview</h1>"); }
       else { res.setHeader("content-type","text/html"); res.end('<div id="root"></div><script src="/bundle.js"></script>'); }
     });
     await new Promise<void>(resolve => server.listen(0,"127.0.0.1",resolve));
@@ -24,7 +26,7 @@ describe.skipIf(!process.env.E2E_CHROME)("preview eligibility regressions", () =
   });
   afterAll(async () => { await browser?.close(); await new Promise<void>(resolve => server?.close(() => resolve())); });
   it("restarts restored previews from cover after taking down a loaded artifact", async () => {
-    const page = await browser.newPage(); requests = 0;
+    const page = await browser.newPage(); requests = 0; thumbnailQueries.length = 0;
     try {
       await page.goto(base);
       await page.waitForSelector('[data-preview-state="ready"] iframe');
@@ -40,10 +42,11 @@ describe.skipIf(!process.env.E2E_CHROME)("preview eligibility regressions", () =
       expect(requests).toBe(1);
       await page.waitForSelector('[data-preview-state="ready"] iframe');
       expect(requests).toBe(2);
+      expect(thumbnailQueries).toEqual(["1", "1"]);
     } finally { await page.close(); }
   });
   it("never requests a known taken-down artifact", async () => {
-    const page = await browser.newPage(); requests = 0;
+    const page = await browser.newPage(); requests = 0; thumbnailQueries.length = 0;
     try {
       await page.goto(`${base}/?removed`);
       await page.waitForSelector('.artifact-cover');
@@ -53,7 +56,7 @@ describe.skipIf(!process.env.E2E_CHROME)("preview eligibility regressions", () =
     } finally { await page.close(); }
   });
   it("uses the newest visibility record in a batched observer callback", async () => {
-    const page = await browser.newPage(); requests = 0;
+    const page = await browser.newPage(); requests = 0; thumbnailQueries.length = 0;
     try {
       await page.evaluateOnNewDocument(() => {
         window.IntersectionObserver = class {
@@ -73,6 +76,7 @@ describe.skipIf(!process.env.E2E_CHROME)("preview eligibility regressions", () =
       await page.evaluate(() => window.dispatchEvent(new Event('enter-preview')));
       await page.waitForSelector('[data-preview-state="ready"] iframe');
       expect(requests).toBe(1);
+      expect(thumbnailQueries).toEqual(["1"]);
     } finally { await page.close(); }
   });
 });

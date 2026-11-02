@@ -11,7 +11,10 @@ export default function ProgressivePreview({ site, src }: { site: SiteSummary; s
   // Removing the active child releases its queue slot and discards stale loading state.
   // Restoring the site mounts a fresh attempt that must pass the dwell and queue again.
   if (site.takenDownAt) return <div className="progressive-preview" data-preview-state="cover"><ArtifactCover site={site} /></div>;
-  return <ActivePreview key={src} site={site} src={src} />;
+  const thumbnailUrl = new URL(src, "https://preview.invalid");
+  thumbnailUrl.searchParams.set("__artifact_thumb", "1");
+  const thumbnailSrc = `${thumbnailUrl.pathname}${thumbnailUrl.search}${thumbnailUrl.hash}`;
+  return <ActivePreview key={thumbnailSrc} site={site} src={thumbnailSrc} />;
 }
 
 function ActivePreview({ site, src }: { site: SiteSummary; src: string }) {
