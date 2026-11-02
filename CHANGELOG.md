@@ -5,6 +5,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Serve static card thumbnails without scripts, event handlers, or embedded pages to avoid sandbox script errors in the browser console; preserve PDF filename posters and escaped noscript text, and retain existing iframe permissions and preview CSP.
+
 - Show recoverable account-page errors when tenant access or browser-artifact checks fail, with independent retries that preserve other available account actions.
 
 - Show collection sharing beside the All sites heading with a shared-state icon badge. Replace the account Workspaces entry with role-appropriate tenant settings, and separate explicit browser-artifact claiming into a default-tenant confirmation page.

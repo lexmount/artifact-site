@@ -311,6 +311,7 @@ export async function servePreviewFile(
   pdfNavigation = false,
   download = false,
   targetOrigin = config.publicUrl ? new URL(config.publicUrl).origin : "*",
+  thumbnail = false,
 ): Promise<PreviewResponse> {
   const site = await getSiteBySlug(slug);
   if (!site || site.deletedAt) return jsonResponse(404, { error: "site not found" });
@@ -337,7 +338,7 @@ export async function servePreviewFile(
     if (kind !== "file") return jsonResponse(404, { error: "file not found" });
     const extension = path.extname(target).toLowerCase();
     if (pdfNavigation && extension === ".pdf" && !download && !(site.kind === "document" && target.startsWith("original/"))) {
-      return { status: 200, body: injectPreviewBootstrap(bundledPdfViewer(target), baseHref, target, true, targetOrigin), headers: {
+      return { status: 200, body: injectPreviewBootstrap(bundledPdfViewer(target, thumbnail), baseHref, target, true, targetOrigin), headers: {
         "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store",
         "content-security-policy": composePreviewCsp(config.cspConnectSrc), "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...PREVIEW_CORS_HEADER,
       } };
@@ -413,7 +414,7 @@ export async function servePreviewFile(
     // wrapper is platform chrome frozen into an immutable version, and without this a document
     // uploaded before a viewer improvement would never receive it. See refreshDocumentWrapper.
     if (isHtml && site.kind === "document" && target === version.entry) {
-      html = refreshDocumentWrapper(html) ?? html;
+      html = refreshDocumentWrapper(html, thumbnail) ?? html;
     }
     const body = isHtml ? injectPreviewBootstrap(html, baseHref, target, site.kind === "document" && target === version.entry, targetOrigin) : raw;
     const headers: Record<string, string> = {

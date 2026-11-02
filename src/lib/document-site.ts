@@ -147,7 +147,11 @@ ${body}
 }
 
 /** The PDF.js viewer wrapper: renders `fileRelpath` (the pdf) with a download link to the original. */
-function viewerPage(meta: DocumentMeta, fileRelpath: string, downloadQuery = ""): string {
+function viewerPage(meta: DocumentMeta, fileRelpath: string, downloadQuery = "", thumbnail = false): string {
+  if (thumbnail) {
+    return pageShell(meta.originalName, "<style>.bar{display:none}</style>",
+      `<div class="bar" hidden></div><div id="stage"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:14px;padding:16px;text-align:center"><div style="font-size:56px" aria-hidden="true">📄</div><div style="font-size:20px;font-weight:600;line-height:1.5;word-break:break-all;max-width:90%">${escapeHtml(meta.originalName)}</div></div></div>`);
+  }
   const config = jsonForScriptTag({
     file: encodeRelpath(fileRelpath),
     original: encodeRelpath(meta.originalRelpath) + downloadQuery,
@@ -621,7 +625,7 @@ function encode(text: string): Uint8Array {
  * serving a document site's entry; anything unrecognizable (the download card has no island, a
  * corrupt island fails parsing) falls back to the stored bytes untouched.
  */
-export function refreshDocumentWrapper(html: string): string | null {
+export function refreshDocumentWrapper(html: string, thumbnail = false): string | null {
   // Attribute-order-insensitive on purpose: a future template that swaps type/id would otherwise
   // make every refresh silently fall back to the frozen wrapper — the exact failure this exists
   // to prevent. A round-trip unit test pins template ↔ matcher coherence.
@@ -643,7 +647,7 @@ export function refreshDocumentWrapper(html: string): string | null {
     originalName: name,
     originalRelpath: decodePath(original),
   };
-  return viewerPage(meta, decodePath(file));
+  return viewerPage(meta, decodePath(file), "", thumbnail);
 }
 
 /**
@@ -693,6 +697,6 @@ export function buildDocumentFiles(
 }
 
 /** Navigation to a PDF bundled with HTML uses the same sandbox-compatible reader. */
-export function bundledPdfViewer(relpath: string): string {
-  return viewerPage({ format: "pdf", originalName: relpath.split("/").pop()!, originalRelpath: relpath }, relpath, "?__artifact_download=1");
+export function bundledPdfViewer(relpath: string, thumbnail = false): string {
+  return viewerPage({ format: "pdf", originalName: relpath.split("/").pop()!, originalRelpath: relpath }, relpath, "?__artifact_download=1", thumbnail);
 }

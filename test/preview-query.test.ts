@@ -201,3 +201,14 @@ it("uses PDF.js only for PDF navigation, preserving bytes, downloads and ranges"
   expect(await download.text()).toBe("%PDF-1.4 fixture");
   expect((await get(segment, "docs/missing.pdf", "", { "sec-fetch-dest": "iframe" })).status).toBe(404);
 });
+
+it("supports private thumbnail keys without treating artifact thumb queries as controls", async () => {
+  const site = await make();
+  await updateSiteVisibility(site.id, "private");
+  const segment = `${site.slug}~${await keyFor(site)}`;
+  const thumbnail = await get(segment, "", "__artifact_thumb=1");
+  expect(thumbnail.status).toBe(200);
+  expect(await thumbnail.text()).not.toContain("<script");
+  expect(await (await get(segment, "index.html", "thumb=1")).text()).toContain("<script");
+  expect((await get(site.slug, "", "__artifact_thumb=1")).status).toBe(404);
+});

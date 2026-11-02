@@ -1,3 +1,4 @@
+import { staticThumbnail } from "@/lib/thumbnail-preview";
 import { requestBase } from "@/lib/public-base";
 // Serve read path — GET /api/preview/:slug/:path*. The whole body is lib/preview.servePreviewFile:
 // path guards, current-version render, <base> + storage shim, sandbox CSP. 404 unknown · 400 guard.
@@ -81,8 +82,14 @@ async function serve(request: Request, context: { params: Promise<{ slug: string
   // Document navigations include popups, which inherit the preview sandbox and cannot use
   // the native PDF plugin. Use the same reader for direct links; raw fetch/download stays PDF.
   const versionId=access.versionId;
+  // Legacy thumb is a control only on unkeyed entry URLs; reserved controls also work
+  // for scoped private previews and explicit files without claiming artifact query names.
+  const thumbnail = url.searchParams.get("__artifact_thumb") === "1" ||
+    (entryRequest && url.searchParams.get("thumb") === "1");
   const result = await servePreviewFile(slug, path, versionId, baseHref, request.headers.get("range"), imageViewer,
     ["document", "iframe", "frame", "object", "embed"].includes(request.headers.get("sec-fetch-dest") ?? ""),
-    url.searchParams.get("__artifact_download") === "1", new URL(requestBase(request)).origin);
-  return new NextResponse(result.body as BodyInit, { status: result.status, headers: { ...result.headers, vary: "Sec-Fetch-Dest", "cache-control": access.key ? "private, no-store" : result.headers["cache-control"] ?? "no-store" } });
+    url.searchParams.get("__artifact_download") === "1", new URL(requestBase(request)).origin, thumbnail);
+  const body = thumbnail && result.status === 200 && typeof result.body === "string" &&
+    result.headers["content-type"]?.startsWith("text/html") ? staticThumbnail(result.body) : result.body;
+  return new NextResponse(body as BodyInit, { status: result.status, headers: { ...result.headers, vary: "Sec-Fetch-Dest", "cache-control": access.key ? "private, no-store" : result.headers["cache-control"] ?? "no-store" } });
 }

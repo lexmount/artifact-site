@@ -99,6 +99,11 @@ jobs:
         run: npx vitest run test/preview-navigation.browser.test.ts
         env:
           E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+      - name: Test static thumbnail sandbox
+        run: npx vitest run test/thumbnail-preview.test.ts
+        env:
+          THUMBNAIL_BROWSER: "1"
+          E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v7
         with:

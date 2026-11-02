@@ -278,13 +278,13 @@ describe.skipIf(!baseUrl)("document viewer — real-browser E2E", () => {
     await page.close();
   }, 60_000);
 
-  it("?thumb renders a static poster — no PDF.js boot, no page canvases", async () => {
+  it.each(["thumb=1", "__artifact_thumb=1"])("?%s renders a static poster — no PDF.js boot, no page canvases", async (query) => {
     const page = await englishPage(browser);
     await page.setViewport({ width: 400, height: 300 });
     const requests: string[] = [];
     await page.setRequestInterception(true);
     page.on("request", (request) => { requests.push(request.url()); request.continue().catch(() => {}); });
-    await page.goto(`${baseUrl}/api/preview/${slug}?thumb=1`, { waitUntil: "networkidle0", timeout: 30_000 });
+    await page.goto(`${baseUrl}/api/preview/${slug}?${query}`, { waitUntil: "networkidle0", timeout: 30_000 });
     await new Promise((resolve) => setTimeout(resolve, 1_500));
     const state = (await page.evaluate(`({
       canvases: document.querySelectorAll("#stage canvas").length,
