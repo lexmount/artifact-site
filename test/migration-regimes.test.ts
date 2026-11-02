@@ -4,7 +4,8 @@ import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDbForTests, createId, getSiteBySlug, insertSiteWithVersion, upsertUser } from "@/lib/db";
+import { closeDbForTests, createId, getSiteBySlug, upsertUser } from "@/lib/db";
+import { insertSiteWithVersion } from "@/lib/publication-service";
 import { resolveViewer } from "@/lib/authz";
 import type { Site } from "@/lib/types";
 

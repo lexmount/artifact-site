@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { addVersionAsCurrentIfCurrentIs, createId, getSite, listVersions, softDeleteSite } from "@/lib/db";
+import { createId, getSite, listVersions, softDeleteSite } from "@/lib/db";
+import { addVersionAsCurrentIfCurrentIs } from "@/lib/publication-service";
 import { createSite, editSite } from "@/lib/sites";
 import { folderFiles, testAudit} from "./helpers";
 

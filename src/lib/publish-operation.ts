@@ -10,7 +10,7 @@ import { ownerKeyFor } from "@/lib/upload-session";
 import { assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
 import { resolveSession } from "@/lib/session";
 import { assertMutationOrigin } from "@/lib/request-auth";
-import { errorResponse, json, readBodyWithinUploadLimit } from "@/app/api/_util";
+import { errorResponse, json, readBodyWithinUploadLimit } from "@/lib/api-http";
 import { anonymousExpiresAt } from "@/lib/quota";
 import type { NextResponse } from "next/server";
 

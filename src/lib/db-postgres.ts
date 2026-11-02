@@ -64,11 +64,11 @@ import {
   type UpsertUserInput,
   type DeviceGrant,
   type ListViewer,
-  type MetadataStore,
   type PublishToken,
   type Row,
   toUserFolder, type UserFolder, type FolderAssignment,
-} from "@/lib/db";
+} from "@/lib/metadata-model";
+import type { MetadataStore } from "@/lib/db";
 
 // BIGINT (oid 20) comes back as a string by default to avoid precision loss; parse to Number
 // (ms timestamps and our counts are safely < 2^53). Set once at module load.

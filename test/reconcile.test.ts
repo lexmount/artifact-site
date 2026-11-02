@@ -3,14 +3,13 @@ import { createSite, deleteSite } from "@/lib/sites";
 import { getStorage } from "@/lib/storage";
 import { reconcileOrphans } from "@/lib/reconcile";
 import {
-  addVersionAsCurrent,
   createId,
   getSiteBySlug,
   getVersion,
-  insertSiteWithVersion,
   SlugConflictError,
   softDeleteSite,
 } from "@/lib/db";
+import { addVersionAsCurrent, insertSiteWithVersion } from "@/lib/publication-service";
 import { u8 } from "./helpers";
 
 describe("insertSiteWithVersion / addVersionAsCurrent — atomic composites", () => {

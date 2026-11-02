@@ -66,11 +66,11 @@ import {
   toOauthToken,
   type DeviceGrant,
   type ListViewer,
-  type MetadataStore,
   type PublishToken,
   type Row,
   toUserFolder, type UserFolder, type FolderAssignment,
-} from "@/lib/db";
+} from "@/lib/metadata-model";
+import type { MetadataStore } from "@/lib/db";
 
 /**
  * Exactly one of userId / email, as share_grants' CHECK constraint demands. Validated here rather

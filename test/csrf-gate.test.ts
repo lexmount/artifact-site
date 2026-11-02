@@ -208,11 +208,11 @@ describe("CSRF gate on the chunked upload of a new version", () => {
 
 describe("the published skill matches the gate it documents", () => {
   const gated = [
-    "src/app/api/sites/[slug]/route.ts",
-    "src/app/api/sites/[slug]/rollback/route.ts",
-    "src/app/api/sites/[slug]/fork/route.ts",
-    "src/app/api/sites/[slug]/edit/route.ts",
-    "src/app/api/uploads/route.ts",
+    "src/lib/application/site.ts",
+    "src/lib/application/rollback.ts",
+    "src/lib/application/fork.ts",
+    "src/lib/application/edit.ts",
+    "src/lib/application/uploads.ts",
     "src/lib/upload-csrf.ts",
   ];
 
@@ -227,7 +227,7 @@ describe("the published skill matches the gate it documents", () => {
 
   it("creation applies the same origin gate to cookie requests", async () => {
     const { readFileSync } = await import("node:fs");
-    const create = readFileSync("src/app/api/sites/route.ts", "utf8");
+    const create = readFileSync("src/lib/application/site-collection.ts", "utf8");
     expect(create).toContain("assertMutationOrigin(request)");
     expect(create).not.toContain("csrfSafe");
     expect(readFileSync("src/content/publish-skill.md", "utf8")).toContain("Cookie-based mutating requests must carry `Origin`");

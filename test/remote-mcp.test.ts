@@ -958,3 +958,26 @@ it("shares through the main link without discovery or independent links, and rev
   expect((await listShares(site.id))[0].revokedAt).not.toBeNull();
   expect((await call(outsider, "read", { slug })).error).toBe(true);
 });
+
+it("HTTP and MCP preserve read results, mutation errors, and CAS conflicts", async () => {
+  const { callApi } = await import("@/lib/mcp/api");
+  const { GET, PATCH } = await import("@/app/api/sites/[slug]/route");
+  const { POST } = await import("@/app/api/sites/[slug]/edit/route");
+  const owner = await identity("parity-owner"), stranger = await identity("parity-stranger");
+  const source = (token: string) => new Request(`${origin}/mcp`, { headers: { authorization: `Bearer ${token}` } });
+  const created = await callApi(source(owner.token), "publish", { body: { mode: "paste", html: "first", title: "Parity" } });
+  const context = { params: Promise.resolve({ slug: created.slug }) };
+  const request = (token: string, method = "GET", body?: unknown, suffix = "") => new Request(`${origin}/api/sites/${created.slug}${suffix}`, {
+    method, headers: { authorization: `Bearer ${token}`, origin, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const read = await GET(request(owner.token), context);
+  expect(read.status).toBe(200);
+  expect(await callApi(source(owner.token), "get", { slug: created.slug })).toEqual(await read.json());
+  const denied = await PATCH(request(stranger.token, "PATCH", { title: "Forbidden" }), context);
+  expect(denied.status).toBe(403);
+  await expect(callApi(source(stranger.token), "rename", { slug: created.slug, body: { title: "Forbidden" } })).rejects.toMatchObject({ statusCode: denied.status, data: await denied.json() });
+  await callApi(source(owner.token), "edit", { slug: created.slug, body: { content: "second" }, query: { expected_version: created.versionId } });
+  const conflict = await POST(request(owner.token, "POST", { content: "stale" }, `/edit?expected_version=${created.versionId}`), context);
+  expect(conflict.status).toBe(409);
+  await expect(callApi(source(owner.token), "edit", { slug: created.slug, body: { content: "stale" }, query: { expected_version: created.versionId } })).rejects.toMatchObject({ statusCode: 409, data: await conflict.json() });
+});

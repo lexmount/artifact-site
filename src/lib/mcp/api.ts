@@ -1,33 +1,33 @@
 import { requestBase } from "@/lib/public-base";
-import * as folders from "@/app/api/me/folders/route";
-import * as assignments from "@/app/api/me/folders/assignments/route";
-import * as commentResult from "@/app/api/sites/[slug]/comments/[threadId]/result/route";
-import * as commentList from "@/app/api/sites/[slug]/comments/agent-list/route";
-import * as commentDetail from "@/app/api/sites/[slug]/comments/[threadId]/route";
-import * as commentMessages from "@/app/api/sites/[slug]/comments/[threadId]/messages/route";
-import * as commentContext from "@/app/api/sites/[slug]/comments/[threadId]/agent-context/route";
-import * as operationStatus from "@/app/api/operations/[key]/route";
-import * as uploadStatus from "@/app/api/uploads/[versionId]/route";
-// Explicit in-process route dispatch: reuse the HTTP permission/business boundary without
+import * as folders from "@/lib/application/folders";
+import * as assignments from "@/lib/application/folder-assignments";
+import * as commentResult from "@/lib/application/comment-result";
+import * as commentList from "@/lib/application/comment-list";
+import * as commentDetail from "@/lib/application/comment-detail";
+import * as commentMessages from "@/lib/application/comment-messages";
+import * as commentContext from "@/lib/application/comment-context";
+import * as operationStatus from "@/lib/application/operation-status";
+import * as uploadStatus from "@/lib/application/upload-status";
+// Explicit in-process application dispatch: HTTP and MCP share the permission/business boundary without
 // forwarding credentials to an arbitrary URL or requiring a loopback network connection.
-import * as collection from "@/app/api/sites/route";
-import * as site from "@/app/api/sites/[slug]/route";
-import * as versions from "@/app/api/sites/[slug]/versions/route";
-import * as edit from "@/app/api/sites/[slug]/edit/route";
-import * as fork from "@/app/api/sites/[slug]/fork/route";
-import * as rollback from "@/app/api/sites/[slug]/rollback/route";
-import * as sharing from "@/app/api/sites/[slug]/sharing/route";
-import * as shareItem from "@/app/api/sites/[slug]/shares/[shareId]/route";
-import * as shares from "@/app/api/sites/[slug]/shares/route";
-import * as search from "@/app/api/search/route";
-import * as read from "@/app/api/sites/[slug]/text/route";
-import * as mine from "@/app/api/me/sites/route";
-import * as me from "@/app/api/auth/me/route";
-import * as uploads from "@/app/api/uploads/route";
-import * as commit from "@/app/api/uploads/[versionId]/commit/route";
-import * as uploadFile from "@/app/api/uploads/[versionId]/files/[...relpath]/route";
+import * as collection from "@/lib/application/site-collection";
+import * as site from "@/lib/application/site";
+import * as versions from "@/lib/application/versions";
+import * as edit from "@/lib/application/edit";
+import * as fork from "@/lib/application/fork";
+import * as rollback from "@/lib/application/rollback";
+import * as sharing from "@/lib/application/sharing";
+import * as shareItem from "@/lib/application/share-item";
+import * as shares from "@/lib/application/shares";
+import * as search from "@/lib/application/search";
+import * as read from "@/lib/application/site-text";
+import * as mine from "@/lib/application/user-sites";
+import * as me from "@/lib/application/identity";
+import * as uploads from "@/lib/application/uploads";
+import * as commit from "@/lib/application/upload-commit";
+import * as uploadFile from "@/lib/application/upload-file";
 
-import * as official from "@/app/api/sites/[slug]/official/route";
+import * as official from "@/lib/application/official";
 
 export type Operation = "share_revoke" | "visibility" | "visibility_set" | "public_list" | "folders" | "move" | "comment_result" | "comments_list" | "comment_read" | "comment_messages" | "comment_context" | "operation_status" | "upload_status" | "official" | "official_set" | "official_clear" | "publish" | "get" | "rename" | "delete" | "versions" | "update" | "edit" | "fork" | "rollback" | "share" | "shares" | "search" | "read" | "list" | "whoami" | "upload_start" | "upload_file" | "upload_commit";
 export function apiRequest(source: Request, route: string, method = "GET", body?: BodyInit) {

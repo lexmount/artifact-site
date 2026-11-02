@@ -5,7 +5,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveViewer } from "@/lib/authz";
-import { closeDbForTests, createId, insertSiteWithVersion, upsertUser } from "@/lib/db";
+import { closeDbForTests, createId, upsertUser } from "@/lib/db";
+import { insertSiteWithVersion } from "@/lib/publication-service";
 import type { Session, Site } from "@/lib/types";
 
 const dirs: string[] = [];

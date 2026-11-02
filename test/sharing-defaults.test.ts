@@ -639,8 +639,9 @@ it('rechecks the fork privacy ceiling at the final creation transaction', async 
   let preview = await scopeChange(owner.request, null, input);
   await scopeChange(owner.request, null, { ...input, confirmation: preview.confirmation });
   const db = await import('@/lib/db');
-  const insert = db.insertSiteWithVersion;
-  const hook = vi.spyOn(db, 'insertSiteWithVersion').mockImplementationOnce(async (...args) => {
+  const publication = await import('@/lib/publication-service');
+  const insert = publication.insertSiteWithVersion;
+  const hook = vi.spyOn(publication, 'insertSiteWithVersion').mockImplementationOnce(async (...args) => {
     expect(args[0].visibility).toBe('public');
     await rbacQuery('UPDATE sites SET taken_down_at=1 WHERE id=$1', [site.id]);
     preview = await scopeChange(owner.request, null, { enabled: false });

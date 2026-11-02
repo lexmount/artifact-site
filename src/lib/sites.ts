@@ -3,8 +3,6 @@ import { creationTenant } from "@/lib/rbac-access";
 // Verbs — the product's four actions over sites: create (upload), edit (new version),
 // list, delete. Thin orchestration over db (metadata) + store (files) + upload (parsing).
 import {
-  addVersionAsCurrent,
-  addVersionAsCurrentIfCurrentIs,
   claimSiteAudited as dbClaimSiteAudited,
   createEditToken,
   createId,
@@ -12,7 +10,6 @@ import {
   getSite,
   getSiteBySlug,
   getVersion,
-  insertSiteWithVersion,
   listSiteSummaries,
   listVersions as listVersionRows,
   SlugConflictError,
@@ -23,6 +20,7 @@ import {
   type InsertVersionInput,
   type ListViewer,
 } from "@/lib/db";
+import { addVersionAsCurrent, addVersionAsCurrentIfCurrentIs, insertSiteWithVersion } from "@/lib/publication-service";
 import { zipSync } from "fflate";
 import type { AdminLogEntry, SiteKind, DocumentFormat } from "@/lib/types";
 import { ensureAnonId } from "@/lib/anon";
