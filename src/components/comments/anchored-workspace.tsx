@@ -23,6 +23,7 @@ export interface AnchoredWorkspaceProps
   > {
   frameRef: RefObject<HTMLIFrameElement | null>;
   review?: boolean;
+  packagePaths?: boolean;
   previewGeneration?: number;
   onPreviewVersionChange?: (versionId: string | null) => void;
 }
@@ -43,6 +44,7 @@ function AnchoredWorkspaceContent(props: AnchoredWorkspaceProps) {
   const [historical, setHistorical] = useState<{
     versionId: string;
     entry: string;
+    packagePaths: boolean;
     detail: CommentThreadDetail;
   } | null>(null);
   const historicalTarget = useRef<CommentThreadDetail | null>(null);
@@ -57,6 +59,7 @@ function AnchoredWorkspaceContent(props: AnchoredWorkspaceProps) {
     frameRef,
     scope,
     generation: props.previewGeneration,
+    packagePaths: historical ? historical.packagePaths : props.packagePaths,
   });
   const { locate: locateMarker, navigate, ready, setMarkers } = bridge;
   const pending = useRef<{
@@ -191,7 +194,7 @@ function AnchoredWorkspaceContent(props: AnchoredWorkspaceProps) {
       }
       try {
         const options = await commentRequest<{
-          versions: { id: string; entry: string }[];
+          versions: { id: string; entry: string; packagePaths: boolean }[];
         }>(`/api/sites/${encodeURIComponent(slug)}/comments/options`);
         if (sequence !== historyRequest.current) return;
         const version = options.versions.find((v) => v.id === detail.space.versionId);
@@ -204,7 +207,7 @@ function AnchoredWorkspaceContent(props: AnchoredWorkspaceProps) {
         if (scope.versionId === suppliedScope.versionId)
           returnPath.current = preview.current.filePath || filePath;
         historicalTarget.current = detail;
-        setHistorical({ versionId: version.id, entry: version.entry, detail });
+        setHistorical({ versionId: version.id, entry: version.entry, packagePaths: version.packagePaths, detail });
       } catch {
         setNotice(t("Could not open the original version. Try again."));
       }

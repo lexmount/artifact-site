@@ -7,6 +7,7 @@ import * as commentDetail from "@/lib/application/comment-detail";
 import * as commentMessages from "@/lib/application/comment-messages";
 import * as commentContext from "@/lib/application/comment-context";
 import * as operationStatus from "@/lib/application/operation-status";
+import * as uploadRetry from "@/lib/application/upload-retry";
 import * as uploadStatus from "@/lib/application/upload-status";
 // Explicit in-process application dispatch: HTTP and MCP share the permission/business boundary without
 // forwarding credentials to an arbitrary URL or requiring a loopback network connection.
@@ -29,7 +30,7 @@ import * as uploadFile from "@/lib/application/upload-file";
 
 import * as official from "@/lib/application/official";
 
-export type Operation = "share_revoke" | "visibility" | "visibility_set" | "public_list" | "folders" | "move" | "comment_result" | "comments_list" | "comment_read" | "comment_messages" | "comment_context" | "operation_status" | "upload_status" | "official" | "official_set" | "official_clear" | "publish" | "get" | "rename" | "delete" | "versions" | "update" | "edit" | "fork" | "rollback" | "share" | "shares" | "search" | "read" | "list" | "whoami" | "upload_start" | "upload_file" | "upload_commit";
+export type Operation = "share_revoke" | "visibility" | "visibility_set" | "public_list" | "folders" | "move" | "comment_result" | "comments_list" | "comment_read" | "comment_messages" | "comment_context" | "operation_status" | "upload_retry" | "upload_status" | "official" | "official_set" | "official_clear" | "publish" | "get" | "rename" | "delete" | "versions" | "update" | "edit" | "fork" | "rollback" | "share" | "shares" | "search" | "read" | "list" | "whoami" | "upload_start" | "upload_file" | "upload_commit";
 export function apiRequest(source: Request, route: string, method = "GET", body?: BodyInit) {
   const url = new URL(`${requestBase(source)}${route}`);
   const authorization = source.headers.get("authorization")!;
@@ -57,6 +58,7 @@ export async function callApi(source: Request, op: Operation, args: { shareId?: 
     comment_result: ["PATCH", `${thread}/result`, commentResult.PATCH],
     comment_context: ["GET", `${thread}/agent-context`, commentContext.GET],
     operation_status: ["GET", `/api/operations/${encodeURIComponent(args.key ?? "")}`, operationStatus.GET],
+    upload_retry: ["POST", `/api/uploads/${versionId}/retry`, uploadRetry.POST],
     upload_status: ["GET", `/api/uploads/${versionId}`, uploadStatus.GET],
     official: ["GET", `${item}/official`, official.GET], official_set: ["PUT", `${item}/official`, official.PUT], official_clear: ["DELETE", `${item}/official`, official.DELETE],
     publish: ["POST", "/api/sites", collection.POST], get: ["GET", item, site.GET], rename: ["PATCH", item, site.PATCH], delete: ["DELETE", item, site.DELETE],

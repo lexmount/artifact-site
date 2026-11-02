@@ -50,6 +50,7 @@ export default async function NotificationTargetPage({
         slug: target.site.slug,
         scope: target.scope,
         filePath: version.entry,
+        packagePaths: Boolean(version.packageMeta),
         initialThreadId: target.threadId,
       }}
       header={

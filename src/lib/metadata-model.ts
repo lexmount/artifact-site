@@ -204,6 +204,7 @@ export function toDeviceGrant(row: Row): DeviceGrant {
 
 export function toVersion(row: Row): Version {
   return {
+    ...(row.package_meta ? { packageMeta: JSON.parse(String(row.package_meta)) } : {}),
     id: row.id as string,
     siteId: row.site_id as string,
     entry: row.entry as string,
@@ -234,6 +235,7 @@ export function toAudit(row: Row): AuditEntry {
  *  `a:<anonId>`), and every later PUT / commit has to match it — otherwise anyone holding the
  *  versionId could push files into someone else's upload. */
 export interface UploadSessionRow {
+  packageOptions?: import("@/lib/package-contract").PackageOptions;
   tenantId?: string;
   versionId: string; siteId: string; targetSlug?: string | null; title?: string | null;
   ownerKey: string; files: { relpath: string; bytes: number; sha256?: string }[]; createdAt: number;
@@ -245,6 +247,7 @@ export function toUploadSession(row: Row): UploadSessionRow {
     tenantId: (row.tenant_id as string | undefined) ?? undefined,
     versionId: row.version_id as string, siteId: row.site_id as string,
     targetSlug: (row.target_slug as string | null) ?? null, title: (row.title as string | null) ?? null,
+    packageOptions: row.package_options ? JSON.parse(String(row.package_options)) : undefined,
     ownerKey: row.owner_key as string, files, createdAt: Number(row.created_at),
   };
 }
@@ -302,7 +305,7 @@ export interface CreateSessionInput {
 export interface CreateOidcFlowInput {
   flowId: string; verifier: string; nonce: string; returnTo: string; expiresAt: number;
 }
-export interface InsertVersionInput { official?: boolean; id: string; siteId: string; entry: string; fileCount: number; byteSize: number; source: VersionSource }
+export interface InsertVersionInput { packageMeta?: import("@/lib/package-contract").PackageMeta; official?: boolean; id: string; siteId: string; entry: string; fileCount: number; byteSize: number; source: VersionSource }
 
 /** An audit row to write. `createdAt` is stamped inside the transaction so it matches the version. */
 export interface InsertAuditInput {

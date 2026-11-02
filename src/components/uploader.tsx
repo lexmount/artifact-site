@@ -1,4 +1,12 @@
 "use client";
+import ConfirmDialog from "@/components/confirm-dialog";
+import { useUploadLeaveGuard } from "@/components/upload-leave-guard";
+import { archiveFingerprint, uploadArchiveChunks } from "@/lib/archive-chunk-client";
+import { PackageUploadHint } from "@/components/package-jobs";
+import { isPackageJob } from "@/lib/package-job-client";
+import { uploadFailureMessage, normalizePickedFolder, packageForFiles, checkArchiveSize, packageUploadLimit, type PackagePickedFiles } from "@/lib/package-upload-client";
+import type { PackageOptions } from "@/lib/package-contract";
+
 import { appFetch } from "@/lib/app-path";
 import { track, analyticsRequest } from "@/lib/analytics";
 
@@ -23,6 +31,10 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
   const { confirmUpload, uploadConfirmation } = useUploadConfirmation();
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [resumable, setResumable] = useState(false);
+  const leave = useUploadLeaveGuard(busy, resumable);
+  const [recoverJob, setRecoverJob] = useState<((recover: boolean | null) => void) | null>(null);
+  const [submittedJob, setSubmittedJob] = useState<string | null>(null);
   /** Chunked-upload progress (bytes). The old path has no readable progress, so this is only set on the chunked route. */
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +62,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
 
   function showFailure(error: unknown, fallback: string) {
     if (error instanceof ClientQuotaExceeded) return;
-    setError(error instanceof Error ? error.message : fallback);
+    setError(uploadFailureMessage(error, fallback, t));
   }
 
   // Compact mode: the whole window is the drop target. A drag entering the document raises the
@@ -83,24 +95,58 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
    * Small projects still take the old path: it saves a round trip, and that path is where zip
    * extraction and Office conversion live — things the server can only do with the complete content.
    */
-  async function submitChunked(files: Picked[], title: string) {
+  async function submitChunked(files: Picked[], title: string, packageOptions?: PackageOptions) {
     const official = await confirmUpload();
     if (official === null) return;
-    setBusy(true);
+    setSubmittedJob(null);
+    setResumable(false); setBusy(true);
     setError(null);
     setQuota(null);
     setProgress({ done: 0, total: files.reduce((sum, f) => sum + f.file.size, 0) });
     try {
-      const opened = await analyticsRequest("publish", () => appFetch("/api/uploads", {
+      if (packageOptions) {
+        const cap = await packageUploadLimit(appFetch, t);
+        if (!checkArchiveSize(files, packageOptions, cap)) throw new Error(t("Archive exceeds the server upload limit."));
+      }
+      let recoveryKey: string | undefined;
+      let recovered: string | null = null;
+      let useChunks = false;
+      if (packageOptions?.source === "archive") {
+        const me = await (await appFetch("/api/auth/me")).json();
+        useChunks = me.uploadLimits?.archiveChunks === 1;
+        setResumable(useChunks);
+        if (useChunks) {
+          recoveryKey = `archive-upload:${process.env.NEXT_PUBLIC_ARTIFACT_BASE_PATH || ""}:${me.user?.id || "anonymous"}:${await archiveFingerprint(files[0].file)}:${JSON.stringify([title, official, packageOptions.name])}`;
+          try { recovered = localStorage.getItem(recoveryKey); } catch { /* Storage is optional. */ }
+          if (recovered) {
+            const response = await appFetch(`/api/uploads/${recovered}`);
+            if (response.status === 404) recovered = null;
+            else if (!response.ok) throw new Error(t("Could not start the upload"));
+            else if (isPackageJob(await response.json())) {
+              const recover = globalThis.crypto?.subtle || await new Promise<boolean | null>(resolve => setRecoverJob(() => resolve));
+              if (recover === null) { setBusy(false); setProgress(null); return; }
+              try { localStorage.removeItem(recoveryKey); } catch { /* Storage is optional. */ }
+              if (recover) { leave.release(); setSubmittedJob(recovered); setBusy(false); setProgress(null); return; }
+              recovered = null;
+            }
+          }
+        }
+      }
+      const opened = recovered ? Response.json({ versionId: recovered }) : await analyticsRequest("publish", () => appFetch("/api/uploads", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: title || undefined, official }),
+        body: JSON.stringify({ title: title || packageOptions?.name || undefined, official, package: packageOptions }),
       }));
       const session = await opened.json().catch(() => ({}));
       if (!opened.ok || !session.versionId) fail(session, t("Could not start the upload"));
 
+      if (recoveryKey) { try { localStorage.setItem(recoveryKey, session.versionId); } catch { /* Storage is optional. */ } }
       let done = 0;
       for (const picked of files) {
-        const path = picked.path.split("/").map(encodeURIComponent).join("/");
+        if (useChunks) {
+          await uploadArchiveChunks(appFetch, session.versionId, picked.file, {}, bytes => setProgress({ done: bytes, total: picked.file.size }), t);
+          continue;
+        }
+        const path = packageOptions?.source === "archive" ? "original" : picked.path.split("/").map(encodeURIComponent).join("/");
         const res = await analyticsRequest("publish", () => appFetch(`/api/uploads/${session.versionId}/files/${path}`, {
           method: "PUT",
           // Use the File directly as the request body: the browser streams it instead of assembling a full copy in memory first.
@@ -115,14 +161,22 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
         setProgress({ done, total: files.reduce((sum, f) => sum + f.file.size, 0) });
       }
 
-      const committed = await analyticsRequest("publish", () => appFetch(`/api/uploads/${session.versionId}/commit`, {
+      const committed = await analyticsRequest("publish", () => appFetch(`/api/uploads/${session.versionId}/commit${packageOptions ? "?async=1" : ""}`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: title || undefined, official }),
       }));
       const data = await committed.json().catch(() => ({}));
+      if (committed.ok && isPackageJob(data)) {
+        if (recoveryKey) { try { localStorage.removeItem(recoveryKey); } catch { /* Storage is optional. */ } }
+        leave.release();
+        setSubmittedJob(data.versionId);
+        window.dispatchEvent(new Event("package-job-submitted"));
+        setBusy(false); setProgress(null); return;
+      }
       if (!committed.ok || !data.slug) fail(data, t("Failed to commit the upload"));
       if (data.editToken) { try { localStorage.setItem(`sites:editToken:${data.slug}`, data.editToken); } catch { /* ignore */ } }
       track("artifact_publish_success", { upload_method: "chunked" });
+      leave.release();
       router.refresh();
       router.push(`/s/${data.slug}?published=1`);
     } catch (e) {
@@ -136,7 +190,8 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
     const official = await confirmUpload();
     if (official === null) return;
     body.set("official", String(official));
-    setBusy(true);
+    setSubmittedJob(null);
+    setResumable(false); setBusy(true);
     setError(null);
     setQuota(null);
     try {
@@ -148,6 +203,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
       // Owner token: remember it so this browser can edit/delete/rename/rollback this site later.
       if (data.editToken) { try { localStorage.setItem(`sites:editToken:${slug}`, data.editToken); } catch { /* ignore */ } }
       track("artifact_publish_success", { upload_method: "inline" });
+      leave.release();
       router.refresh();
       router.push(`/s/${slug}?published=1`);
     } catch (e) {
@@ -162,8 +218,13 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
     return fd;
   }
 
-  function submitPicked(picked: Picked[]) {
-    if (picked.length === 0) return;
+  function submitPicked(picked: PackagePickedFiles) {
+    picked = normalizePickedFolder(picked);
+    if (picked.length === 0 && !picked.directories?.length) return;
+    const packageOptions = packageForFiles(picked);
+    if (packageOptions) {
+      void submitChunked(picked, dropTitle.trim(), packageOptions); return;
+    }
     const route = chooseUploadRoute(picked.map((p) => ({ path: p.path, size: p.file.size })), INLINE_UPLOAD_MAX_BYTES, t);
     if (route.kind === "error") { setQuota(null); setError(route.message); return; }
     // A single large HTML / PDF, and folders over the total limit, take the chunked route (streamed; the whole thing is never read into server memory).
@@ -208,7 +269,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
       file,
     }));
     for (const input of [fileInput, folderInput, zipInput]) if (input.current) input.current.value = "";
-    submitPicked(picked);
+    submitPicked(Object.assign(picked, { folder: kind === "folder" }));
   }
 
   function submitPaste() {
@@ -220,13 +281,23 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
     void submit(fd);
   }
 
+  const dialogs = <>
+      {leave.dialog}
+      {recoverJob && <ConfirmDialog title={t("Previous upload found")}
+        body={t("This browser cannot verify whether the selected file matches the previous submitted upload. View that task, or upload the selected file as a new task.")}
+        confirmLabel={t("View previous task")} cancelLabel={t("Upload selected file")}
+        onDismiss={() => { recoverJob(null); setRecoverJob(null); }}
+        onConfirm={async () => { recoverJob(true); }} onClose={() => { recoverJob(false); setRecoverJob(null); }} />}
+      {uploadConfirmation}
+  </>;
+
   const inputs = (
     <>
-      {uploadConfirmation}
-      <input ref={fileInput} type="file" accept=".html,.htm,.pdf,.pptx,.ppt,.docx,.doc,.zip,application/zip" hidden onChange={(e) => onPickFiles(e.target.files, "file")} />
+      {dialogs}
+      <input ref={fileInput} type="file" accept=".html,.htm,.pdf,.pptx,.ppt,.docx,.doc,.zip,.rar,.7z,.tar,.tar.gz,.tgz,application/zip" hidden onChange={(e) => onPickFiles(e.target.files, "file")} />
       {/* @ts-expect-error webkitdirectory is a valid non-standard attribute */}
       <input ref={folderInput} type="file" webkitdirectory="" directory="" multiple hidden onChange={(e) => onPickFiles(e.target.files, "folder")} />
-      <input ref={zipInput} type="file" accept=".zip,application/zip" hidden onChange={(e) => onPickFiles(e.target.files, "zip")} />
+      <input ref={zipInput} type="file" accept=".zip,.rar,.7z,.tar,.tar.gz,.tgz" hidden onChange={(e) => onPickFiles(e.target.files, "zip")} />
     </>
   );
 
@@ -245,7 +316,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
             <UploadCloud size={26} strokeWidth={1.6} aria-hidden="true" />
             <div>
               <b>{t("Drop a file or folder here")}</b>
-              <span>{t("HTML · PDF · PPTX · DOCX · folder · ZIP")}</span>
+              <span>{t("HTML · PDF · PPTX · DOCX · folder · ZIP / RAR / 7z / TAR / TAR.GZ / TGZ")}</span>
             </div>
           </div>
           <span className="upload-split">
@@ -254,11 +325,12 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
             </button>
             <MoreMenu label={t("More upload options")} iconOnly buttonClassName="primary upload-more" buttonContent={<ChevronDown size={14} aria-hidden="true" />} disabled={busy}>
               <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => fileInput.current?.click()}><FileCode2 size={14} /> {t("A file (HTML, PDF, Office, zip)")}</button>
-              <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => folderInput.current?.click()}><FolderUp size={14} /> {t("A folder (a build's dist/)")}</button>
-              <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => zipInput.current?.click()}><FileArchive size={14} /> {t("A .zip archive")}</button>
+              <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => folderInput.current?.click()}><FolderUp size={14} /> {t("A folder")}</button>
+              <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => zipInput.current?.click()}><FileArchive size={14} /> {t("An archive (ZIP, RAR, 7z, TAR, TAR.GZ, TGZ)")}</button>
             </MoreMenu>
           </span>
         </div>
+        {submittedJob && <PackageUploadHint versionId={submittedJob} />}
         <div className="hero-upload-footer">
           <div className="formats">{t("No build, no configuration — upload and share.")}</div>
           {footerAction}
@@ -269,6 +341,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
             <p>{t("Uploaded {done} / {total} MB", { done: (progress.done / 1048576).toFixed(1), total: (progress.total / 1048576).toFixed(1) })}</p>
           </div>
         )}
+        {leave.hint}
         {error && <p className="upload-error" role="alert">{error}</p>}
         {quota && <QuotaNotice details={quota} />}
         {inputs}
@@ -279,7 +352,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
             onDragLeave={(e) => { e.preventDefault(); setDrag(false); }}
             onDrop={onDrop}
           >
-            <div className="page-drop-inner"><UploadCloud size={28} aria-hidden="true" /><b>{t("Drop to publish")}</b><span>{t("HTML · PDF · PPTX · DOCX · folder · ZIP")}</span></div>
+            <div className="page-drop-inner"><UploadCloud size={28} aria-hidden="true" /><b>{t("Drop to publish")}</b><span>{t("HTML · PDF · PPTX · DOCX · folder · ZIP / RAR / 7z / TAR / TAR.GZ / TGZ")}</span></div>
           </div>
         )}
       </div>
@@ -288,7 +361,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
 
   return (
     <div>
-      {uploadConfirmation}
+      {dialogs}
       {!paste ? (
         <div
           className={`dropzone${drag ? " is-drag" : ""}${busy ? " busy" : ""}`}
@@ -303,7 +376,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
           <span className="dropzone-glyph" aria-hidden="true">
             {busy ? <Loader2 size={26} className="spin" /> : <UploadCloud size={26} />}
           </span>
-          <h2>{busy ? t("Publishing…") : t("Drop HTML / PDF / Office / a folder / .zip, or paste code")}</h2>
+          <h2>{busy ? t("Publishing…") : t("Drop HTML / PDF / Office / a folder / ZIP / RAR / 7z / TAR / TAR.GZ / TGZ, or paste code")}</h2>
           {/* Large projects take minutes to upload. Waiting without progress, a person cannot tell
               "still uploading" from "frozen" — and that is exactly when they refresh the page and
               kill the upload. */}
@@ -314,10 +387,11 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
               </div>
               <p>
                 {t("Uploaded {done} / {total} MB", { done: (progress.done / 1048576).toFixed(1), total: (progress.total / 1048576).toFixed(1) })}
-                {progress.done < progress.total ? t(", large files take a few minutes — please keep this page open") : t(", committing…")}
+                {progress.done < progress.total ? t(", large files take a few minutes — please keep this page open") : t(", preparing the directory and publishing…")}
               </p>
             </div>
           )}
+          {leave.hint}
           <p>{t("Drop it here to publish. Sites and documents are served as they are — no build, no configuration, just a shareable link.")}</p>
           <input
             className="dropzone-title"
@@ -337,17 +411,18 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
               <FolderUp size={15} /> {t("Choose a folder")}
             </button>
             <button data-analytics-button="upload" type="button" className="btn" onClick={() => zipInput.current?.click()} disabled={busy}>
-              <FileArchive size={15} /> {t("Choose a .zip")}
+              <FileArchive size={15} /> {t("Choose an archive")}
             </button>
             <button data-analytics-button="upload" type="button" className="btn ghost" onClick={() => { setPaste(true); setError(null); setQuota(null); }} disabled={busy}>
               <ClipboardPaste size={15} /> {t("Paste HTML")}
             </button>
           </div>
-          <span className="dropzone-hint">{t("HTML · PDF · PPTX · DOCX · folder · ZIP · paste")}</span>
+          <p className="dropzone-hint">{t("To preserve empty folders reliably, upload an archive.")}</p>
+          <span className="dropzone-hint">{t("HTML · PDF · PPTX · DOCX · folder · ZIP / RAR / 7z / TAR / TAR.GZ / TGZ · paste")}</span>
           <input ref={fileInput} type="file" accept=".html,.htm,.pdf,.pptx,.ppt,.docx,.doc" hidden onChange={(e) => onPickFiles(e.target.files, "file")} />
           {/* @ts-expect-error webkitdirectory is a valid non-standard attribute */}
           <input ref={folderInput} type="file" webkitdirectory="" directory="" multiple hidden onChange={(e) => onPickFiles(e.target.files, "folder")} />
-          <input ref={zipInput} type="file" accept=".zip,application/zip" hidden onChange={(e) => onPickFiles(e.target.files, "zip")} />
+          <input ref={zipInput} type="file" accept=".zip,.rar,.7z,.tar,.tar.gz,.tgz" hidden onChange={(e) => onPickFiles(e.target.files, "zip")} />
         </div>
       ) : (
         <div className="paste-panel">
@@ -367,6 +442,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
           </div>
         </div>
       )}
+      {submittedJob && !compact && <PackageUploadHint versionId={submittedJob} />}
       {error && <p className="upload-error" role="alert">{error}</p>}
       {quota && <QuotaNotice details={quota} />}
     </div>

@@ -5,7 +5,7 @@
  */
 const MiB = 1024 * 1024;
 
-export interface UploadLimits { maxBytes: number; maxFileBytes: number; maxFiles: number }
+export interface UploadLimits { archiveChunks?: number; archiveChunkBytes?: number; archiveMaxBytes?: number; packageUploads?: number; packagePaths?: number; asyncPackages?: number; maxBytes: number; maxFileBytes: number; maxFiles: number }
 export const DEFAULT_UPLOAD_LIMITS: UploadLimits = {
   maxBytes: 300 * MiB,
   maxFileBytes: 250 * MiB,

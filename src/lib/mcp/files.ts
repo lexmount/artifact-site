@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import { packageLease, type PackageProgress } from "@/lib/package-processing";
+import { recordUploadedFile } from "@/lib/upload-session";
+import { packageJobStatus, readablePackageJob } from "@/lib/package-jobs";
+import { PACKAGE_ORIGINAL } from "@/lib/package-contract";
 import { requirePermission } from "@/lib/authz";
 import { assertCanCreate, assertPresentedBearerAlive } from "@/lib/auth";
 import { resolveSession } from "@/lib/session";
@@ -9,13 +14,14 @@ import { discardUploadSession, getUploadSession, ownerKeyFor, type UploadSession
 import { getStorage, safeRelativePath } from "@/lib/storage";
 import { BadRequestError } from "@/lib/errors";
 import { limits } from "@/lib/config";
-import { apiRequest, callApi } from "./api";
+import { callApi } from "./api";
 import { sha256hex } from "@/lib/crypto";
 
 // Metadata-only sentinels distinguish sealed chunks from successful assembly; neither is a storage object.
 const COMPLETE = "mcp-complete";
 const ASSEMBLED = "mcp-assembled";
 export const CHUNK_BYTES = 256 * 1024;
+export const ARCHIVE_CHUNK_BYTES = 4 * 1024 * 1024;
 const missing = () => Object.assign(new Error("Upload does not exist or has expired"), { statusCode: 404 });
 const conflict = () => Object.assign(new Error("Concurrent upload; retry the same chunk sequentially"), { statusCode: 409 });
 function invalidChunk(code: string, error: string, nextIndex: number) {
@@ -28,13 +34,14 @@ export function decodeChunk(value: string) {
   return data;
 }
 async function owner(request: Request) {
-  const key = await ownerKeyFor(apiRequest(request, "/api/uploads"));
+  const key = await ownerKeyFor(request);
   if (!key) throw missing();
   return key;
 }
 async function startFile(key: string, versionId: string, file: string): Promise<UploadSession> {
-  if (!await getUploadSession(versionId, key)) throw missing();
-  const relative = safeRelativePath(file);
+  const parent = await getUploadSession(versionId, key);
+  if (!parent) throw missing();
+  const relative = safeRelativePath(file, parent.packageOptions ? "package" : "website");
   // Parts are private staging rows: targetSlug holds the parent upload id; title holds its file path.
   const fileUploadId = `mcp_${sha256hex(`${versionId}:${relative}`)}`;
   const existing = await getUploadSession(fileUploadId, `mcp-parts:${key}`);
@@ -67,8 +74,8 @@ async function putChunk(session: UploadSession, index: number, data: Buffer) {
   // Chunk parts are not project files; maxFiles is enforced when assembling into the parent.
   if (total > limits.maxFileBytes) throw new BadRequestError("File exceeds the deployment limit");
   const relpath = `${randomUUID()}.part`;
-  await storage.writeVersionFiles(session.siteId, id, [{ relpath, bytes: data }]);
-  const updated = [...session.files, { relpath, bytes: data.length }];
+  await storage.writeFileToVersion(session.siteId, id, relpath, data);
+  const updated = [...session.files, { relpath, bytes: data.length, sha256: createHash("sha256").update(data).digest("hex") }];
   if (!await compareUploadSessionFiles(id, session.files, updated)) throw conflict();
   session.files = updated; // Reuse the successful CAS snapshot for finalization; no new owner/session lookup.
   return { nextIndex: index + 1, bytes: total };
@@ -98,6 +105,8 @@ async function finishFile(request: Request, session: UploadSession, chunkCount: 
 }
 export async function cancelUpload(request: Request, id: string) {
   const key = await owner(request);
+  const job = await packageJobStatus(id, key);
+  if (job && job.status !== "failed") throw Object.assign(new Error("Submitted package processing cannot be cancelled; inspect upload_status"), { statusCode: 409 });
   if (!await getUploadSession(id, key)) throw missing();
   await discardUploadSession(id);
   for (const child of await listUploadSessionsForTarget(`mcp-parts:${key}`, id)) await discardUploadSession(child.versionId);
@@ -105,11 +114,15 @@ export async function cancelUpload(request: Request, id: string) {
 }
 
 export async function writeFileChunk(request: Request, uploadId: string, path: string, index: number, base64: string, final: boolean) {
-  const data = decodeChunk(base64); // Reject malformed bytes before allocating a draft.
+  return writeBinaryChunk(request, uploadId, path, index, decodeChunk(base64), final);
+}
+
+export async function writeBinaryChunk(request: Request, uploadId: string, path: string, index: number, data: Buffer, final: boolean) {
+  if (!Number.isSafeInteger(index) || index < 0 || data.length > ARCHIVE_CHUNK_BYTES) throw new BadRequestError("Invalid chunk index or size");
   const key = await owner(request);
   const parent = await getUploadSession(uploadId, key);
   if (!parent) throw missing();
-  const authRequest = apiRequest(request, "/api/uploads", "POST");
+  const authRequest = request;
   const identity = await resolveSession(authRequest);
   await assertPresentedBearerAlive(authRequest, identity);
   if (parent.targetSlug) {
@@ -120,18 +133,64 @@ export async function writeFileChunk(request: Request, uploadId: string, path: s
     await assertCanCreate(authRequest);
     await creationTenant(identity?.userId ?? null, parent.tenantId);
   }
-  const session = await startFile(key, uploadId, path);
-  const result = await putChunk(session, index, data);
-  if (final) {
-    await finishFile(request, session, index + 1);
-    return { path, nextIndex: index + 1, bytes: result.bytes, complete: true };
-  }
-  return { path, ...result, complete: false };
+  if (parent.packageOptions?.source === "archive" && path !== "original") throw new BadRequestError("Archive chunks must use path original");
+  const receive = async () => {
+    if (parent.packageOptions?.source === "archive" && parent.files.length) throw new BadRequestError("The uploaded archive is immutable; start a new session to change it");
+    const session = await startFile(key, uploadId, path);
+    if (parent.packageOptions?.source === "archive" && index >= session.files.filter(f => f.relpath !== COMPLETE && f.relpath !== ASSEMBLED).length && session.files.reduce((n, f) => n + f.bytes, 0) + data.length > limits.archiveMaxBytes) throw new BadRequestError("Archive exceeds the compressed upload limit");
+    const result = await putChunk(session, index, data);
+    if (final) {
+      if (parent.packageOptions?.source === "archive") {
+        const chunks = session.files.filter(f => f.relpath !== COMPLETE && f.relpath !== ASSEMBLED);
+        if (chunks.length !== index + 1) throw new BadRequestError("Chunk count mismatch");
+        if (!session.files.some(f => f.relpath === COMPLETE) && !await compareUploadSessionFiles(session.versionId, session.files, [...session.files, { relpath: COMPLETE, bytes: 0 }])) throw conflict();
+      } else await finishFile(request, session, index + 1);
+      return { path, nextIndex: index + 1, bytes: result.bytes, complete: true };
+    }
+    return { path, ...result, complete: false };
+  };
+  return parent.packageOptions?.source === "archive" ? packageLease(parent, receive) : receive();
+}
+
+/** A sealed archive is assembled only by the durable package worker, never in the final PUT. */
+export async function archiveParts(parent: UploadSession) {
+  if (parent.packageOptions?.source !== "archive") return null;
+  const children = await listUploadSessionsForTarget(`mcp-parts:${parent.ownerKey}`, parent.versionId);
+  const part = children.find(child => child.title === "original");
+  if (part && !part.files.some(f => f.relpath === COMPLETE)) throw new BadRequestError("The archive upload is incomplete; resume uploading before submitting");
+  return part ?? null;
+}
+export async function assembleArchive(parent: UploadSession, progress?: PackageProgress) {
+  const part = await archiveParts(parent);
+  if (!part || parent.files.some(f => f.relpath === PACKAGE_ORIGINAL)) return;
+  const chunks = part.files.filter(f => f.relpath !== COMPLETE && f.relpath !== ASSEMBLED);
+  const hash = createHash("sha256"); let index = 0, total = 0;
+  const body = new ReadableStream<Uint8Array>({ async pull(controller) {
+    try {
+      await progress?.({ stage: "assembling", processed: index, total: chunks.length });
+      if (index === chunks.length) { controller.close(); return; }
+      const chunk = chunks[index++];
+      const bytes = await getStorage().read(part.siteId, part.versionId, chunk.relpath);
+      if (bytes.length !== chunk.bytes || (chunk.sha256 && createHash("sha256").update(bytes).digest("hex") !== chunk.sha256)) throw new BadRequestError("Stored upload chunk failed integrity verification; upload again");
+      total += bytes.length;
+      if (total > limits.archiveMaxBytes) throw new BadRequestError("Archive exceeds the compressed upload limit");
+      hash.update(bytes); controller.enqueue(bytes);
+    } catch (error) { controller.error(error); }
+  } });
+  const size = await getStorage("package").writeStreamToVersion(parent.siteId, parent.versionId, PACKAGE_ORIGINAL, body);
+  await recordUploadedFile(parent, PACKAGE_ORIGINAL, size, hash.digest("hex"));
 }
 
 /** Check the intended operation before committing: a publish must never update another site. */
 export async function assertUploadTarget(request: Request, uploadId: string, slug?: string) {
-  const session = await getUploadSession(uploadId, await owner(request));
+  const key = await owner(request);
+  const job = await packageJobStatus(uploadId, key);
+  if (job) {
+    if ((job.targetSlug ?? undefined) !== slug) throw new BadRequestError("Upload target does not match this operation");
+    await readablePackageJob(request, job);
+    return;
+  }
+  const session = await getUploadSession(uploadId, key);
   if (!session) throw missing();
   if ((session.targetSlug ?? undefined) !== slug) throw new BadRequestError("Upload target does not match this operation");
 }
@@ -139,18 +198,21 @@ export async function assertUploadTarget(request: Request, uploadId: string, slu
 /** Office/ZIP uploads retain the existing single-request processing ceiling even though
  * the client transfers bytes through small MCP messages. PDF/tree commits stay streaming. */
 export async function commitUpload(request: Request, versionId: string, title?: string, expectedVersion?: string, official?: boolean) {
+  const job = await packageJobStatus(versionId, await owner(request));
+  if (job) return readablePackageJob(request, job);
   const session = await getUploadSession(versionId, await owner(request));
   if (!session) throw missing();
   const children = await listUploadSessionsForTarget(`mcp-parts:${session.ownerKey}`, versionId);
   for (const child of children) {
-    if (!child.files.some(f => f.relpath === ASSEMBLED) || !session.files.some(f => f.relpath === child.title)) throw new BadRequestError("Every uploaded file must finish with final:true before publishing");
+    if (session.packageOptions?.source === "archive") { await archiveParts(session); continue; }
+    if (!child.files.some(f => f.relpath === ASSEMBLED) || !session.files.some(f => f.relpath === child.title || (session.packageOptions?.source === "archive" && child.title === "original" && f.relpath === PACKAGE_ORIGINAL))) throw new BadRequestError("Every uploaded file must finish with final:true before publishing");
   }
   const cleanup = async () => {
     for (const child of children) await discardUploadSession(child.versionId).catch(error => console.error("[mcp] upload cleanup", error));
   };
   try {
     const only = session.files.length === 1 ? session.files[0] : undefined;
-    if (only && /\.(docx?|pptx?|zip)$/i.test(only.relpath)) {
+    if (!session.packageOptions && only && /\.(docx?|pptx?|zip)$/i.test(only.relpath)) {
       if (only.bytes > limits.inlineUploadMaxBytes - 4096) throw new BadRequestError("Office/ZIP processing exceeds the single-request limit; the upload has been discarded. Convert Office to PDF or start a new upload with an unpacked web tree");
       const bytes = await getStorage().read(session.siteId, session.versionId, only.relpath);
       const form = new FormData(); if (official !== undefined) form.set("official", String(official)); form.set("mode", /\.zip$/i.test(only.relpath) ? "zip" : "file");
@@ -162,11 +224,11 @@ export async function commitUpload(request: Request, versionId: string, title?: 
       const result = await callApi(commitRequest, session.targetSlug ? "update" : "publish", { slug: session.targetSlug ?? undefined, body: form, query: expectedVersion ? { expected_version: expectedVersion } : undefined });
       await discardUploadSession(versionId); await cleanup(); return result;
     }
-    const result = await callApi(request, "upload_commit", { versionId, body: { title, official }, query: expectedVersion ? { expected_version: expectedVersion } : undefined });
-    await cleanup(); return result;
+    const result = await callApi(request, "upload_commit", { versionId, body: { title, official }, query: { ...(expectedVersion ? { expected_version: expectedVersion } : {}), ...(session.packageOptions ? { async: "1" } : {}) } });
+    if (!session.packageOptions) await cleanup(); return result;
   } catch (error) {
     // Conflicts keep both the complete draft and its sealed parts for deliberate recovery.
-    if ((error as { statusCode?: number }).statusCode !== 409 && !request.headers.has("idempotency-key")) {
+    if (!session.packageOptions && (error as { statusCode?: number }).statusCode !== 409 && !request.headers.has("idempotency-key")) {
       await discardUploadSession(versionId).catch(cleanupError => console.error("[mcp] failed upload cleanup", cleanupError));
       await cleanup();
     }

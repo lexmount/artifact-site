@@ -209,3 +209,9 @@ Sous licence, au choix,
 Sauf déclaration explicite de votre part, toute contribution que vous soumettez intentionnellement pour inclusion dans ce projet est placée sous cette double licence, sans conditions supplémentaires.
 
 © 2025–2026 LexMount. Les composants tiers sont listés dans [NOTICE](../NOTICE).
+
+### Paquets de fichiers
+
+Les dossiers et archives ZIP/RAR/7z/TAR/TAR.GZ/TGZ affichent un répertoire de fichiers. Cliquez sur un fichier HTML/HTM pour le rendre dans le bac à sable. La limite par défaut des archives compressées est de 50 MiB ; les octets originaux sont conservés pour les utilisateurs autorisés à exporter les sources. Les simples lecteurs ne peuvent pas télécharger le paquet. Les dossiers sont téléchargés en ZIP, avec les répertoires vides si le client peut les énumérer. Les versions existantes et les anciens modes API conservent leur comportement.
+
+[Détails du déploiement et du traitement des archives](../SELFHOST.md#file-packages-and-the-archive-reader).

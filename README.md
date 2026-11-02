@@ -213,3 +213,12 @@ Licensed under either of
 at your option. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you shall be dual-licensed as above, without any additional terms or conditions.
 
 © 2025–2026 LexMount. Third-party components are listed in [NOTICE](NOTICE).
+
+### File packages
+
+Folder and ZIP/RAR/7z/TAR/TAR.GZ/TGZ uploads now open a file directory; click an HTML/HTM file to render it
+in the sandbox. Archive uploads default to a 50 MiB compressed limit and retain the original
+bytes for downloads by users with source-export permission. Ordinary readers cannot download
+the package. Folder downloads are ZIPs and preserve empty directories when the upload client
+can enumerate them. Existing website versions and legacy API modes keep their original behavior.
+See [deployment and archive runtime details](SELFHOST.md#file-packages-and-the-archive-reader).

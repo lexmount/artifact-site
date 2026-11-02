@@ -32,7 +32,7 @@ export interface PublishOutcome {
 }
 
 export async function publishPath(client: ArtifactSiteClient, target: string, opts: PublishOptions = {}): Promise<PublishOutcome> {
-  const shape = await inspect(target);
+  const shape = await inspect(target, (await client.uploadLimits()).packagePaths === 1);
   const site = await createFromShape(client, shape, opts);
   return finish(client, site.result, site.route, opts);
 }
@@ -50,6 +50,7 @@ export async function publishHtml(client: ArtifactSiteClient, html: string, opts
 
 async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, opts: PublishOptions): Promise<{ result: CreatedSite | VersionResult; route: PublishOutcome["route"] }> {
   const say = opts.onProgress ?? (() => {});
+  if (["zip", "archive", "dir"].includes(shape.type) && (await client.uploadLimits()).packageUploads) return publishPackage(client, shape, opts);
   switch (shape.type) {
     case "html":
     case "document": {
@@ -62,6 +63,7 @@ async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, op
       say(`uploading ${path.basename(shape.file)} (${mb(shape.size)})`);
       return uploadWithRecovery(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], opts, async () => client.createFile(path.basename(shape.file), new Uint8Array(await readFile(shape.file)), opts.title, opts.official), "file");
     }
+    case "archive": throw new Error("This server does not support package uploads; upgrade the server first");
     case "zip": {
       if (shape.size > oneShotLimit()) {
         const extracted = await extractZip(shape.file, await client.uploadLimits());
@@ -88,18 +90,38 @@ async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, op
   }
 }
 
-type UploadOptions = PublishOptions & { slug?: string; expectedVersion?: string };
+type UploadOptions = PublishOptions & { slug?: string; expectedVersion?: string; package?: { source: "folder" | "archive"; name?: string; directories?: string[] } };
+async function publishPackage(client: ArtifactSiteClient, shape: LocalShape, opts: UploadOptions) {
+  const caps = await client.uploadLimits();
+  if (shape.type === "dir") return uploadWithRecovery(client, shape.files, { ...opts, package: { source: "folder", directories: shape.directories ?? [] } });
+  if (shape.type !== "zip" && shape.type !== "archive") throw new Error("Expected a folder or archive");
+  if (shape.size > (caps.archiveMaxBytes ?? 100 * 1024 * 1024)) throw new Error("Archive exceeds the server archive size limit");
+  return uploadWithRecovery(client, [{ relpath: "original", absPath: shape.file, size: shape.size }], { ...opts, title: opts.title ?? path.basename(shape.file), package: { source: "archive", name: path.basename(shape.file) } });
+}
 async function chunkedCreate(client: ArtifactSiteClient, files: WalkedFile[], opts: UploadOptions): Promise<VersionResult> {
   return (await uploadWithRecovery(client, files, opts)).result as VersionResult;
 }
 async function uploadWithRecovery(client: ArtifactSiteClient, files: WalkedFile[], opts: UploadOptions, inline?: () => Promise<CreatedSite | VersionResult>, inlineRoute: PublishOutcome["route"] = "zip"): Promise<{ result: CreatedSite | VersionResult; route: PublishOutcome["route"] }> {
   const say = opts.onProgress ?? (() => {});
   // Anonymous credentials are browser cookies: do not write them into a local journal.
-  const state = client.authenticated ? await recovery(client, files, { operationKey: opts.operationKey, title: opts.title, slug: opts.slug, expectedVersion: opts.expectedVersion, official: opts.official }) : null;
+  const state = client.authenticated ? await recovery(client, files, { operationKey: opts.operationKey, title: opts.title, slug: opts.slug, expectedVersion: opts.expectedVersion, official: opts.official, package: opts.package }) : null;
   const j = state?.journal;
   const keyed = <T>(suffix: string, run: () => Promise<T>) => j ? client.withOperation(`${j.id}:${suffix}`, run) : run();
   let route: PublishOutcome["route"] = inline ? inlineRoute : "chunked";
   try {
+    if (opts.package && j?.versionId && (await client.uploadLimits()).asyncPackages === 1) {
+      try {
+        const job = await client.packageStatus(j.versionId);
+        if (job.status !== "uploading") {
+          if (job.status === "failed" && job.retryable) await client.retryPackage(j.versionId);
+          const result = await client.waitForPackage(j.versionId, say);
+          j.result = result; await state!.save(); return { result, route: "chunked" };
+        }
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "site_not_found") throw new Error("Published artifact is no longer available; inspect it before using a new --operation-key to publish again");
+        if (!(error instanceof ApiError && error.status === 404)) throw error;
+      }
+    }
     // A response can be lost after the transaction committed. Query before any further writes.
     if (j) {
       for (const suffix of ["inline", `commit:${j.generation}`]) {
@@ -127,7 +149,7 @@ async function uploadWithRecovery(client: ArtifactSiteClient, files: WalkedFile[
         preflightTree(files, await client.uploadLimits()); say("The server rejected the inline body before publication; switching to file uploads");
       }
     }
-    preflightTree(files, await client.uploadLimits()); route = "chunked";
+    if (!opts.package) preflightTree(files, await client.uploadLimits()); route = "chunked";
     let versionId = j?.versionId;
     if (versionId) {
       try {
@@ -140,20 +162,24 @@ async function uploadWithRecovery(client: ArtifactSiteClient, files: WalkedFile[
       }
     }
     if (!versionId) {
-      const opened = await keyed(`start:${j?.generation ?? 0}`, () => client.openUpload({ title: opts.title, slug: opts.slug }));
+      const opened = await keyed(`start:${j?.generation ?? 0}`, () => client.openUpload({ title: opts.title, slug: opts.slug, package: opts.package }));
       versionId = opened.versionId;
       if (j) { j.versionId = versionId; await state!.save(); }
     }
     let done = 0;
     for (const f of files) {
       if (!j?.done.includes(f.relpath)) {
-        await client.uploadFile(versionId, f.relpath, f.absPath);
+        if (opts.package?.source === "archive" && (await client.uploadLimits()).archiveChunks === 1) {
+          await client.uploadArchiveChunks(versionId, f.absPath, (bytes, total) => say(`  Uploaded ${mb(bytes)} / ${mb(total)}`));
+        } else await client.uploadFile(versionId, f.relpath, f.absPath);
         if (j) { j.done.push(f.relpath); await state!.save(); }
       }
       say(`  ${++done}/${files.length} ${f.relpath} (${mb(f.size)})`);
     }
     if (j) { j.commitAttempted = true; await state!.save(); }
-    const result = await keyed(`commit:${j?.generation ?? 0}`, () => client.commitUpload(versionId!, opts.title, opts.expectedVersion, opts.official));
+    const result = opts.package && (await client.uploadLimits()).asyncPackages === 1
+      ? await keyed(`commit:${j?.generation ?? 0}`, () => client.commitPackage(versionId!, opts.title, opts.expectedVersion, opts.official, say))
+      : await keyed(`commit:${j?.generation ?? 0}`, () => client.commitUpload(versionId!, opts.title, opts.expectedVersion, opts.official));
     if (j) { j.result = result; await state!.save(); }
     return { result, route };
   } catch (error) { await state?.failed(error); throw error; }
@@ -188,7 +214,7 @@ export interface UpdateOptions {
 export async function updateFromPath(client: ArtifactSiteClient, slug: string, target: string, opts: UpdateOptions = {}): Promise<VersionResult & { kind: SiteKind }> {
   const say = opts.onProgress ?? (() => {});
   const info = await client.getSite(slug);
-  const shape = await inspect(target);
+  const shape = await inspect(target, info.kind === "folder" && (await client.uploadLimits()).packagePaths === 1);
   switch (info.kind) {
     case "single": {
       const file = shape.type === "html" ? shape.file
@@ -204,6 +230,7 @@ export async function updateFromPath(client: ArtifactSiteClient, slug: string, t
       return { ...r, kind: "single" } as VersionResult & { kind: SiteKind };
     }
     case "folder": {
+      if (["zip", "archive", "dir"].includes(shape.type) && (await client.uploadLimits()).packageUploads) return { ...(await publishPackage(client, shape, { ...opts, slug })).result, kind: "folder" } as VersionResult & { kind: SiteKind };
       if (shape.type === "zip") {
         say(`uploading ${path.basename(shape.file)}`);
         const extracted = await extractZip(shape.file, await client.uploadLimits());

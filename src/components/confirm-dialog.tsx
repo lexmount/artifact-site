@@ -5,9 +5,9 @@ import { Loader2 } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 
 /** Mount only while requested. Native modal focus isolation; failed actions stay retryable. */
-export default function ConfirmDialog({ title, body, confirmLabel, danger = false, onConfirm, onClose }: {
-  title: string; body: string; confirmLabel: string; danger?: boolean;
-  onConfirm: () => Promise<void>; onClose: () => void;
+export default function ConfirmDialog({ title, body, confirmLabel, cancelLabel, cancelPrimary = false, danger = false, onConfirm, onClose, onDismiss = onClose }: {
+  title: string; body: string; confirmLabel: string; cancelLabel?: string; cancelPrimary?: boolean; danger?: boolean;
+  onConfirm: () => Promise<void>; onClose: () => void; onDismiss?: () => void;
 }) {
   const t = useT();
   const id = useId();
@@ -28,9 +28,9 @@ export default function ConfirmDialog({ title, body, confirmLabel, danger = fals
       if (!el || el.open) return;
       // Native close watchers can bypass cancel. Keep an in-flight failure visible.
       if (running.current) el.showModal();
-      else onClose();
+      else onDismiss();
     }}
-    onCancel={event => { event.preventDefault(); if (!running.current) onClose(); }}>
+    onCancel={event => { event.preventDefault(); if (!running.current) onDismiss(); }}>
     <form onSubmit={async event => {
       event.preventDefault();
       if (running.current) return;
@@ -43,8 +43,8 @@ export default function ConfirmDialog({ title, body, confirmLabel, danger = fals
       <p id={`${id}-body`}>{body}</p>
       {error && <p className="drawer-error" role="alert">{error}</p>}
       <div className="action-confirmation-buttons">
-        <button ref={cancel} type="button" className="btn" disabled={busy} onClick={onClose}>{t("Cancel")}</button>
-        <button type="submit" className={`btn ${danger ? "danger" : "solid"}`} disabled={busy} aria-busy={busy}>
+        <button ref={cancel} type="button" className={`btn${cancelPrimary ? " solid" : ""}`} disabled={busy} onClick={onClose}>{cancelLabel ?? t("Cancel")}</button>
+        <button type="submit" className={`btn ${danger ? "danger" : cancelPrimary ? "" : "solid"}`} disabled={busy} aria-busy={busy}>
           {busy && <Loader2 size={14} className="spin" aria-hidden="true" />} {confirmLabel}
         </button>
       </div>

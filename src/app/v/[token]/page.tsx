@@ -1,3 +1,4 @@
+import PackageNavigation from "@/components/package-navigation";
 import { siteAuthorName } from "@/lib/site-author";
 import { publicationPolicy } from "@/lib/publication-policy";
 import { appPath } from "@/lib/app-path";
@@ -279,7 +280,7 @@ function passcodeForm(t: Translator, token: string, error?: string) {
 function reader(t: Translator, site: Site, assistant = false, token = "", version: Version, mode = "view", shareId: string) {
   const versionId = version.id;
   return (
-    <SharedCommentShell comments={{ slug: site.slug, scope: { siteId: site.id, versionId, entry: { kind: "share", shareId } }, filePath: version.entry, shareToken: token }} header={
+    <SharedCommentShell comments={{ slug: site.slug, scope: { siteId: site.id, versionId, entry: { kind: "share", shareId } }, filePath: version.entry, packagePaths: Boolean(version.packageMeta), shareToken: token }} header={
         <header className="app-header fs-bar" aria-label={t("Shared output")}>
           <div className="fs-bar-glass" aria-hidden="true" />
           <Link className="brand" href="/" aria-label={t("artifact-site home")}>
@@ -295,7 +296,7 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
             <OfficialVersion slug={site.slug} versionId={version.id} share={token} />
           </div>
           <div className="controls">
-            {mode === "edit" && <Link className="btn" title={t("Edit")} href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}`}><Pencil size={14} aria-hidden="true" />{t("Edit")}</Link>}
+            {mode === "edit" && !version.packageMeta && <Link className="btn" title={t("Edit")} href={`/s/${site.slug}/edit?share=${encodeURIComponent(token)}`}><Pencil size={14} aria-hidden="true" />{t("Edit")}</Link>}
             {/* Pin this rendered preview to the same immutable version as its discussion. A reload follows the link again. */}
             <a className="btn sm ghost" title={t("Open in a new tab")} href={appPath(`/v/${encodeURIComponent(token)}?presentation=1${versionId ? `&version=${encodeURIComponent(versionId)}` : ""}`)} target="_blank" rel="noreferrer">
               <ExternalLink size={14} aria-hidden="true" />
@@ -305,6 +306,7 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
         </header>
     }>
       <div className="fs-stage-wrap">
+        {version.packageMeta && <PackageNavigation directoryUrl={`/api/preview/${site.slug}?share=${encodeURIComponent(token)}&v=${encodeURIComponent(version.id)}`} />}
         <div className="fs-stage">
           {/* Never allow-same-origin: the artifact is untrusted code, and the served HTML carries
               its own sandbox CSP. Identical to the viewer's iframe on purpose — a reader must not
@@ -313,7 +315,7 @@ function reader(t: Translator, site: Site, assistant = false, token = "", versio
             className="fs-frame"
             src={appPath(`/api/preview/${site.slug}?share=${encodeURIComponent(token)}${versionId ? `&v=${encodeURIComponent(versionId)}` : ""}`)}
             title={site.title}
-            sandbox="allow-forms allow-modals allow-scripts allow-popups allow-downloads"
+            sandbox={version.packageMeta ? "allow-forms allow-modals allow-scripts allow-popups" : "allow-forms allow-modals allow-scripts allow-popups allow-downloads"}
             allow="fullscreen"
           />
         </div>

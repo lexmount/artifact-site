@@ -21,7 +21,7 @@ import { getVersion, rbacTransaction } from "@/lib/db";
 // orphan, collected by expiry cleanup. The version row is written only at the moment of commit, so
 // the database never holds half a version: a version either exists in full or never existed.
 import {
-  createId, deleteUploadSession, getUploadSessionRow, listUploadSessionsBefore,
+  createId, deleteUploadSession, getUploadSessionRow, listUploadSessionsBefore, listUploadSessionsForTarget,
   compareUploadSessionFiles, type UploadSessionRow,
 } from "@/lib/db";
 import { getStorage } from "@/lib/storage";
@@ -51,9 +51,10 @@ export async function ownerKeyFor(request: Request, anonId?: string | null): Pro
   return anon ? `a:${anon}` : null;
 }
 
-export async function createUploadSession(input: { tenantId?: string; siteId?: string; targetSlug?: string; title?: string; ownerKey: string }): Promise<UploadSession> {
+export async function createUploadSession(input: { tenantId?: string; siteId?: string; targetSlug?: string; title?: string; ownerKey: string; packageOptions?: import("@/lib/package-contract").PackageOptions }): Promise<UploadSession> {
   const session: UploadSession = {
     tenantId: input.tenantId,
+    packageOptions: input.packageOptions,
     versionId: createId("ver"),
     siteId: input.siteId ?? createId("site"),
     files: [],
@@ -63,7 +64,7 @@ export async function createUploadSession(input: { tenantId?: string; siteId?: s
     ownerKey: input.ownerKey,
   };
   await rbacTransaction(async q => {
-    await q("INSERT INTO upload_sessions(version_id,site_id,target_slug,title,owner_key,files,created_at,tenant_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [session.versionId, session.siteId, session.targetSlug ?? null, session.title ?? null, session.ownerKey, "[]", session.createdAt, session.tenantId ?? null]);
+    await q("INSERT INTO upload_sessions(version_id,site_id,target_slug,title,owner_key,files,created_at,tenant_id,package_options) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", [session.versionId, session.siteId, session.targetSlug ?? null, session.title ?? null, session.ownerKey, "[]", session.createdAt, session.tenantId ?? null, session.packageOptions ? JSON.stringify(session.packageOptions) : null]);
     await recordOperationResult(q, { versionId: session.versionId });
   });
   return session;
@@ -132,11 +133,14 @@ export async function recordUploadedFile(session: UploadSession, relpath: string
 /** Discard the session and reclaim the bytes already written — an interrupted upload must not leave permanent garbage in storage. */
 export async function discardUploadSession(versionId: string): Promise<void> {
   const session = await getUploadSessionRow(versionId);
+  for (const child of await listUploadSessionsForTarget(`mcp-parts:${session?.ownerKey}`, versionId)) await discardUploadSession(child.versionId);
   await deleteUploadSession(versionId);
   if (session && !(await getVersion(versionId))) await getStorage().removeVersion(session.siteId, session.versionId).catch(() => {});
 }
 
 export async function completeUploadSession(versionId: string): Promise<void> {
+  const session = await getUploadSessionRow(versionId);
+  for (const child of await listUploadSessionsForTarget(`mcp-parts:${session?.ownerKey}`, versionId)) await discardUploadSession(child.versionId);
   await deleteUploadSession(versionId);
 }
 

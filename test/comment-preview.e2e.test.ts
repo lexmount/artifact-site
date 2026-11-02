@@ -11,10 +11,13 @@ describe.skipIf(!enabled)("sandbox comment selection in Chrome", () => {
   const scope = { siteId: "site", versionId: "v1", entry: { kind: "main" } };
   beforeAll(async () => {
     server = createServer((req, res) => {
-      if (req.url === "/frame") {
+      if (req.url === "/nested-frame") {
+        res.setHeader("content-type", "text/html");
+        res.end(`<!doctype html><head><base href="${origin}/reports/">${commentPreviewBootstrap("reports/index.html", origin, false, origin + "/")}</head><body><img src="pixel.svg" style="width:200px;height:100px"></body>`);
+      } else if (req.url === "/frame") {
         res.setHeader("content-type", "text/html");
         res.end(`<!doctype html><head><base href="${origin}/">${commentPreviewBootstrap("index.html", origin)}</head><body style="margin:0"><a id="target" href="/navigated" style="display:block;margin:40px;width:240px;height:60px">Original\n   target</a><form><input value="PRIVATE_VALUE"><textarea>PRIVATE_FORM</textarea></form><div style="height:1200px"></div><canvas data-comment-page="2" data-comment-file="preview.pdf" data-comment-rotation="90" width="400" height="200" style="display:block;width:400px;height:200px;margin:20px"></canvas><img src="/pixel.svg" style="width:400px;height:400px;object-fit:contain"></body>`);
-      } else if (req.url === "/pixel.svg") { res.setHeader("content-type", "image/svg+xml"); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect width="200" height="100" fill="green"/></svg>'); }
+      } else if ((req.url === "/pixel.svg" || req.url === "/reports/pixel.svg")) { res.setHeader("content-type", "image/svg+xml"); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect width="200" height="100" fill="green"/></svg>'); }
       else { res.setHeader("content-type", "text/html"); res.end('<iframe sandbox="allow-scripts" src="/frame" style="width:800px;height:600px;border:0"></iframe><script>window.events=[];addEventListener("message",e=>events.push(e.data));</script>'); }
     });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -289,6 +292,22 @@ describe.skipIf(!enabled)("sandbox comment selection in Chrome", () => {
     await frame.waitForFunction(()=>{const pin=document.querySelector<HTMLElement>('[data-comment-thread="fade"]');return pin && Number(getComputedStyle(pin).opacity)<0.8 && Number(getComputedStyle(pin).opacity)>0;});
     await frame.waitForFunction(()=>!document.querySelector('[data-comment-thread]'));
     expect(await frame.$eval('[data-artifact-comment-overlay] > div',el=>(el as HTMLElement).style.display)).toBe("none");
+  });
+
+  it("keeps image anchors version-relative with a nested content base", async () => {
+    const frame = page.frames().find(x => x.url().endsWith("/frame"))!;
+    await frame.goto(origin + "/nested-frame");
+    const at = await count();
+    await command({ type: "markers", markers: [], visible: false });
+    await next("ready", at);
+    await command({ type: "select" });
+    await frame.waitForFunction(() => document.documentElement.hasAttribute("data-artifact-comment-select"));
+    await frame.click("img");
+    const event = await next("selected", at);
+    expect(event.anchor).toMatchObject({ kind: "image", filePath: "reports/pixel.svg" });
+    const located = await count();
+    await command({ type: "locate", threadId: "nested-image", anchor: event.anchor });
+    expect((await next("located", located)).outcome).toBe("exact");
   });
 
 });

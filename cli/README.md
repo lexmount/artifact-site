@@ -99,11 +99,14 @@ help. New scripts should use `find`, `find <words…>` and `update --title` resp
 error, `2` usage, `3` not signed in / token rejected, `4` version conflict, `5` site created but the
 share link failed.
 
-Directories are zipped in memory when under the one-shot limit (24 MB) and streamed file by file
+On legacy servers, directories are zipped in memory when under the one-shot limit (24 MB) and streamed file by file
 through the chunked upload route above it — large media sites and large PDFs just work.
-`node_modules`, every dot-leading path (`.git`, `.env`, `.DS_Store`, …), `__MACOSX` and `Thumbs.db` are never
-uploaded — the platform refuses dot-leading paths anyway, and that is where secrets live. What was left
+On legacy servers, `node_modules`, every dot-leading path (`.git`, `.env`, `.DS_Store`, …), `__MACOSX` and `Thumbs.db` are never
+uploaded. What was left
 out is printed before the upload.
+On package-capable servers, directory uploads preserve `.git`, `node_modules` and ordinary
+hidden files. Known OS metadata is filtered; symlinks and special entries are not followed. Existing size/count limits still apply.
+Archives retain their original bytes regardless of directory-walk filtering.
 
 ```bash
 artifact-site publish dist/ --title "Q3 dashboard"        # → prints the private site URL and access state
@@ -204,7 +207,7 @@ and refuse concurrent changes. `info` and `--json` include official version meta
 ## Recoverable publishing
 
 `artifact-site publish ./report --share none` accepts an HTML file, a directory or a ZIP.
-Large ZIPs are extracted into a private temporary directory and uploaded file by file. Extraction
+On legacy servers, large ZIPs are extracted into a private temporary directory and uploaded file by file. Extraction
 rejects unsafe paths, duplicates and expanded content over the deployment limits advertised by
 `GET /api/auth/me` (`uploadLimits`). Older servers fall back to 300 MiB / 250 MiB per file /
 2000 files. Hidden paths and excluded directories are skipped and reported for both ZIPs and
@@ -261,3 +264,24 @@ Reuse the operation key after uncertain responses; fixed-version shares remain o
 ### Main-link access
 
 `artifact-site visibility <slug>` reads access; append `private`, `unlisted` or `public` to change it. `unlisted` opens the same main link without exposing the work to unrelated users through discovery. `public` additionally enables public discovery. Changing to private does not revoke independent links. Ordinary sharing uses this command; `share` creates an advanced isolated discussion. Creation and copying alone never authorize sharing.
+
+### Directory-first file packages
+
+On servers advertising `uploadLimits.packageUploads`, publishing a directory or ZIP/RAR/7z/TAR/TAR.GZ/TGZ
+creates a directory-first package. HTML/HTM files can be opened from the directory. ZIP/RAR/7z/TAR/TAR.GZ/TGZ
+bytes are uploaded unchanged, streamed to the server, and retained for authorized original
+package downloads. The default archive limit is 100 MiB; it is separate from decompressed
+content limits. Directory uploads preserve subdirectories, including empty directories.
+
+The existing `export` command remains a source ZIP export for compatibility; generated
+system files and retained originals are excluded. The web download action returns the original
+archive for archive versions, or a source ZIP for folder versions. Both require source-export
+permission. Packages are updated as complete new versions, not via single-file online edits.
+Legacy servers retain the existing directory/ZIP path; RAR/7z require an upgraded server.
+
+On servers advertising `asyncPackages: 1`, package commits return a durable task. The CLI
+prints its upload ID, waits for processing, and reports progress before returning the URL.
+Closing the terminal does not cancel processing. Rerun the same command with unchanged
+files to recover the result or retry a transient failure without re-uploading. Recovery
+expires six hours after upload start; completed idempotent results remain recoverable
+through the operation key for seven days. Older servers keep synchronous commits.

@@ -493,6 +493,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("simplified sharing
       await page.click('.authorization-actions button:nth-child(2)');
       await page.waitForSelector('.authorization-form', {hidden:true});
       await page.keyboard.press('Escape');
+      await page.waitForSelector('.sharing-dialog', {hidden:true});
       await page.click('button[aria-label="More"]');
       await page.waitForSelector('.more-menu:not([hidden])');
       const history = await page.$('.more-menu button[aria-haspopup="dialog"]');

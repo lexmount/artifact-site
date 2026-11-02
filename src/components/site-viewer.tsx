@@ -1,10 +1,12 @@
 "use client";
+import SiteDownload from "@/components/site-download";
 import { appPath } from "@/lib/app-path";
 import { siteFetch as fetch } from "@/lib/share-context";
 import { useSitePermissions } from "@/lib/site-permissions";
 
 
 import ImmersivePreview from "@/components/immersive-preview";
+import PackageNavigation from "@/components/package-navigation";
 import PreviewNavigation from "@/components/preview-navigation";
 import CommentWorkspace from "@/components/comments/anchored-workspace";
 
@@ -99,7 +101,7 @@ export function drawerHoldEffect(before: number, after: number): "reveal" | "hid
 export default function SiteViewer(props: {
   collectionToken?: string;
   mainAudience?: import("@/lib/sharing-policy").SharingPolicy["audience"];
-  siteId: string; versionId: string; filePath: string;
+  siteId: string; versionId: string; filePath: string; packageMode?: boolean;
   viewedVersionId?: string; latestVersionId?: string; pinnedVersionId?: string; officialVersionId?: string | null;
   visibility: Visibility;
   permissions: SitePermissions;
@@ -192,7 +194,7 @@ export default function SiteViewer(props: {
 
   // Document sites have no edit semantics (the wrapper page is generated, the original is binary), so the entry point is not drawn at all; the server refuses too (editSite).
   const canDownload = Boolean(permissions.canReadSource);
-  const mayEdit = kind !== "document" && permissions.canEditContent;
+  const mayEdit = kind !== "document" && !props.packageMode && permissions.canEditContent;
 
   const titleInput = useRef<HTMLInputElement | null>(null);
   // Seed the toast from the ?published flag; the effect below auto-clears whatever is shown.
@@ -277,6 +279,7 @@ export default function SiteViewer(props: {
     if (effect === "reveal") revealBar();
     else if (effect === "hide" && modeAutoHides(barMode) && !barPinned) scheduleHide();
   }, [revealBar, scheduleHide, barMode, barPinned]);
+  const onDownloadOpen = useCallback((open: boolean) => setDrawerOpen("download", open), [setDrawerOpen]);
   const onHistoryOpen = useCallback((open: boolean) => setDrawerOpen("history", open), [setDrawerOpen]);
   const onSharingOpen = useCallback((open: boolean) => setDrawerOpen("sharing", open), [setDrawerOpen]);
   const onMenuOpen = useCallback((open: boolean) => setDrawerOpen("menu", open), [setDrawerOpen]);
@@ -411,6 +414,7 @@ export default function SiteViewer(props: {
             {props.canSignIn && <a href={appPath(loginHref())}>{t("Sign in to keep it")}</a>}
           </div>
         )}
+        {props.packageMode && <PackageNavigation key={`${props.versionId}:${frameKey}`} directoryUrl={`/api/preview/${slug}/?v=${encodeURIComponent(viewedVersion)}`} />}
         <div className="fs-stage">
           <SnapshotFrame
             key={`${props.versionId}:${frameKey}`}
@@ -418,14 +422,14 @@ export default function SiteViewer(props: {
             className="fs-frame"
             src={`/api/preview/${slug}/?v=${encodeURIComponent(viewedVersion)}&r=${frameKey}`}
             title={title}
-            sandbox="allow-forms allow-modals allow-scripts allow-popups allow-downloads"
+            sandbox={props.packageMode ? "allow-forms allow-modals allow-scripts allow-popups" : "allow-forms allow-modals allow-scripts allow-popups allow-downloads"}
             allow="fullscreen"
           />
         </div>
       </div>
 
       <PreviewNavigation frameRef={frameRef} />
-      <CommentWorkspace onPreviewVersionChange={setCommentVersion} previewGeneration={frameKey} frameRef={frameRef} key={`${props.versionId}:main`} slug={slug} scope={{ siteId: props.siteId, versionId: props.versionId, entry: { kind: "main" } }} filePath={props.filePath} canDownload={canDownload} editToken={editToken} />
+      <CommentWorkspace packagePaths={props.packageMode} onPreviewVersionChange={setCommentVersion} previewGeneration={frameKey} frameRef={frameRef} key={`${props.versionId}:main`} slug={slug} scope={{ siteId: props.siteId, versionId: props.versionId, entry: { kind: "main" } }} filePath={props.filePath} canDownload={canDownload} editToken={editToken} />
 
       {/* Top floating layer: when collapsed, only a thin hotzone + a persistent handle remain; when expanded, it is the full action bar as before. */}
       <div
@@ -550,6 +554,7 @@ export default function SiteViewer(props: {
               >
                 <ExternalLink size={14} aria-hidden="true" /> {t("Open in new window")}
               </a>
+              {canDownload && <SiteDownload label={props.packageMode ? t("Download package") : undefined} slug={slug} versionId={commentVersion || props.pinnedVersionId || props.versionId} editToken={editToken} onOpenChange={onDownloadOpen} />}
               {/* Reading history needs no identity — the versions API is open, and only rollback is gated. */}
               <VersionHistory initialPermissions={permissions} onUpload={permissions.canEditContent ? openUpload : undefined} variant="menu-item" canDownload={canDownload} slug={slug} editToken={editToken} onBeforeRollback={() => window.dispatchEvent(new Event("artifact:before-comment-scope-change", { cancelable: true }))} onRolledBack={onRolledBack} onOpenChange={onHistoryOpen} />
               <button type="button" role="menuitem" className="menu-item" onClick={fork} disabled={forking || !permissions.canReadSource} title={t("Copy into a separate new site")}>

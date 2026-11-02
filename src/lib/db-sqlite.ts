@@ -581,8 +581,8 @@ export class SqliteStore implements MetadataStore {
   }
 
   async insertVersion(input: InsertVersionInput): Promise<void> {
-    this.db.prepare("INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(input.id, input.siteId, input.entry, input.fileCount, input.byteSize, input.source, Date.now());
+    this.db.prepare("INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at, package_meta) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(input.id, input.siteId, input.entry, input.fileCount, input.byteSize, input.source, Date.now(), input.packageMeta ? JSON.stringify(input.packageMeta) : null);
   }
 
   async getVersion(id: string): Promise<Version | null> {

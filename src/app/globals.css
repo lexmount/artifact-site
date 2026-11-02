@@ -733,8 +733,8 @@ h1, h2, h3, p, blockquote, figure { margin-top: 0; }
 .admin-dialog-actions { display: flex; justify-content: flex-end; gap: .5rem; }
 /* Owner-facing notice on a taken-down site; sits above the stage, under the action bar. */
 /* The stage wrap is a centred flex ROW (device widths); with a notice present it becomes a column so the notice spans the top and the stage takes the rest. */
-.fs-stage-wrap:has(.fs-notice) { flex-direction: column; align-items: center; }
-.fs-stage-wrap:has(.fs-notice) .fs-stage { flex: 1 1 0; height: auto; min-height: 0; }
+.fs-stage-wrap:has(.fs-notice, .package-navigation:not([hidden])) { flex-direction: column; align-items: center; }
+.fs-stage-wrap:has(.fs-notice, .package-navigation:not([hidden])) .fs-stage { flex: 1 1 0; height: auto; min-height: 0; }
 /* Top padding clears the bar's handle, which hangs down over the notice's first line. */
 .fs-notice { position: relative; z-index: 2; width: 100%; flex: none; padding: 1.5rem 1rem .6rem; border-bottom: 1px solid color-mix(in srgb, var(--critical) 40%, var(--line)); background: color-mix(in srgb, var(--critical) 10%, var(--paper)); color: var(--ink); font: 500 .8rem/1.5 var(--font-ui); }
 .fs-notice b { color: var(--critical); }
@@ -2236,3 +2236,54 @@ fieldset.share-link-controls { border: 0; padding: 0; margin: 12px 0 0; min-widt
   .recent-sites-list .row-author::before, .recent-sites-list .row-date::before { content:attr(data-label); margin-right:8px; color:var(--muted); }
   .recent-sites-list .row-visibility, .recent-sites-list .row-versions { display:none; }
 }
+
+.package-navigation { width: 100%; flex: none; padding: .5rem 1rem; border-bottom: 1px solid var(--line); background: var(--paper); }
+
+.package-navigation[hidden] { display: none; }
+
+/* Durable upload progress uses the same paper, rule, and button tokens as the library. */
+/* Upload activity belongs to its own account tab; the homepage gets one quiet line. */
+.job-dot { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--ink); }
+.job-dot-failed { background: var(--critical); }
+.job-dot-completed { background: #50723b; }
+.job-badge { display: inline-flex; align-items: center; margin-inline-start: 6px; }
+.package-tasks { margin-block: 24px; }
+.package-tasks-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.package-tasks-toolbar small { color: var(--muted); }
+.package-task-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.package-task-filters button { padding: 6px 12px; border-radius: var(--radius); }
+.package-task-filters button[aria-pressed="true"] { background: var(--accent-soft); color: var(--ink); }
+.package-task-list { list-style: none; padding: 0; margin: 0; }
+.package-task-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto auto; align-items: start; gap: 10px 24px; padding: 22px 0; border-top: 1px solid var(--line); }
+.package-task-name { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.package-task-name svg { flex: 0 0 auto; color: var(--muted); }
+.package-task-name strong { font-size: .94rem; font-weight: 500; overflow-wrap: anywhere; }
+.package-task-state { display: grid; gap: 5px; font-size: .88rem; }
+.package-task-state > span { display: flex; align-items: center; gap: 8px; }
+.package-task-state small { color: var(--muted); }
+.package-task-actions { display: flex; justify-content: flex-end; min-width: 90px; }
+.package-task-details { font-size: .82rem; color: var(--muted); }
+.package-task-details[open] { grid-column: 1 / -1; }
+.package-task-details summary { cursor: pointer; width: fit-content; }
+.package-task-details > div { margin-top: 12px; padding: 12px 16px; background: var(--hover); overflow-wrap: anywhere; }
+.package-task-details p { margin: 4px 0; }
+.package-task-details code { font-size: inherit; }
+.package-task-error { color: var(--critical); font-size: .88rem; }
+.job-link { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.package-upload-hint { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; margin-block: 10px 0; color: var(--muted); font-size: .82rem; }
+.package-upload-message { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.package-upload-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(240px, 35vw); }
+.package-upload-message > span:last-child { flex-shrink: 0; }
+.package-upload-hint .btn { padding: 0; border: 0; background: none; font-size: inherit; color: inherit; }
+.package-upload-hint > a { color: var(--accent); }
+@media (max-width: 680px) {
+  .package-tasks-toolbar { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .package-task-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; padding-block: 18px; }
+  .package-task-name { grid-column: 1 / -1; }
+  .package-task-state { grid-column: 1; }
+  .package-task-actions { grid-column: 2; }
+  .package-task-details { grid-column: 1 / -1; }
+  .package-upload-hint { gap: 8px 12px; }
+}
+
+.upload-leave-hint { max-width: 60ch; margin: 12px 0; color: var(--ink-soft); font: 400 .875rem/1.6 var(--font-ui); }

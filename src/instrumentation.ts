@@ -13,7 +13,11 @@ export async function register(): Promise<void> {
   const report = describeRuntime();
   for (const line of report.lines) console.log(`[runtime] ${line}`);
   for (const warning of report.warnings) console.warn(`[runtime] WARN: ${warning}`);
-  if (report.errors.length === 0) return;
+  if (report.errors.length === 0) {
+    const { startPackageWorker } = await import("@/lib/package-jobs");
+    startPackageWorker();
+    return;
+  }
   for (const error of report.errors) console.error(`[runtime] FATAL: ${error}`);
   console.error("[runtime] This configuration cannot work; refusing to start. Fix .env and restart (locally, run `make doctor` first).");
   exitOnFatalConfig();

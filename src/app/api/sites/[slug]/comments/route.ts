@@ -40,7 +40,8 @@ export async function POST(request: Request, context: CommentRouteContext) {
     const result = await createComment(
       request,
       (await context.params).slug,
-      parseCreateComment(await commentBody(request)),
+      // Validate structure here; evidence validation applies the authorized version's path policy.
+      parseCreateComment(await commentBody(request), true),
     );
     replayed = result.replayed;
     return result.detail;

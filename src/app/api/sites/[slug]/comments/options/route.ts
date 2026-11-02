@@ -27,6 +27,7 @@ export async function GET(request: Request, context: CommentRouteContext) {
       versions: versions.map((v, index) => ({
         id: v.id,
         entry: v.entry,
+        packagePaths: Boolean(v.packageMeta),
         createdAt: v.createdAt,
         number: versions.length - index,
       })).filter(v => readableVersion(v.id)),

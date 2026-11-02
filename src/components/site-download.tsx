@@ -11,8 +11,9 @@ import { relTime } from "@/lib/rel-time";
 import type { VersionInfo } from "@/lib/types";
 
 /** One download flow across personal, editor and administrative surfaces. */
-export default function SiteDownload({ slug, editToken, versionId, management = false, menuItem = true, onOpenChange }: {
+export default function SiteDownload({ slug, editToken, versionId, label, management = false, menuItem = true, onOpenChange }: {
   slug: string;
+  label?: string;
   editToken?: string | null;
   /** A history row or editor pins its saved snapshot; lists default to current. */
   versionId?: string;
@@ -58,7 +59,7 @@ export default function SiteDownload({ slug, editToken, versionId, management = 
   return <>
     <button data-analytics-button="download" type="button" role={menuItem ? "menuitem" : undefined} className={menuItem ? "menu-item" : "btn sm ghost"}
       onClick={() => { setError(null); setReason(""); setVersions(null); setSelected(versionId ?? ""); setDone(false); setOpen(true); }}>
-      <Download size={14} aria-hidden="true" /> {t(versionId ? "Download this version (ZIP)" : "Download (ZIP)")}
+      <Download size={14} aria-hidden="true" /> {label ?? t(versionId ? "Download this version" : "Download")}
     </button>
     {open && typeof document !== "undefined" && createPortal(
       <dialog ref={dialog} className="admin-dialog" aria-labelledby={titleId} onClose={() => setOpen(false)} onCancel={(e) => { if (busy) e.preventDefault(); }}>
@@ -66,12 +67,12 @@ export default function SiteDownload({ slug, editToken, versionId, management = 
           e.preventDefault();
           if (!ready) return;
           setBusy(true); setError(null); setDone(false);
-          try { await downloadSite(slug, selected || undefined, headers); setDone(true); }
+          try { await downloadSite(slug, selected || undefined, headers, () => { setDone(false); setError(t("The browser could not start the download. Please try again.")); }); setDone(true); }
           catch (err) { setError(err instanceof Error ? err.message : t("Failed to download")); }
           finally { setBusy(false); }
         }}>
-          <h2 id={titleId}>{t("Download (ZIP)")}</h2>
-          <p>{t("Includes all files in the saved version. Documents include the original file in original/. Unsaved edits are not included.")}</p>
+          <h2 id={titleId}>{t("Download")}</h2>
+          <p>{t("Uploaded archives keep their original format. Folders and other artifacts download as ZIP; documents include the original file in original/. Unsaved edits are not included.")}</p>
           {management && <label><span>{t("Reason (required)")}</span>
             <textarea required maxLength={500} rows={3} value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} />
           </label>}
@@ -92,7 +93,7 @@ export default function SiteDownload({ slug, editToken, versionId, management = 
           <div className="admin-dialog-actions">
             <button type="button" className="btn" disabled={busy} onClick={() => setOpen(false)}>{t("Close")}</button>
             <button type="submit" className="btn solid" disabled={!ready}>
-              {busy ? <Loader2 size={14} className="spin" aria-hidden="true" /> : <Download size={14} aria-hidden="true" />}{t("Download (ZIP)")}
+              {busy ? <Loader2 size={14} className="spin" aria-hidden="true" /> : <Download size={14} aria-hidden="true" />}{t("Download")}
             </button>
           </div>
         </form>

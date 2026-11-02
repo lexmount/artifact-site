@@ -26,3 +26,6 @@ tsconfig.tsbuildinfo
 # local tooling state — never commit
 .agent-deploy-kit/
 .claude/
+
+
+/dist-archive/

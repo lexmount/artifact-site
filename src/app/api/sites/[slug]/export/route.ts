@@ -1,3 +1,6 @@
+import { getVersion } from "@/lib/db";
+import { versionStream } from "@/lib/package-processing";
+import { PACKAGE_ORIGINAL } from "@/lib/package-contract";
 import { managementReason } from "@/lib/management-reason";
 import { getReadableView } from "@/lib/read-view";
 import { canReadVersion } from "@/lib/share";
@@ -29,8 +32,6 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     const requestedVersion = new URL(request.url).searchParams.get("version") || new URL(request.url).searchParams.get("v") || view.version.id;
     if (!(await canReadVersion(request, view.site, requestedVersion, session))) return json({ error: "version not accessible" }, 404);
 
-    const exported = await exportSiteZip(slug, requestedVersion);
-    if (!exported) return json({ error: "site not found" }, 404);
     // managementRole already validates the reason. Narrow it locally as well so the
     // audit write does not rely on a non-null assertion across that function boundary.
     const reason = managementReason(request);
@@ -38,6 +39,19 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
       await recordRbacAudit(rbacQuery, view.site.tenantId, session?.userId ?? null,
         "site.source.export", view.site.id, reason);
     }
+    // A preserved ZIP already satisfies this endpoint's ZIP contract. Stream it rather than
+    // buffering and recompressing every expanded file (large packages can exhaust small hosts).
+    const version = await getVersion(requestedVersion);
+    if (version?.packageMeta?.archive?.format === "zip") {
+      return new NextResponse(versionStream(view.site.id, version.id, PACKAGE_ORIGINAL, version.packageMeta.archive.size), { headers: {
+        "content-type": "application/zip",
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${slug}-${version.id}.zip`)}`,
+        "content-length": String(version.packageMeta.archive.size),
+        "x-artifact-version": version.id, "cache-control": "private, no-store",
+      } });
+    }
+    const exported = await exportSiteZip(slug, requestedVersion);
+    if (!exported) return json({ error: "site not found" }, 404);
     return new NextResponse(Buffer.from(exported.bytes), {
       status: 200,
       headers: {

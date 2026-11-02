@@ -43,6 +43,10 @@ export const limits = {
   // time. Raising these two numbers before that was dangerous — production was in fact crashed by a
   // large upload (process restart, everyone 503 meanwhile). The numbers and that channel are one
   // package and should not be tuned separately.
+  get packageJobTimeoutMs(): number { return intFromEnv("ARTIFACT_PACKAGE_JOB_TIMEOUT_MS", 15 * 60_000); },
+  get packageUploadConcurrency(): number { return Math.min(16, Math.max(1, intFromEnv("ARTIFACT_PACKAGE_UPLOAD_CONCURRENCY", 4))); },
+  get archiveReader(): string { return process.env.ARTIFACT_ARCHIVE_READER || "dist-archive/reader"; },
+  get archiveMaxBytes(): number { return intFromEnv("ARTIFACT_ARCHIVE_MAX_BYTES", 100 * 1024 * 1024); },
   get maxBytes(): number { return intFromEnv("ARTIFACT_MAX_BYTES", DEFAULT_UPLOAD_LIMITS.maxBytes); }, // the whole version
   get maxFiles(): number { return intFromEnv("ARTIFACT_MAX_FILES", DEFAULT_UPLOAD_LIMITS.maxFiles); },
   get maxFileBytes(): number { return intFromEnv("ARTIFACT_MAX_FILE_BYTES", DEFAULT_UPLOAD_LIMITS.maxFileBytes); }, // a single file

@@ -3,7 +3,7 @@ import { canonicalPreviewPath } from "./preview-path";
 import type { CommentAnchor, CommentScope, PreviewCommentCommand, PreviewCommentEvent } from "./contracts";
 
 /** Runs inside the existing opaque-origin sandbox, never in the host document. */
-function commentPreviewRuntime(filePath: string, parentOrigin: string, documentMode: boolean, flashMs: number, canonicalPath: (input: string) => string | null) {
+function commentPreviewRuntime(filePath: string, parentOrigin: string, documentMode: boolean, flashMs: number, previewRoot: string | undefined, packagePaths: boolean, canonicalPath: (input: string, packagePaths?: boolean) => string | null) {
   type Marker = { threadId: string; anchor: CommentAnchor };
   let channelId = "";
   let scope: CommentScope | null = null;
@@ -83,10 +83,10 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
   }
   function relativeImage(el: HTMLImageElement) {
     try {
-      const url = new URL(el.currentSrc || el.src), base = new URL(document.baseURI);
+      const url = new URL(el.currentSrc || el.src), base = new URL(previewRoot || document.baseURI, document.baseURI);
       if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) return null;
       const value = decodeURIComponent(url.pathname.slice(base.pathname.length));
-      return canonicalPath(value);
+      return canonicalPath(value, packagePaths);
     } catch { return null; }
   }
   function selector(el: Element) {
@@ -147,7 +147,7 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
   }
   function candidate(el: Element, start: { x: number; y: number }, end: { x: number; y: number }): CommentAnchor | null {
     const page = Number((el as HTMLElement).dataset.commentPage);
-    const pdf = canonicalPath((el as HTMLElement).dataset.commentFile ?? "");
+    const pdf = canonicalPath((el as HTMLElement).dataset.commentFile ?? "", packagePaths);
     const image = el instanceof HTMLImageElement ? relativeImage(el) : null;
     if ((page && pdf) || image) {
       const a = point(el, start.x, start.y), b = point(el, end.x, end.y);
@@ -471,7 +471,7 @@ function commentPreviewRuntime(filePath: string, parentOrigin: string, documentM
   });
 }
 
-export function commentPreviewBootstrap(filePath: string, parentOrigin: string, documentMode = false): string {
-  const args = JSON.stringify([filePath, parentOrigin, documentMode, COMMENT_LOCATION_FLASH_MS]).replaceAll("<", "\\u003c");
+export function commentPreviewBootstrap(filePath: string, parentOrigin: string, documentMode = false, previewRoot?: string, packagePaths = false): string {
+  const args = JSON.stringify([filePath, parentOrigin, documentMode, COMMENT_LOCATION_FLASH_MS, previewRoot, packagePaths]).replaceAll("<", "\\u003c");
   return `<script data-artifact-bootstrap>(${commentPreviewRuntime.toString()})(...${args},${canonicalPreviewPath.toString()});</script>`;
 }

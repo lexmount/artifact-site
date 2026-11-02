@@ -1,3 +1,7 @@
+import { z } from "zod";
+import { packagePath } from "@/lib/package-directory";
+import { archiveFormat } from "@/lib/package-contract";
+import { BadRequestError } from "@/lib/errors";
 import { withPublishOperation } from "@/lib/publish-operation";
 import { assertMutationOrigin } from "@/lib/request-auth";
 import { creationTenant } from "@/lib/rbac-access";
@@ -31,7 +35,11 @@ async function executePost(request: Request): Promise<NextResponse> {
 
     // Same gate as /api/sites: a revoked publish token is refused right here, rather than letting an agent upload 300MB and then fail at commit.
     await assertPresentedBearerAlive(request, await resolveSession(request));
-    const body = (await request.json().catch(() => ({}))) as { slug?: string; title?: string };
+    const body = z.object({ slug: z.string().optional(), title: z.string().optional(), package: z.object({ source: z.enum(["folder", "archive"]), name: z.string().max(255).optional(), directories: z.array(z.string().max(1024)).max(4000).optional() }).optional() }).parse(await request.json().catch(() => ({})));
+    if (body.package) {
+      for (const dir of body.package.directories ?? []) packagePath(dir);
+      if (body.package.source === "archive" && (!body.package.name || !archiveFormat(body.package.name) || /[\\/\x00-\x1f]/.test(body.package.name))) throw new BadRequestError("A ZIP, RAR, 7z, TAR, TAR.GZ or TGZ filename is required");
+    }
     // An anonymous user without a cookie gets one minted here and **written back on the response**:
     // every later PUT has to match the session by it; without the write-back the next request would be a different "person".
     const { anonId, cookie } = ensureAnonId(request);
@@ -43,14 +51,15 @@ async function executePost(request: Request): Promise<NextResponse> {
       // Uploading a new version to an existing site needs the same tier of permission as /edit; creating a new site follows the deployment create policy.
       const view = await getSiteView(body.slug);
       if (!view) return json({ error: "site not found" }, 404);
+      if (body.package && view.site.kind !== "folder") throw new BadRequestError("Packages can only replace folder artifacts");
       await requirePermission(request, view.site, "site.content.edit");
       // Every cookie-authenticated upload step uses the same origin check.
       await assertMutationOrigin(request, view.site);
-      session = await createUploadSession({ siteId: view.site.id, targetSlug: body.slug, title: body.title, ownerKey });
+      session = await createUploadSession({ siteId: view.site.id, targetSlug: body.slug, title: body.title, packageOptions: body.package, ownerKey });
     } else {
       await assertMutationOrigin(request);
       await assertCanCreate(request);
-      session = await createUploadSession({ tenantId: await creationTenant((await resolveSession(request))?.userId ?? null,request.headers.get("x-artifact-tenant") || undefined), title: body.title, ownerKey });
+      session = await createUploadSession({ tenantId: await creationTenant((await resolveSession(request))?.userId ?? null,request.headers.get("x-artifact-tenant") || undefined), title: body.title, packageOptions: body.package, ownerKey });
     }
     const res = json({ versionId: session.versionId }, 201);
     if (cookie) res.headers.append("set-cookie", cookie);

@@ -293,7 +293,7 @@ export async function extractText(source: TextSource): Promise<string> {
     if (pdf) return cap(await pdfToText(bytes));
     return cap(officeToText(bytes, office!.toLowerCase().endsWith(".docx") ? "docx" : "pptx"));
   }
-  const ordered = [source.entry, ...source.files.filter((f) => f !== source.entry && TEXT_EXTENSIONS.test(f)).sort()].slice(0, MAX_TEXT_FILES);
+  const ordered = [source.entry, ...source.files.filter((f) => f !== source.entry && TEXT_EXTENSIONS.test(f)).sort()].filter(Boolean).slice(0, MAX_TEXT_FILES);
   const parts: string[] = [];
   let total = 0;
   for (const path of ordered) {
@@ -391,13 +391,13 @@ async function doIndex(siteId: string, versionId: string): Promise<IndexOutcome>
   // check is made at the write (below, and by the store's own guard).
   let body = "";
   try {
-    const storage = getStorage();
+    const storage = getStorage(version.packageMeta ? "package" : "website");
     body = await withExtractionSlot(async () => {
       const files = await storage.list(siteId, versionId);
       return extractText({
         kind: site.kind,
-        entry: version.entry,
-        files,
+        entry: version.packageMeta ? version.packageMeta.files.find(f => TEXT_EXTENSIONS.test(f.path))?.path ?? "" : version.entry,
+        files: version.packageMeta ? version.packageMeta.files.map(f => f.path) : files,
         readUpTo: (p, max) => storage.readRange(siteId, versionId, p, 0, max - 1),
         size: (p) => storage.sizeOf(siteId, versionId, p),
       });

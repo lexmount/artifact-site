@@ -1,3 +1,4 @@
+import { traceUploadStore } from "@/lib/upload-timing";
 // Metadata access facade: PostgreSQL in production, SQLite only in tests.
 // Publication orchestration belongs above this layer in publication-service.
 import { listSharesQuery } from "@/lib/share-queries";
@@ -322,7 +323,7 @@ function getStore(): Promise<MetadataStore> {
         store = new SqliteStore();
       } else throw new Error(`unknown ARTIFACT_DB_DRIVER: ${driver}`);
       await store.init();
-      return store;
+      return traceUploadStore(store);
     })();
     // Don't cache a failed init (e.g. Postgres unreachable at startup) — let the next call retry.
     storePromise.catch(() => { storePromise = null; });

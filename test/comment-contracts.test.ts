@@ -138,3 +138,10 @@ describe("comment authorization boundaries", () => {
     expect(canActOnComment({ ...facts, canWriteArtifactDiscussion: false }, "edit", { ...target, messageAuthorId: "u1" })).toBe(false);
   });
 });
+
+it("defers package name policy to authorized version evidence without allowing traversal", () => {
+  const payload = { ...input, anchor: { ...input.anchor, filePath: ".git/report.html" } };
+  expect(() => parseCreateComment(payload)).toThrow();
+  expect(parseCreateComment(payload, true).anchor.filePath).toBe(".git/report.html");
+  expect(() => parseCreateComment({ ...payload, anchor: { ...payload.anchor, filePath: "../escape" } }, true)).toThrow();
+});

@@ -181,6 +181,7 @@ export default async function ViewerPage({
         siteId={view.site.id}
         versionId={view.version.id}
         filePath={view.version.entry}
+        packageMode={Boolean(view.version.packageMeta)}
         slug={slug}
         title={view.site.title}
         kind={view.site.kind}

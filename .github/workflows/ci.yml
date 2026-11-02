@@ -26,6 +26,12 @@ jobs:
       - run: npm run lint
       - run: npm run check:readme
       - run: npm test
+      - name: Native archive acceptance
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-dev libarchive-tools gcc
+          npm run build:archive
+          ARCHIVE_INTEGRATION=1 npx vitest run test/package-archive.integration.test.ts test/publish-client-recovery.test.ts test/archive-chunks.test.ts
 
   integration:
     name: postgres integration tests
@@ -51,10 +57,16 @@ jobs:
       - run: npx vitest run test/db-postgres.integration.test.ts
         env:
           ARTIFACT_DATABASE_URL: postgres://t:t@127.0.0.1:5432/t?sslmode=disable
+      - name: Build archive reader for PostgreSQL package acceptance
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-dev libarchive-tools gcc
+          npm run build:archive
       # The administration suite is SQL-heavy (aggregates, window functions, typed parameters):
       # run it against the real store as well, not only the SQLite test backend.
       - run: npm run test:pg:rbac
         env:
+          ARCHIVE_INTEGRATION: "1"
           ARTIFACT_DB_DRIVER: postgres
           ARTIFACT_DATABASE_URL: postgres://t:t@127.0.0.1:5432/t?sslmode=disable
 
@@ -95,8 +107,8 @@ jobs:
         id: chrome
         with:
           install-dependencies: true
-      - name: Test native preview anchor navigation
-        run: npx vitest run test/preview-navigation.browser.test.ts
+      - name: Test native navigation, upload guards and downloads
+        run: npx vitest run test/preview-navigation.browser.test.ts test/upload-leave-browser.test.ts test/download-browser.test.ts
         env:
           E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - name: Test static thumbnail sandbox

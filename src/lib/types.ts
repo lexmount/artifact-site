@@ -369,6 +369,7 @@ export interface AuditEntry {
 
 /** An immutable snapshot. Files live at <dataDir>/sites/<siteId>/<versionId>/<relpath…>. */
 export interface Version {
+  packageMeta?: import("@/lib/package-contract").PackageMeta;
   id: string;
   siteId: string;
   /** Entry HTML relative to the version root (default "index.html"). */

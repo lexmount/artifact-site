@@ -6,6 +6,17 @@
 #   ARTIFACT_BASE_PATH  compiled URL prefix (empty = root); requires a matching public URL
 ARG NODE_IMAGE=node:24-bookworm-slim
 
+# Build the resource-limited archive reader for the target architecture.
+FROM ${NODE_IMAGE} AS archive-reader
+WORKDIR /build
+ARG USE_CN_MIRROR=0
+RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
+      sed -i -E 's#https?://(deb|security)[.]debian[.]org/#http://mirrors.ustc.edu.cn/#g' /etc/apt/sources.list.d/debian.sources; \
+    fi
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev libarchive-dev && rm -rf /var/lib/apt/lists/*
+COPY scripts/archive/ ./scripts/archive/
+RUN sh scripts/archive/build.sh
+
 # ─────────────────────────────────────────────────────────────
 # 1. deps — full install (incl. dev deps) needed to build
 # ─────────────────────────────────────────────────────────────
@@ -32,6 +43,11 @@ RUN npm run build \
 # 3. runner — minimal runtime, non-root, persistent /data volume
 # ─────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS runner
+ARG USE_CN_MIRROR=0
+RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
+      sed -i -E 's#https?://(deb|security)[.]debian[.]org/#http://mirrors.ustc.edu.cn/#g' /etc/apt/sources.list.d/debian.sources; \
+    fi
+RUN apt-get update && apt-get install -y --no-install-recommends libarchive13 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
@@ -53,6 +69,7 @@ RUN set -eux; \
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=archive-reader --chown=nextjs:nodejs /build/dist-archive ./dist-archive
 COPY --from=builder --chown=nextjs:nodejs /app/base-path.json ./base-path.json
 COPY LICENSE-APACHE LICENSE-MIT NOTICE ./
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

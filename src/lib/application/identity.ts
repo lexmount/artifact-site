@@ -26,7 +26,7 @@ async function currentUser(request: Request): Promise<NextResponse> {
     // an unconfigured deployment looks and behaves exactly as it did before identity existed.
     const oidcEnabled = config.oidcEnabled;
     const operator = isAdmin(request);
-    const uploadLimits = { maxBytes: limits.maxBytes, maxFileBytes: limits.maxFileBytes, maxFiles: limits.maxFiles };
+    const uploadLimits = { archiveChunks: 1, archiveChunkBytes: 4 * 1024 * 1024, packageUploads: 1, packagePaths: 1, asyncPackages: 1, archiveMaxBytes: limits.archiveMaxBytes, maxBytes: limits.maxBytes, maxFileBytes: limits.maxFileBytes, maxFiles: limits.maxFiles };
     if (!session) return json({ user: null, operator, oidcEnabled, uploadLimits, autoLogin: oidcEnabled && !operator && !request.headers.has("authorization") && autoLoginAllowed(request) }, 200);
     const user = await getUser(session.userId);
     if (!user) return json({ user: null, operator, oidcEnabled, uploadLimits }, 200);

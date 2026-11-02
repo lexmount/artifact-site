@@ -27,20 +27,22 @@ export interface WalkedFile { relpath: string; absPath: string; size: number }
 /** Paths under `root` that were deliberately left out of the last `walkDir` call (dot-leading
  *  segments, node_modules, junk) — for a progress line, so a missing file is never a mystery. */
 export const skippedLastWalk: string[] = [];
+export const directoriesLastWalk: string[] = [];
 
-export async function walkDir(root: string): Promise<WalkedFile[]> {
+export async function walkDir(root: string, packagePaths = false): Promise<WalkedFile[]> {
   const out: WalkedFile[] = [];
-  skippedLastWalk.length = 0;
+  skippedLastWalk.length = 0; directoriesLastWalk.length = 0;
   async function visit(dir: string, rel: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const e of entries) {
       const relpath = rel ? `${rel}/${e.name}` : e.name;
-      if (IGNORED_NAMES.has(e.name) || e.name.startsWith(".") || (e.isDirectory() && REJECTED_DIRS.has(e.name.toLowerCase()))) {
+      if (IGNORED_NAMES.has(e.name) || e.name === ".DS_Store" || (!packagePaths && (e.name.startsWith(".") || (e.isDirectory() && REJECTED_DIRS.has(e.name.toLowerCase()))))) {
         skippedLastWalk.push(relpath);
         continue;
       }
       if (e.isDirectory()) {
+        directoriesLastWalk.push(relpath);
         await visit(path.join(dir, e.name), relpath);
       } else if (e.isFile()) {
         const absPath = path.join(dir, e.name);
@@ -67,22 +69,23 @@ export async function zipFiles(files: WalkedFile[]): Promise<Uint8Array> {
 export type LocalShape =
   | { type: "html"; file: string; size: number }
   | { type: "document"; file: string; size: number }
-  | { type: "zip"; file: string; size: number }
-  | { type: "dir"; root: string; files: WalkedFile[]; size: number };
+  | { type: "zip" | "archive"; file: string; size: number }
+  | { type: "dir"; root: string; files: WalkedFile[]; size: number; directories?: string[] };
 
 /** What is at `target`, classified the way the API distinguishes uploads. */
-export async function inspect(target: string): Promise<LocalShape> {
+export async function inspect(target: string, packagePaths = false): Promise<LocalShape> {
   const abs = path.resolve(target);
   const s = await stat(abs);
   if (s.isDirectory()) {
-    const files = await walkDir(abs);
-    if (files.length === 0) throw new Error(`${target} is an empty directory`);
-    return { type: "dir", root: abs, files, size: totalSize(files) };
+    const files = await walkDir(abs, packagePaths);
+    if (files.length === 0 && !directoriesLastWalk.length) throw new Error(`${target} is an empty directory`);
+    return { type: "dir", root: abs, files, size: totalSize(files), directories: [...directoriesLastWalk] };
   }
   const ext = path.extname(abs).toLowerCase();
+  if (/\.(rar|7z|tar|tar\.gz|tgz)$/i.test(abs)) return { type: "archive", file: abs, size: s.size };
   const kind = ext ? uploadFileKind(abs) : undefined;
   if (kind) return { type: kind, file: abs, size: s.size };
-  throw new Error(`Unsupported file type ${ext || "(none)"}: publish a .html, a .zip, a directory, or a pdf/pptx/ppt/docx/doc document`);
+  throw new Error(`Unsupported file type ${ext || "(none)"}: publish HTML, ZIP/RAR/7z/TAR/TAR.GZ/TGZ, a directory, or a pdf/pptx/ppt/docx/doc document`);
 }
 
 /** Match the server's path contract before creating local staging files. */
