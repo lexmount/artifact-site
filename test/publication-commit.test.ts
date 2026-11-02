@@ -1,7 +1,9 @@
 import pg from "pg";
 import { config } from "@/lib/config";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { addVersionAsCurrent, addVersionAsCurrentIfCurrentIs, createId, getSite, getVersion, insertSiteWithVersion, listAudit, listVersions, rbacQuery, setCurrentVersion, softDeleteSite, type InsertVersionInput } from "@/lib/db";
+import { createId, getSite, getVersion, listAudit, listVersions, rbacQuery, softDeleteSite, type InsertVersionInput } from "@/lib/db";
+import { addVersionAsCurrent, addVersionAsCurrentIfCurrentIs, insertSiteWithVersion } from "@/lib/publication-service";
+import { setCurrentVersion } from "@/lib/publication-fixtures";
 import { apiAuditContext, auditRow } from "@/lib/audit";
 import { createSite, editSite, rollbackTo } from "@/lib/sites";
 import { publicationPolicy } from "@/lib/publication-policy";

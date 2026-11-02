@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   closeDbForTests,
   createId,
-  insertSiteWithVersion,
   rbacQuery,
   upsertUser,
   getSiteBySlug,
   insertFolder,
   setFolderAssignment,
 } from "@/lib/db";
+import { insertSiteWithVersion } from "@/lib/publication-service";
 import { describePermissions } from "@/lib/authz";
 import { putUserSiteRole } from "@/lib/role-bindings";
 import type { Session } from "@/lib/types";

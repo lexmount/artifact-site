@@ -1,5 +1,5 @@
 import "server-only";
-import { json, errorResponse } from "@/app/api/_util";
+import { json, errorResponse } from "@/lib/api-http";
 import { fail } from "./store";
 export type CommentRouteContext<
   T extends Record<string, string> = { slug: string },

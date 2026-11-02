@@ -8,9 +8,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   insertAdminLog, attributeUnattributedVersions, claimSiteAudited, clearSiteOwner, closeDbForTests, createId,
-  getSite, insertAudit, insertSiteWithVersion, listSitesByOwner,
+  getSite, insertAudit, listSitesByOwner,
   updateSiteVisibility, upsertUser, type InsertAuditInput,
 } from "@/lib/db";
+import { insertSiteWithVersion } from "@/lib/publication-service";
 import { mintSession } from "@/lib/session";
 import { POST } from "@/app/api/me/adopt/route";
 

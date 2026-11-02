@@ -5,12 +5,12 @@ import {
   closeDbForTests,
   createId,
   getSite,
-  insertSiteWithVersion,
   rbacQuery,
   upsertUser,
   updateSiteVisibility,
   rbacTransaction,
 } from "@/lib/db";
+import { insertSiteWithVersion } from "@/lib/publication-service";
 import { ANONYMOUS_TENANT, INIT_TENANT, roleAllows } from "@/lib/rbac";
 
 afterEach(closeDbForTests);

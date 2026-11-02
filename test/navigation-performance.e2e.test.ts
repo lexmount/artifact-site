@@ -122,7 +122,8 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.click('.site-header a[href="/me"]');
       await page.waitForSelector(".site-row");
       expect(paths.filter(p => p === "/me")).toHaveLength(meRequests);
-      await page.click('button[aria-label="Grid view"]');
+      // Cached navigation can still shift this control after the rows first appear.
+      await page.locator('button[aria-label="Grid view"]').click();
       await page.waitForSelector(".result-grid .artifact-cover");
       expect(paths.filter(p => p === "/me")).toHaveLength(meRequests);
       await page.click('button[aria-label="List view"]');
