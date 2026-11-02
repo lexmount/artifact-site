@@ -1,3 +1,4 @@
+import { insertSiteWithVersionForTests, addVersionForTests } from "@/lib/publication-fixtures";
 import { putUserSiteRole } from "@/lib/role-bindings";
 // Integration test against a REAL Postgres. Skipped unless ARTIFACT_DATABASE_URL is set, so it
 // never runs in CI. Run manually:
@@ -86,7 +87,7 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
 
   it("atomically deduplicates all entrances and retains lifetime totals after pruning", async () => {
     const id = "site_atomic_views";
-    await store.insertSiteWithVersion(
+    await insertSiteWithVersionForTests(store,
       { id, slug: "atomic-views", title: "Atomic", kind: "single", editToken: "t", anonOwnerId: "atomic-author", visibility: "private" },
       { id: "v_atomic_views", siteId: id, entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" });
     const share = await store.createShare({ id: "shr_atomic_views", siteId: id, tokenHash: "th-atomic-views", policy: "public", passcodeHash: null, label: null, createdBy: null, createdAnonId: null, expiresAt: null });
@@ -191,23 +192,23 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
     const S2 = "site_pgit2";
     await new Promise<void>((res) => { void hardDelete2(S2).then(() => res()); });
     try {
-      await store.insertSiteWithVersion(
+      await insertSiteWithVersionForTests(store,
         { id: S2, slug: "pgit2-slug", title: "Atomic", kind: "single", editToken: "t", visibility: "public" },
         { id: `${S2}_v1`, siteId: S2, entry: "index.html", fileCount: 1, byteSize: 10, source: "upload" },
       );
       expect((await store.getSiteBySlug("pgit2-slug"))?.currentVersionId).toBe(`${S2}_v1`);
 
       // duplicate slug → SlugConflictError
-      await expect(store.insertSiteWithVersion(
+      await expect(insertSiteWithVersionForTests(store,
         { id: "site_pgit2b", slug: "pgit2-slug", title: "Dup", kind: "single", editToken: "t", visibility: "public" },
         { id: "site_pgit2b_v", siteId: "site_pgit2b", entry: "index.html", fileCount: 1, byteSize: 1, source: "upload" },
       )).rejects.toBeInstanceOf(SlugConflictError);
 
       // addVersionAsCurrent advances a live site, refuses a soft-deleted one
-      expect(await store.addVersionAsCurrent(S2, { id: `${S2}_v2`, siteId: S2, entry: "index.html", fileCount: 1, byteSize: 20, source: "edit" })).toBe(true);
+      expect(await addVersionForTests(store, "postgres", S2, { id: `${S2}_v2`, siteId: S2, entry: "index.html", fileCount: 1, byteSize: 20, source: "edit" })).toBe("applied");
       expect((await store.getSite(S2))?.currentVersionId).toBe(`${S2}_v2`);
       await store.softDeleteSite(S2);
-      expect(await store.addVersionAsCurrent(S2, { id: `${S2}_v3`, siteId: S2, entry: "index.html", fileCount: 1, byteSize: 1, source: "edit" })).toBe(false);
+      expect(await addVersionForTests(store, "postgres", S2, { id: `${S2}_v3`, siteId: S2, entry: "index.html", fileCount: 1, byteSize: 1, source: "edit" })).toBe("gone");
       expect(await store.getVersion(`${S2}_v3`)).toBeNull();
     } finally {
       await hardDelete2(S2);
@@ -222,7 +223,7 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
     const S3 = "site_pgit3";
     const user = await store.upsertUser({ authProvider: "t", providerSubject: `pgit-${Date.now()}` });
     try {
-      await store.insertSiteWithVersion(
+      await insertSiteWithVersionForTests(store,
         { id: S3, slug: "pgit3-slug", title: "Hidden", kind: "single", editToken: "t", anonOwnerId: "anon_pgit", visibility: "public" },
         { id: `${S3}_v1`, siteId: S3, entry: "index.html", fileCount: 1, byteSize: 10, source: "upload" },
       );
@@ -305,7 +306,7 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
     const invited = await store.upsertUser({ authProvider: "t", providerSubject: `pgit-sh-inv-${stamp}`, displayName: "受邀的人" });
     const stranger = await store.upsertUser({ authProvider: "t", providerSubject: `pgit-sh-str-${stamp}` });
     try {
-      await store.insertSiteWithVersion(
+      await insertSiteWithVersionForTests(store,
         { id: SS, slug: "pgit-share-slug", title: "Shared", kind: "single", editToken: "t", ownerId: owner.id, visibility: "public" },
         { id: `${SS}_v1`, siteId: SS, entry: "index.html", fileCount: 1, byteSize: 10, source: "upload" },
       );

@@ -39,7 +39,6 @@ import {
   type QuotaOwner,
   createEditToken,
   createId,
-  SlugConflictError,
   UserCodeConflictError,
   toAudit,
   toShare,
@@ -69,7 +68,6 @@ import {
   type ListViewer,
   type MetadataStore,
   type PublishToken,
-  type VersionCommit,
   type Row,
   toUserFolder, type UserFolder, type FolderAssignment,
 } from "@/lib/db";
@@ -506,103 +504,6 @@ export class SqliteStore implements MetadataStore {
     const now = Date.now();
     this.db.prepare("INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, anon_owner_id, visibility) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?)")
       .run(input.id, input.slug, input.title, input.kind, now, now, input.editToken, input.anonOwnerId ?? null, input.visibility);
-  }
-
-  async insertSiteWithVersion(site: InsertSiteInput, version: InsertVersionInput, audit?: InsertAuditInput): Promise<void> {
-    const now = Date.now();
-    this.db.exec("BEGIN");
-    try {
-      this.db.prepare("INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, anon_owner_id, owner_id, visibility, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)")
-        .run(site.id, site.slug, site.title, site.kind, version.id, now, now, site.editToken, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, site.tenantId ?? (site.ownerId ? "init" : "anonymous"));
-      this.db.prepare("INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now);
-      this.db.prepare("INSERT INTO site_comment_settings(site_id,main_policy,reader_access,updated_at) VALUES(?,'login',1,?)").run(site.id, now);
-      await (await import("@/lib/sharing-defaults")).initializeSharing(this.rbacQuery, toSite(this.db.prepare("SELECT * FROM sites WHERE id=?").get(site.id) as Row), undefined, version.source === "fork" ? site.visibility : undefined);
-      if (audit) this.writeAuditRow(audit, now);
-      if (version.official) {
-        this.db.prepare("UPDATE sites SET official_version_id=?, official_set_at=?, official_set_by=?, official_revision=official_revision+1 WHERE id=?").run(version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId);
-        if (audit) this.writeAuditRow({ ...audit, id: createId("aud"), action: "official.set" }, now);
-      }
-      this.db.exec("COMMIT");
-    } catch (error) {
-      // Swallow a failing ROLLBACK — it can throw in exactly the situations that got us here (the
-      // BEGIN never took, the handle is unusable), and if it does, its exception would replace the
-      // one that actually explains the failure. Mirrors the Postgres backend's `.catch(() => {})`.
-      try { this.db.exec("ROLLBACK"); } catch { /* keep the original error */ }
-      if (String((error as Error)?.message).includes("UNIQUE constraint failed: sites.slug")) throw new SlugConflictError();
-      throw error;
-    }
-  }
-
-  async addVersionAsCurrent(siteId: string, version: InsertVersionInput, audit?: InsertAuditInput): Promise<boolean> {
-    const now = Date.now();
-    this.db.exec("BEGIN");
-    try {
-      const row = this.db.prepare("SELECT deleted_at FROM sites WHERE id=?").get(siteId) as { deleted_at: number | null } | undefined;
-      if (!row || row.deleted_at != null) {
-        this.db.exec("ROLLBACK");
-        return false;
-      }
-      this.db.prepare("INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now);
-      this.db.prepare("UPDATE sites SET current_version_id=?, updated_at=? WHERE id=?").run(version.id, now, siteId);
-      if (audit) this.writeAuditRow(audit, now);
-      if (version.official) {
-        this.db.prepare("UPDATE sites SET official_version_id=?, official_set_at=?, official_set_by=?, official_revision=official_revision+1 WHERE id=?").run(version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId);
-        if (audit) this.writeAuditRow({ ...audit, id: createId("aud"), action: "official.set" }, now);
-      }
-      this.db.exec("COMMIT");
-      return true;
-    } catch (error) {
-      // Swallow a failing ROLLBACK — it can throw in exactly the situations that got us here (the
-      // BEGIN never took, the handle is unusable), and if it does, its exception would replace the
-      // one that actually explains the failure. Mirrors the Postgres backend's `.catch(() => {})`.
-      try { this.db.exec("ROLLBACK"); } catch { /* keep the original error */ }
-      throw error;
-    }
-  }
-
-  async addVersionAsCurrentIfCurrentIs(
-    siteId: string,
-    expectedCurrentVersionId: string,
-    version: InsertVersionInput,
-    audit?: InsertAuditInput,
-  ): Promise<VersionCommit> {
-    const now = Date.now();
-    // BEGIN IMMEDIATE, not the bare BEGIN used above: this transaction reads a row and then writes
-    // based on what it read. Under a deferred transaction SQLite starts read-only and can only
-    // discover the conflict at upgrade time, failing with SQLITE_BUSY_SNAPSHOT (517) — which no
-    // busy handler retries. Taking the write lock up front is the shape that actually serializes.
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      const row = this.db.prepare("SELECT deleted_at, current_version_id FROM sites WHERE id=?").get(siteId) as
-        | { deleted_at: number | null; current_version_id: string | null }
-        | undefined;
-      if (!row || row.deleted_at != null) {
-        this.db.exec("ROLLBACK");
-        return "gone";
-      }
-      if ((row.current_version_id ?? "") !== expectedCurrentVersionId) {
-        this.db.exec("ROLLBACK");
-        return "stale";
-      }
-      this.db.prepare("INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now);
-      this.db.prepare("UPDATE sites SET current_version_id=?, updated_at=? WHERE id=?").run(version.id, now, siteId);
-      if (audit) this.writeAuditRow(audit, now);
-      if (version.official) {
-        this.db.prepare("UPDATE sites SET official_version_id=?, official_set_at=?, official_set_by=?, official_revision=official_revision+1 WHERE id=?").run(version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId);
-        if (audit) this.writeAuditRow({ ...audit, id: createId("aud"), action: "official.set" }, now);
-      }
-      this.db.exec("COMMIT");
-      return "applied";
-    } catch (error) {
-      // Swallow a failing ROLLBACK — it can throw in exactly the situations that got us here (the
-      // BEGIN never took, the handle is unusable), and if it does, its exception would replace the
-      // one that actually explains the failure. Mirrors the Postgres backend's `.catch(() => {})`.
-      try { this.db.exec("ROLLBACK"); } catch { /* keep the original error */ }
-      throw error;
-    }
   }
 
   async insertAudit(input: InsertAuditInput): Promise<void> {
@@ -1468,7 +1369,7 @@ export class SqliteStore implements MetadataStore {
       this.db.exec("COMMIT");
       return Number(changes) > 0;
     } catch (error) {
-      // Swallow a failing ROLLBACK — see insertSiteWithVersion.
+      // Preserve the original failure if the connection cannot roll back.
       try { this.db.exec("ROLLBACK"); } catch { /* keep the original error */ }
       throw error;
     }

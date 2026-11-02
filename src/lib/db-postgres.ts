@@ -37,7 +37,6 @@ import {
   type QuotaOwner,
   createEditToken,
   createId,
-  SlugConflictError,
   UserCodeConflictError,
   toAudit,
   toShare,
@@ -67,7 +66,6 @@ import {
   type ListViewer,
   type MetadataStore,
   type PublishToken,
-  type VersionCommit,
   type Row,
   toUserFolder, type UserFolder, type FolderAssignment,
 } from "@/lib/db";
@@ -613,117 +611,6 @@ export class PostgresStore implements MetadataStore {
       "INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, anon_owner_id, visibility) VALUES ($1,$2,$3,$4,NULL,$5,$5,NULL,$6,$7,$8)",
       [input.id, input.slug, input.title, input.kind, now, input.editToken, input.anonOwnerId ?? null, input.visibility],
     );
-  }
-
-  async insertSiteWithVersion(site: InsertSiteInput, version: InsertVersionInput, audit?: InsertAuditInput): Promise<void> {
-    const now = Date.now();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query(
-        "INSERT INTO sites (id, slug, title, kind, current_version_id, created_at, updated_at, deleted_at, edit_token, anon_owner_id, owner_id, visibility, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$6,NULL,$7,$8,$9,$10,$11)",
-        [site.id, site.slug, site.title, site.kind, version.id, now, site.editToken, site.anonOwnerId ?? null, site.ownerId ?? null, site.visibility, site.tenantId ?? (site.ownerId ? "init" : "anonymous")],
-      );
-      await client.query(
-        "INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-        [version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now],
-      );
-      await client.query("INSERT INTO site_comment_settings(site_id,main_policy,reader_access,updated_at) VALUES($1,'login',1,$2)", [site.id, now]);
-      await (await import("@/lib/sharing-defaults")).initializeSharing(async (sql, params) => (await client.query(sql, params ? [...params] : [])).rows, toSite((await client.query("SELECT * FROM sites WHERE id=$1", [site.id])).rows[0]), undefined, version.source === "fork" ? site.visibility : undefined);
-      if (audit) await this.writeAuditRow(client, audit, now);
-      if (version.official) {
-        await client.query("UPDATE sites SET official_version_id=$1, official_set_at=$2, official_set_by=$3, official_revision=official_revision+1 WHERE id=$4", [version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId]);
-        if (audit) await this.writeAuditRow(client, { ...audit, id: createId("aud"), action: "official.set" }, now);
-      }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      // Only the slug UNIQUE constraint is retryable; a PK conflict (astronomically unlikely with
-      // UUID ids) must surface as itself, not be mistaken for a slug collision and retried uselessly.
-      const e = error as { code?: string; constraint?: string };
-      if (e?.code === "23505" && e.constraint === "sites_slug_key") throw new SlugConflictError();
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  async addVersionAsCurrent(siteId: string, version: InsertVersionInput, audit?: InsertAuditInput): Promise<boolean> {
-    const now = Date.now();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      // FOR UPDATE row-locks the site so this metadata transaction is serialized against a
-      // concurrent deleteSite. It serializes the METADATA only — file writes happen outside the lock,
-      // so an edit racing a delete can still leave version files with no live owner; those transient
-      // orphans are expected and swept by reconcileOrphans.
-      const { rows } = await client.query("SELECT deleted_at FROM sites WHERE id=$1 FOR UPDATE", [siteId]);
-      if (rows.length === 0 || rows[0].deleted_at != null) {
-        await client.query("ROLLBACK");
-        return false;
-      }
-      await client.query(
-        "INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-        [version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now],
-      );
-      await client.query("UPDATE sites SET current_version_id=$1, updated_at=$2 WHERE id=$3", [version.id, now, siteId]);
-      if (audit) await this.writeAuditRow(client, audit, now);
-      if (version.official) {
-        await client.query("UPDATE sites SET official_version_id=$1, official_set_at=$2, official_set_by=$3, official_revision=official_revision+1 WHERE id=$4", [version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId]);
-        if (audit) await this.writeAuditRow(client, { ...audit, id: createId("aud"), action: "official.set" }, now);
-      }
-      await client.query("COMMIT");
-      return true;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  async addVersionAsCurrentIfCurrentIs(
-    siteId: string,
-    expectedCurrentVersionId: string,
-    version: InsertVersionInput,
-    audit?: InsertAuditInput,
-  ): Promise<VersionCommit> {
-    const now = Date.now();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      // Same FOR UPDATE row lock as addVersionAsCurrent, reading current_version_id under it so the
-      // compare and the set cannot straddle another writer's commit.
-      const { rows } = await client.query(
-        "SELECT deleted_at, current_version_id FROM sites WHERE id=$1 FOR UPDATE",
-        [siteId],
-      );
-      if (rows.length === 0 || rows[0].deleted_at != null) {
-        await client.query("ROLLBACK");
-        return "gone";
-      }
-      if ((rows[0].current_version_id ?? "") !== expectedCurrentVersionId) {
-        await client.query("ROLLBACK");
-        return "stale";
-      }
-      await client.query(
-        "INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-        [version.id, version.siteId, version.entry, version.fileCount, version.byteSize, version.source, now],
-      );
-      await client.query("UPDATE sites SET current_version_id=$1, updated_at=$2 WHERE id=$3", [version.id, now, siteId]);
-      if (audit) await this.writeAuditRow(client, audit, now);
-      if (version.official) {
-        await client.query("UPDATE sites SET official_version_id=$1, official_set_at=$2, official_set_by=$3, official_revision=official_revision+1 WHERE id=$4", [version.id, now, audit?.actorUserId ?? audit?.actorAnonId ?? null, version.siteId]);
-        if (audit) await this.writeAuditRow(client, { ...audit, id: createId("aud"), action: "official.set" }, now);
-      }
-      await client.query("COMMIT");
-      return "applied";
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
   }
 
   async insertAudit(input: InsertAuditInput): Promise<void> {

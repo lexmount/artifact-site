@@ -357,31 +357,7 @@ export interface MetadataStore {
   rbacTransaction: RbacTransaction;
   init(): Promise<void>;
   insertSite(input: InsertSiteInput): Promise<void>;
-  /** Atomically insert a new site + its first version + point current at it (one transaction).
-   *  Throws SlugConflictError if the slug is taken. An `audit` row, when given, is written in the
-   *  SAME transaction — never a follow-up call, so a crash can't leave a version with no trail. */
-  insertSiteWithVersion(site: InsertSiteInput, version: InsertVersionInput, audit?: InsertAuditInput): Promise<void>;
-  /** Atomically insert a version and make it current — but only if the site is still live. Returns
-   *  false (nothing written) if the site is missing/deleted (e.g. a concurrent delete won the race).
-   *  `audit`, when given, is committed in the same transaction. */
-  addVersionAsCurrent(siteId: string, version: InsertVersionInput, audit?: InsertAuditInput): Promise<boolean>;
-  /**
-   * Same, but also requires the site's current version to still be `expectedCurrentVersionId` —
-   * a compare-and-set for writers that decided what to produce minutes ago.
-   *
-   * A build reads the site, works for several minutes, then commits. Meanwhile the product
-   * actively invites the user to open and edit the placeholder it published. An unconditional
-   * write would silently discard that edit; "stale" lets the caller surface the collision instead
-   * of resolving it behind the user's back.
-   */
-  addVersionAsCurrentIfCurrentIs(
-    siteId: string,
-    expectedCurrentVersionId: string,
-    version: InsertVersionInput,
-    audit?: InsertAuditInput,
-  ): Promise<VersionCommit>;
-  /** Append an audit row on its own (for actions that do not produce a version — rename/delete/
-   *  share). Best-effort by nature: these are not inside a version transaction. */
+  /** Append an audit row outside a publication transaction (for metadata-only actions). */
   insertAudit(input: InsertAuditInput): Promise<void>;
   /** A site's audit trail, newest first — for the history/audit UI. */
   listAudit(siteId: string, limit?: number): Promise<AuditEntry[]>;
@@ -711,16 +687,20 @@ export async function insertSite(input: InsertSiteInput): Promise<void> {
 }
 export async function insertSiteWithVersion(site: InsertSiteInput, version: InsertVersionInput, audit?: InsertAuditInput): Promise<void> {
   if (audit?.authorizationRequest) return (await import("@/lib/authorized-commit")).commitAuthorizedCreation(site, version, audit);
-  return (await getStore()).insertSiteWithVersion(site, version, audit);
+  const fixtures = await import("@/lib/publication-fixtures");
+  fixtures.assertPublicationFixture();
+  return fixtures.insertSiteWithVersionForTests(await getStore(), site, version, audit);
 }
-// The three wrappers below are every door through which a site's CURRENT version can change
-// (edit, whole-tree write-back, document re-upload, build commit, rollback). Announcing here —
+// Production publication requires a request. Context-free calls are test fixtures only.
+// The version wrappers announce edits, whole-tree write-back, document re-upload, build
+// commits and rollback. Announcing here —
 // after the commit reports success, never inside its failure story — is what lets an open viewer
 // page learn "this artifact just moved" without any writer having to remember to say so.
 export async function addVersionAsCurrent(siteId: string, version: InsertVersionInput, audit?: InsertAuditInput): Promise<boolean> {
+  if (!audit?.authorizationRequest) (await import("@/lib/publication-fixtures")).assertPublicationFixture();
   const ok = audit?.authorizationRequest
     ? (await (await import("@/lib/authorized-commit")).commitAuthorizedVersion(siteId, version, audit)) === "applied"
-    : await (await getStore()).addVersionAsCurrent(siteId, version, audit);
+    : (await (await import("@/lib/publication-fixtures")).addVersionForTests(await getStore(), config.dbDriver, siteId, version, audit)) === "applied";
   if (ok) notifySiteVersion(siteId, version.id);
   return ok;
 }
@@ -730,9 +710,10 @@ export async function addVersionAsCurrentIfCurrentIs(
   version: InsertVersionInput,
   audit?: InsertAuditInput,
 ): Promise<VersionCommit> {
+  if (!audit?.authorizationRequest) (await import("@/lib/publication-fixtures")).assertPublicationFixture();
   const commit = audit?.authorizationRequest
     ? await (await import("@/lib/authorized-commit")).commitAuthorizedVersion(siteId, version, audit, expectedCurrentVersionId)
-    : await (await getStore()).addVersionAsCurrentIfCurrentIs(siteId, expectedCurrentVersionId, version, audit);
+    : await (await import("@/lib/publication-fixtures")).addVersionForTests(await getStore(), config.dbDriver, siteId, version, audit, expectedCurrentVersionId);
   if (commit === "applied") notifySiteVersion(siteId, version.id);
   return commit;
 }
@@ -748,9 +729,11 @@ export async function getSiteBySlug(slug: string): Promise<Site | null> {
 export async function getSite(id: string): Promise<Site | null> {
   return (await getStore()).getSite(id);
 }
+/** Fixture-only pointer override. Production rollback appends a version through publication. */
 export async function setCurrentVersion(siteId: string, versionId: string): Promise<void> {
+  (await import("@/lib/publication-fixtures")).assertPublicationFixture();
   await (await getStore()).setCurrentVersion(siteId, versionId);
-  notifySiteVersion(siteId, versionId); // rollback's door — see the comment above addVersionAsCurrent
+  notifySiteVersion(siteId, versionId); // Fixture pointer writes retain event behavior.
 }
 export async function updateSiteTitle(id: string, title: string): Promise<void> {
   return (await getStore()).updateSiteTitle(id, title);
