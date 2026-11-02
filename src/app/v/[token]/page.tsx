@@ -1,3 +1,4 @@
+import { siteAuthorName } from "@/lib/site-author";
 import { publicationPolicy } from "@/lib/publication-policy";
 import { appPath } from "@/lib/app-path";
 import RecentUnavailable from "@/components/recent-unavailable";
@@ -172,8 +173,9 @@ export default async function SharedViewPage({
   // Q&A mode: the assistant appears for THIS link's readers only when its owner switched it on —
   // and it carries no edit coordinates (see buildAssistantContext's null-site arm).
   if (presentation === "1") return <PresentationViewer title={target.site.title} src={`/api/preview/${target.site.slug}?share=${encodeURIComponent(token)}&v=${encodeURIComponent(target.version.id)}`} returnTo={`/v/${token}${requestedVersion ? `?version=${encodeURIComponent(requestedVersion)}` : ""}`}/>;
+  const authorName = await siteAuthorName(target.site);
   return <>
-    <RecentTracker slug={target.site.slug} title={target.site.title} kind={target.site.kind}
+    <RecentTracker authorName={authorName} slug={target.site.slug} title={target.site.title} kind={target.site.kind}
       entry={target.version.entry} versionCount={1} createdAt={target.site.createdAt} updatedAt={target.site.updatedAt}
       shareToken={token} versionId={requestedVersion ?? access.share.versionId ?? undefined} />
     {reader(t, target.site, Boolean(config.assistantUrl && access.share.allowAi), token, target.version, access.share.mode, access.share.id)}

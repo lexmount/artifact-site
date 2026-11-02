@@ -11,6 +11,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { config } from "@/lib/config";
 import { safeEqual } from "@/lib/crypto";
 import { consumeOidcFlow, createOidcFlow } from "@/lib/db";
+import { autoLoginOptedOut, silentCompletionId } from "@/lib/oidc-auto-login";
 import { isSecureRequest, readCookie } from "@/lib/http";
 
 const FLOW_TTL_MS = 10 * 60 * 1000;
@@ -25,6 +26,20 @@ export class OidcError extends Error {
     this.name = "OidcError";
     this.statusCode = statusCode;
   }
+}
+
+// Associate a validated return target without changing the original error or exposing its message.
+const loginFailureTargets = new WeakMap<object, string>();
+export function rememberLoginFailureTarget(error: unknown, returnTo: string): void {
+  if (error !== null && typeof error === "object") loginFailureTargets.set(error, safeReturnTo(returnTo));
+}
+export function loginFailureTarget(error: unknown): string {
+  return error !== null && typeof error === "object" ? loginFailureTargets.get(error) ?? "/" : "/";
+}
+
+/** Only constructed after browser binding and single-use flow validation. */
+export class SilentLoginFailure extends OidcError {
+  constructor(readonly returnTo: string) { super("Automatic sign-in was not completed"); }
 }
 
 interface Discovery {
@@ -108,18 +123,23 @@ export function safeReturnTo(raw: string | null | undefined): string {
   } catch {
     return "/";
   }
-  if (url.origin !== base) return "/";
+  // Dot-segment normalization can produce //host from /..//host. Reusing that
+  // serialized path as a relative URL would reinterpret it as an external authority.
+  if (url.origin !== base || url.pathname.startsWith("//")) return "/";
   return `${url.pathname}${url.search}${url.hash}` || "/";
 }
 
-function flowCookieName(request: Request): string {
-  return isSecureRequest(request) ? FLOW_COOKIE_SECURE : FLOW_COOKIE_DEV;
+function flowCookieName(request: Request, silent = false, state = ""): string {
+  const name = isSecureRequest(request) ? FLOW_COOKIE_SECURE : FLOW_COOKIE_DEV;
+  // Each silent flow owns its binding: concurrent tab responses cannot overwrite one another.
+  // Hash the full state to keep attacker-supplied callback values out of cookie names.
+  return silent ? `${name}_silent_${createHash("sha256").update(state).digest("hex")}` : name;
 }
 
-function buildFlowCookie(request: Request, value: string, maxAgeSec: number): string {
+function buildFlowCookie(request: Request, value: string, maxAgeSec: number, silent = false, state = value): string {
   const secure = isSecureRequest(request);
   const parts = [
-    `${secure ? FLOW_COOKIE_SECURE : FLOW_COOKIE_DEV}=${encodeURIComponent(value)}`,
+    `${flowCookieName(request, silent, state)}=${encodeURIComponent(value)}`,
     "Path=/", "HttpOnly", "SameSite=Lax", `Max-Age=${maxAgeSec}`,
   ];
   if (secure) parts.push("Secure");
@@ -135,10 +155,10 @@ function buildFlowCookie(request: Request, value: string, maxAgeSec: number): st
  * The PKCE verifier and nonce stay in the database. Putting either in `state` or the URL would
  * reduce PKCE to decoration.
  */
-export async function beginLogin(request: Request, rawReturnTo: string | null): Promise<{ url: string; cookie: string }> {
+export async function beginLogin(request: Request, rawReturnTo: string | null, silent = false, switchAccount = false): Promise<{ url: string; cookie: string }> {
   const { doc } = await discover();
   const callback = redirectUri();
-  const flowId = `${randomBytes(32).toString("base64url")}.${createHash("sha256").update(callback).digest("hex")}`;
+  const flowId = `${silent ? "silent." : switchAccount ? "switch." : ""}${randomBytes(32).toString("base64url")}.${createHash("sha256").update(callback).digest("hex")}`;
   const verifier = randomBytes(32).toString("base64url");
   const nonce = randomBytes(16).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
@@ -146,6 +166,11 @@ export async function beginLogin(request: Request, rawReturnTo: string | null): 
   await createOidcFlow({
     flowId, verifier, nonce,
     returnTo: appPath(safeReturnTo(localPath(rawReturnTo || "/"))),
+    expiresAt: Date.now() + FLOW_TTL_MS,
+  });
+
+  if (silent) await createOidcFlow({
+    flowId: silentCompletionId(flowId), verifier: "", nonce: "", returnTo: "/",
     expiresAt: Date.now() + FLOW_TTL_MS,
   });
 
@@ -161,18 +186,23 @@ export async function beginLogin(request: Request, rawReturnTo: string | null): 
     code_challenge: challenge,
     code_challenge_method: "S256",
   });
-  return { url: `${doc.authorization_endpoint}?${params}`, cookie: buildFlowCookie(request, flowId, FLOW_TTL_MS / 1000) };
+  if (silent) params.set("prompt", "none");
+  else if (switchAccount) params.set("prompt", "login");
+  return { url: `${doc.authorization_endpoint}?${params}`, cookie: buildFlowCookie(request, flowId, FLOW_TTL_MS / 1000, silent) };
 }
 
-export function clearFlowCookie(request: Request): string {
-  return buildFlowCookie(request, "", 0);
+export function clearFlowCookie(request: Request, silent = false): string {
+  return buildFlowCookie(request, "", 0, silent, new URL(request.url).searchParams.get("state") ?? "");
 }
 
 export interface OidcClaims {
+  silent?: boolean;
+  switchAccount?: boolean;
   subject: string;
   email: string | null;
   emailVerified: boolean;
   displayName: string | null;
+  publicDisplayName: string | null;
   avatarUrl: string | null;
   sid: string | null;
   returnTo: string;
@@ -180,7 +210,8 @@ export interface OidcClaims {
 
 /** Finish a login: verify the browser binding, redeem the code, validate the id_token. */
 export async function completeLogin(request: Request, code: string, state: string): Promise<OidcClaims> {
-  const cookieFlow = readCookie(request, flowCookieName(request));
+  const silent = state.startsWith("silent.");
+  const cookieFlow = readCookie(request, flowCookieName(request, silent, state));
   if (!cookieFlow || !state) throw new OidcError("Sign-in state is missing; please sign in again");
 
   // Constant-time, and length-checked first — this is the browser-binding check.
@@ -194,39 +225,56 @@ export async function completeLogin(request: Request, code: string, state: strin
   const flow = await consumeOidcFlow(state, Date.now());
   if (!flow) throw new OidcError("Sign-in state has expired or was already used; please sign in again");
 
-  const { doc, jwks } = await discover();
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: redirectUri(),
-    client_id: config.oidc.clientId,
-    client_secret: config.oidc.clientSecret,
-    code_verifier: flow.verifier,
-  });
-  const tokens = await fetchIdp<{ id_token?: string }>("Token exchange", doc.token_endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body,
-  }, 8_000);
-  if (!tokens.id_token) throw new OidcError("The IdP did not return an id_token");
+  try {
+    if (silent && autoLoginOptedOut(request)) throw new OidcError("Automatic sign-in was cancelled");
+    if (new URL(request.url).searchParams.has("error") || !code) throw new OidcError("The identity service did not complete sign-in");
+    const { doc, jwks } = await discover();
+    const body = new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri(),
+      client_id: config.oidc.clientId,
+      client_secret: config.oidc.clientSecret,
+      code_verifier: flow.verifier,
+    });
+    const tokens = await fetchIdp<{ id_token?: string }>("Token exchange", doc.token_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    }, 8_000);
+    if (!tokens.id_token) throw new OidcError("The IdP did not return an id_token");
 
-  const { payload } = await jwtVerify(tokens.id_token, jwks, {
-    issuer: doc.issuer,
-    audience: config.oidc.clientId,
-  });
-  // Binds the token to THIS flow; without it a token minted for another login could be replayed.
-  if (payload.nonce !== flow.nonce) throw new OidcError("The id_token nonce does not match");
+    const { payload } = await jwtVerify(tokens.id_token, jwks, {
+      issuer: doc.issuer,
+      audience: config.oidc.clientId,
+    });
+    // Binds the token to THIS flow; without it a token minted for another login could be replayed.
+    if (payload.nonce !== flow.nonce) throw new OidcError("The id_token nonce does not match");
 
-  const emailVerified = payload.email_verified === true;
-  return {
-    subject: String(payload.sub),
-    // An unverified address is never recorded: it is what an attacker would use to pre-register a
-    // victim's mailbox and inherit invitations addressed to them.
-    email: emailVerified ? ((payload.email as string | undefined) ?? null) : null,
-    emailVerified,
-    displayName: (payload.name as string | undefined) ?? (payload.preferred_username as string | undefined) ?? null,
-    avatarUrl: (payload.picture as string | undefined) ?? null,
-    sid: (payload.sid as string | undefined) ?? null,
-    returnTo: safeReturnTo(flow.returnTo),
-  };
+    if (silent && !await consumeOidcFlow(silentCompletionId(state), Date.now())) {
+      throw new OidcError("Automatic sign-in was superseded by an explicit account action");
+    }
+    const emailVerified = payload.email_verified === true;
+    return {
+      silent,
+      switchAccount: state.startsWith("switch."),
+      subject: String(payload.sub),
+      // An unverified address is never recorded: it is what an attacker would use to pre-register a
+      // victim's mailbox and inherit invitations addressed to them.
+      email: emailVerified ? ((payload.email as string | undefined) ?? null) : null,
+      emailVerified,
+      publicDisplayName: typeof payload.name === "string" ? payload.name : null,
+      displayName: (payload.name as string | undefined) ?? (payload.preferred_username as string | undefined) ?? null,
+      avatarUrl: (payload.picture as string | undefined) ?? null,
+      sid: (payload.sid as string | undefined) ?? null,
+      returnTo: safeReturnTo(flow.returnTo),
+    };
+  } catch (error) {
+    if (silent) {
+      await consumeOidcFlow(silentCompletionId(state), Date.now());
+      throw new SilentLoginFailure(safeReturnTo(flow.returnTo));
+    }
+    rememberLoginFailureTarget(error, flow.returnTo);
+    throw error;
+  }
 }

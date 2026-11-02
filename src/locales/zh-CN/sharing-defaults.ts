@@ -1,5 +1,7 @@
 import type { Messages } from "@/lib/i18n";
 export const sharingDefaults: Messages = {
+  "Could not load this collection.": "无法加载分享集合。",
+  "{n} matching documents": "找到 {n} 篇文档",
   "Sharing enabled": "已开启分享",
   "Tenant settings": "租户设置",
   "Tenant settings are available to administrators.": "租户设置仅供管理员使用。",

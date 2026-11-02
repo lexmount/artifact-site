@@ -1,4 +1,5 @@
 "use client";
+import AccountFormBoundary from "@/components/account-form-boundary";
 import { useEffect, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { useT } from "@/components/locale-provider";
@@ -10,13 +11,11 @@ type Defaults = {
   tenantPolicy: SharingPolicy;
   inherited: boolean;
 };
-export default function DefaultSharingSettings({
-  tenantId,
-  tenant = false,
-}: {
-  tenantId: string;
-  tenant?: boolean;
-}) {
+type DefaultSettingsProps = { tenantId: string; tenant?: boolean };
+export default function DefaultSharingSettings(props: DefaultSettingsProps) {
+  return <AccountFormBoundary><DefaultSharingSettingsForm key={`${props.tenantId}:${Boolean(props.tenant)}`} {...props} /></AccountFormBoundary>;
+}
+function DefaultSharingSettingsForm({ tenantId, tenant = false }: DefaultSettingsProps) {
   const t = useT(),
     [data, setData] = useState<Defaults | null>(null),
     [policy, setPolicy] = useState<SharingPolicy>({
@@ -174,6 +173,9 @@ export default function DefaultSharingSettings({
   );
 }
 export function PersonalSharingPreferences() {
+  return <AccountFormBoundary><PersonalSharingPreferencesForm /></AccountFormBoundary>;
+}
+function PersonalSharingPreferencesForm() {
   const t = useT();
   const [tenant, setTenant] = useState<{ id: string; name: string; disabledAt: number | null } | null>(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState("");

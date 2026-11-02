@@ -1,7 +1,7 @@
 // Run with SHARING_E2E_URL and ARTIFACT_DB_DRIVER=postgres against an isolated server/database.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync } from "node:fs";
-import type { Browser, Page } from "puppeteer-core";
+import type { Browser, Page, HTTPRequest } from "puppeteer-core";
 import { closeDbForTests, createId, upsertUser, rbacQuery } from "@/lib/db";
 import { mintSession } from "@/lib/session";
 const base = process.env.SHARING_E2E_URL;
@@ -97,6 +97,66 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await browser?.close();
       await closeDbForTests();
     });
+    it("discards same-tenant preferences across A, guest and B", async () => {
+      const a = await upsertUser({ authProvider: "switch-preferences", providerSubject: createId("a") });
+      const b = await upsertUser({ authProvider: "switch-preferences", providerSubject: createId("b") });
+      const tenantId = createId("tenant");
+      await rbacQuery("INSERT INTO tenants(id,name,slug) VALUES($1,$2,$3)", [tenantId, "Account switch tenant", tenantId]);
+      for (const user of [a, b]) {
+        await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)", [tenantId, user.id]);
+        await rbacQuery("UPDATE users SET tenant_id=$1 WHERE id=$2", [tenantId, user.id]);
+        await rbacQuery("INSERT INTO sharing_defaults(tenant_id,user_id,audience,comments,updated_at) VALUES($1,$2,$3,0,$4)", [tenantId, user.id, user === a ? "public" : "private", Date.now()]);
+      }
+      const context = await browser.createBrowserContext();
+      const installSession = async (id: string) => {
+        const pair = (await mintSession(new Request(base!), id)).cookie.split(";")[0];
+        await context.setCookie({ name: pair.split("=")[0], value: pair.split("=")[1], domain: new URL(base!).hostname, path: "/" });
+      };
+      const page = await context.newPage(), peer = await context.newPage();
+      const notify = () => peer.evaluate(() => localStorage.setItem("artifact-site:auth-change", crypto.randomUUID()));
+      try {
+        await installSession(a.id);
+        await context.setCookie({ name: "ah_locale", value: "en", domain: new URL(base!).hostname, path: "/" });
+        await page.goto(`${base}/me/sharing`, { waitUntil: "networkidle0" });
+        await page.waitForFunction(() => (document.querySelector('.scope-policy-fields select') as HTMLSelectElement)?.value === "public");
+        await peer.goto(`${base}/me`, { waitUntil: "networkidle0" });
+        await api(peer, `${new URL(base!).pathname.replace(/\/$/, "")}/api/auth/logout`, "POST");
+        expect((await api(peer, `${new URL(base!).pathname.replace(/\/$/, "")}/api/auth/me`)).user).toBeNull();
+        await notify();
+        await page.bringToFront();
+        await page.waitForFunction(() => !document.querySelector('.sharing-defaults form'));
+        await installSession(b.id);
+        await notify();
+        await page.waitForFunction(() => (document.querySelector('.scope-policy-fields select') as HTMLSelectElement)?.value === "private");
+        await button(page, "Save settings");
+        await text(page, ".scope-success", "Sharing preferences saved");
+        // Delay an A response across a direct A -> B transition; it must not restore A's draft.
+        let capture!: (request: HTTPRequest) => void;
+        const pendingA = new Promise<HTTPRequest>(resolve => { capture = resolve; });
+        let held = false;
+        await page.setRequestInterception(true);
+        page.on("request", request => {
+          if (!held && request.url().includes("/api/me/sharing/preferences?tenantId=")) {
+            held = true;
+            capture(request);
+          } else void request.continue();
+        });
+        await installSession(a.id);
+        await notify();
+        const delayed = await pendingA;
+        await installSession(b.id);
+        await notify();
+        await page.waitForFunction(() => (document.querySelector('.scope-policy-fields select') as HTMLSelectElement)?.value === "private");
+        await delayed.respond({ contentType: "application/json", body: JSON.stringify({ policy: { audience: "public", comments: false }, tenantPolicy: { audience: "private", comments: false }, inherited: false }) });
+        await page.waitForNetworkIdle();
+        expect(await page.$eval('.scope-policy-fields select', el => (el as HTMLSelectElement).value)).toBe("private");
+        await button(page, "Save settings");
+        await text(page, ".scope-success", "Sharing preferences saved");
+        expect(await rbacQuery("SELECT user_id,audience FROM sharing_defaults WHERE tenant_id=$1 ORDER BY user_id", [tenantId])).toEqual(
+          [{ user_id: a.id, audience: "public" }, { user_id: b.id, audience: "private" }].sort((x, y) => x.user_id.localeCompare(y.user_id)),
+        );
+      } finally { await context.close(); }
+    });
     it.each([{ locale: "en", width: 1440 }, { locale: "zh-CN", width: 390 }])("keeps sharing controls reachable and settings discoverable in $locale", async ({ locale, width }) => {
       const owner = await upsertUser({ authProvider: "sharing-ux", providerSubject: createId("owner"), email: "sharing-admin@example.test", emailVerified: true });
       const tenantId = createId("tenant"), name = `ZZ Default ${locale}`;
@@ -147,7 +207,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
             expect(await page.$('.scope-all-entry')).toBeNull();
             expect(await page.$('.folder-rail nav .folder:first-child .lucide-panels-top-left')).not.toBeNull();
             expect(await page.$('.folder-rail nav .folder:first-child .folder-share-badge')).toBeNull();
-            await page.click(`.folder-heading-actions [aria-label="${zh ? "分享我的全部站点" : "Share my entire collection"}"]`);
+            await page.click(`.folder-heading-actions [aria-label="${zh ? "分享所有的站点" : "Share all sites"}"]`);
           } else {
             await page.click(`.folder-heading-actions [aria-label="${zh ? "分享文件夹" : "Share folder"}"]`);
           }
@@ -337,7 +397,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         (await api(page, `/api/sites/${second.slug}/main-sharing`)).source,
       ).toBe("folder");
       await page.goto(`${base}/me`, { waitUntil: "networkidle2" });
-      await page.click('.folder-heading-actions [aria-label="分享我的全部站点"]');
+      await page.click('.folder-heading-actions [aria-label="分享所有的站点"]');
       await text(page, "dialog", "跨租户");
       await page.select("dialog select", "login");
       await button(page, "预览权限变化", "dialog ");
@@ -405,7 +465,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await shot(page, "17-mobile-defaults-en");
       await page.goto(`${base}/me`, { waitUntil: "networkidle2" });
       await page.goto(`${base}/me`, { waitUntil: "networkidle2" });
-      await page.click('.folder-heading-actions [aria-label="Share my entire collection"]');
+      await page.click('.folder-heading-actions [aria-label="Share all sites"]');
       await text(page, "dialog", "Across tenants");
       await shot(page, "18-mobile-scope-en");
       await button(page, "Stop unified sharing", "dialog ");

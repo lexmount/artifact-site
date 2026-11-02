@@ -171,3 +171,18 @@ describe("sliding window actually slides", () => {
     expect(session.absoluteExpiresAt).toBeGreaterThan(session.expiresAt);
   });
 });
+
+it("treats automatic sessions as lower priority, honors opt-out and revokes both credentials", async () => {
+  const a = await user(), b = await user();
+  const automatic = await mintSession(req(), a.id, { automatic: true });
+  const explicit = await mintSession(req(), b.id);
+  const low = cookieValue(automatic.cookie), high = cookieValue(explicit.cookie);
+  expect((await resolveSession(req(low)))?.userId).toBe(a.id);
+  expect((await resolveSession(req(`${low}; ${high}`)))?.userId).toBe(b.id);
+  expect(await resolveSession(req(`${low}; artifact_sso_opt_out=1`))).toBeNull();
+  expect(await resolveSession(req(`${low}; __Host-ah_session=invalid`))).toBeNull();
+  expect(await resolveSession(req(low.replace("__Host-", "")))).toBeNull();
+  await endSession(req(`${low}; ${high}`));
+  expect(await resolveSession(req(low))).toBeNull();
+  expect(await resolveSession(req(high))).toBeNull();
+});

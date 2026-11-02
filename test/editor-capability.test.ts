@@ -191,8 +191,8 @@ describe("wiring (source-structure constraints)", () => {
 
   it("the edit page resolves the capability on the server instead of letting the client guess", () => {
     expect(page).toMatch(/import \{ describePermissions, requestFromHeaders \} from "@\/lib\/authz"/);
-    expect(page).toContain("await describePermissions(request,view.site)");
-    expect(page).toContain("const canEdit = permissions.canEditContent;");
+    expect(page).toContain("await describePermissions(request, view.site, session)");
+    expect(page).toContain("const canEdit = allowed;");
   });
 
   it("both render branches (single / folder) pass canEdit down; missing one is a false lock on half the sites", () => {

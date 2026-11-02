@@ -24,7 +24,7 @@ import { usePermissionsForSites } from "@/lib/site-permissions";
 import { useCallback, useEffect, useSyncExternalStore, useMemo, useState, type SyntheticEvent } from "react";
 import Link from "next/link";
 import SiteLink from "@/components/site-link";
-import { Folder, Globe, Lock, Link2, LayoutGrid, List, Search, Pencil, Trash2, PanelsTopLeft } from "lucide-react";
+import { Folder, Globe, Lock, Link2, LayoutGrid, List, Search, Pencil, Trash2, PanelsTopLeft, Share2, ChevronDown } from "lucide-react";
 import type { SiteSummary } from "@/lib/types";
 import { loginHref, useAuth } from "@/lib/use-auth";
 import { useShelf, type ShelfOutcome } from "@/lib/folder-shelf";
@@ -69,6 +69,24 @@ export function VisibilityCell({ site, t }: { site: SiteSummary; t: (k: string) 
   if (site.visibility === "private") return <><Lock size={15} aria-hidden="true" /> {t("Authorized people only")}</>;
   if (site.visibility === "unlisted") return <><Link2 size={15} aria-hidden="true" /> {t("Anyone with the link can access")}</>;
   return <><Globe size={15} aria-hidden="true" /> {t("Public")}</>;
+}
+
+export function SharingStatus({ site }: { site: SiteSummary }) {
+  const t = useT();
+  const status = site.sharingStatus;
+  if (!status) return null;
+  const channels = [
+    status.audience !== "private" ? t(AUDIENCE_LABELS[status.audience]) : null,
+    status.members ? t("Authorized members") : null,
+    status.links ? t("Active independent links") : null,
+  ].filter(Boolean);
+  return <span className="directory-sharing-status">
+    <span className={`directory-sharing-status-badge${status.shared ? " is-shared" : ""}`}>
+      {status.shared ? <Share2 size={12} aria-hidden="true" /> : <Lock size={12} aria-hidden="true" />}
+      {t(site.takenDownAt ? "Taken down" : status.shared ? "Shared" : "Only me")}
+    </span>
+    {channels.length > 0 && <small title={channels.join(" · ")}>{channels[0]}{channels.length > 1 ? t(" · +{n} more", {n:channels.length-1}) : ""}</small>}
+  </span>;
 }
 
 /**
@@ -247,11 +265,13 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
     </aside>
   );
 
+  const sharingFilter = directory?.query.sharing ?? "all";
+  const filteredSharing = sharingFilter !== "all";
   const empty = (
     <div className="empty">
-      <h3>{query.trim() ? t("No site matches “{q}”", { q: query.trim() }) : active === FILTER_ALL ? t("You have no sites of your own yet") : t("This folder is still empty")}</h3>
+      <h3>{filteredSharing ? t("No sites match this sharing filter") : query.trim() ? t("No site matches “{q}”", { q: query.trim() }) : active === FILTER_ALL ? t("You have no sites of your own yet") : t("This folder is still empty")}</h3>
       <p>
-        {query.trim()
+        {filteredSharing ? <button type="button" className="quiet" onClick={() => navigation.change("sharing", "all")}>{t("Show all sharing states")}</button> : query.trim()
           ? <button type="button" className="quiet" onClick={() => setQuery("")}>{t("Clear the search")}</button>
           : active === FILTER_ALL
             ? <Link href="/">{t("Upload something on the home page, and the first site is yours.")}</Link>
@@ -274,7 +294,7 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
       <button type="button" className="mobile-folders" aria-expanded={railOpen} aria-controls="folder-rail" onClick={() => setRailOpen((v) => !v)}>
         {t("Folders")} · {activeFolder ? activeFolder.name : active === FILTER_UNFILED ? t("Unfiled") : t("All sites")} ▾
       </button>
-      <div className={`work-layout${railOpen ? " folders-open" : ""}`}>
+      <div className={`work-layout my-sites-workspace${railOpen ? " folders-open" : ""}`}>
         {rail}
         <section className="work-content" aria-busy={navigation.pending}>
           <div className="work-tools">
@@ -282,21 +302,30 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
               <Search size={16} aria-hidden="true" />
               <input type="search" value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} placeholder={t("Search site titles")} aria-label={t("Search my sites")} />
             </label>
-            <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label={t("Sort")}>
+            <span className="work-sort"><select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label={t("Sort")}>
               <option value="updated">{t("Recently updated")}</option>
               <option value="title">{t("Title A–Z")}</option>
-            </select>
+            </select><ChevronDown size={14} aria-hidden="true" /></span>
             <div className="view-switch">
               <button type="button" aria-label={t("List view")} aria-pressed={view === "list"} onClick={() => setView("list")}><List size={16} /></button>
               <button type="button" aria-label={t("Grid view")} aria-pressed={view === "grid"} onClick={() => setView("grid")}><LayoutGrid size={16} /></button>
             </div>
           </div>
+          {directory?.sharingCounts && <div className="sharing-filters">
+            <div className="sharing-filter-group" role="group" aria-label={t("Sharing status")}>
+              {([ ["all", "All"], ["private", "Only me"], ["shared", "Shared"] ] as const).map(([value, label]) =>
+                <button type="button" key={value} aria-pressed={sharingFilter === value} onClick={() => { setSelectedSlugs([]); navigation.change("sharing", value); }}>
+                  {t(label)} <span>{directory.sharingCounts![value]}</span>
+                </button>)}
+            </div>
+            <p>{t("Shared means others currently have access, not that a link has been sent.")}</p>
+          </div>}
           {updateIntent && <div className="update-intent"><span>{t("Choose an artifact, then use its ⋯ menu to upload a new version.")}</span><button className="update-intent-dismiss" onClick={() => learn("update")}>{t("Got it")}</button></div>}
           {updateIntent && firstEditable && view === "list" && <Coachmark key={firstEditable.slug} name="update" selector='[data-update-hint="true"] .row-more' text={t("Use ⋯ → Upload new version for the artifact you want to update.")} />}
           <div className="folder-heading">
             <h2>{activeFolder ? activeFolder.name : active === FILTER_UNFILED ? t("Unfiled") : t("All sites")}</h2>
             <span aria-live="polite">· {total}</span>
-            {active === FILTER_ALL && shelf.mode === "account" && manage && <div className="folder-heading-actions"><button type="button" className={`folder-icon-action${sharingSummary.allShared ? " is-shared" : ""}`} aria-label={t("Share my entire collection")} title={t("Share my entire collection")} onClick={() => setScopeDialog({folderId:null})}><Link2 size={18}/></button></div>}
+            {active === FILTER_ALL && shelf.mode === "account" && manage && <div className="folder-heading-actions"><button type="button" className={`folder-icon-action collection-share-action${sharingSummary.allShared ? " is-shared" : ""}`} aria-label={t("Share all sites")} title={t("Share all sites")} onClick={() => setScopeDialog({folderId:null})}><Share2 size={18}/></button></div>}
             {activeFolder && <div className="folder-heading-actions" role="group" aria-label={t("Folder actions")}>
               {shelf.mode === "account" && <button type="button" className={`folder-icon-action${sharingSummary.sharedFolders.includes(activeFolder.id) ? " is-shared" : ""}`} aria-label={t("Share folder")} title={t("Share folder")} onClick={() => setScopeDialog({folderId: activeFolder.id})}><Link2 size={18} /></button>}
               <button type="button" className="folder-icon-action" aria-label={t("Rename")} title={t("Rename")} onClick={() => startRename(activeFolder)}><Pencil size={18} /></button>
@@ -307,13 +336,13 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
           {hint && <p className="folder-note" role="status">{hint}</p>}
 
           {pageItems.length === 0 ? empty : view === "grid" ? (
-            <div className="result-grid">{pageItems.map((s) => <ArtifactCard key={s.slug} site={s} actions={permissions[s.slug]?.canReadSource ? <MoreMenu label={t("Actions for {title}", { title: s.title })} iconOnly>
+            <div className="result-grid">{pageItems.map((s) => <ArtifactCard key={s.slug} site={s} sharingStatus={<SharingStatus site={s} />} actions={permissions[s.slug]?.canReadSource ? <MoreMenu label={t("Actions for {title}", { title: s.title })} iconOnly>
               <SiteDownload slug={s.slug} editToken={tokens[s.slug]} />
               {canEdit(s.slug) && <button type="button" role="menuitem" className="menu-item" onClick={() => startUpload(s)}>{t("Upload new version")}</button>}
             </MoreMenu> : undefined} />)}</div>
           ) : (
-            <div className="site-list my-sites-list">
-              <div className="list-header"><span>{t("Site")}</span><span className="row-views">{t("Total opens")}</span><span className="row-visibility">{t("Who can open")}</span><span className="row-versions">{t("Versions")}</span><span className="row-date">{t("Updated")}</span><span /></div>
+            <div className={`site-list my-sites-list${directory?.sharingCounts ? " with-sharing-status" : ""}`}>
+              <div className="list-header"><span>{t("Site")}</span><span className="row-views">{t("Total opens")}</span><span className="row-visibility">{t("Who can open")}</span>{directory?.sharingCounts && <span className="row-sharing">{t("Sharing status")}</span>}<span className="row-versions">{t("Versions")}</span><span className="row-date">{t("Updated")}</span><span /></div>
               {pageItems.map((s) => (
                 <div className="site-row" key={s.slug} data-slug={s.slug} data-update-hint={s.slug === firstEditable?.slug || undefined}>
                   <div className="site-name">
@@ -335,6 +364,7 @@ export default function MySites({ sites, onMutated, manage = true, directory, us
                       {t(sharingSummary.states[s.slug].source === "folder" ? "Following folder" : sharingSummary.states[s.slug].source === "all" ? "Following my entire collection" : "Custom settings")}
                     </small>}
                   </span>
+                  {directory?.sharingCounts && <span className="row-sharing"><SharingStatus site={s} /></span>}
                   <SiteVersionCell key={`${s.slug}:${s.officialVersionId}:${s.versionCount}`} site={s} canManage={Boolean(permissions[s.slug]?.canManageSharing)} token={tokens[s.slug]} onMutated={onMutated} />
                   <span className="row-date">{relTime(s.updatedAt, t, locale)}</span>
                   <span className="row-menu-wrap">

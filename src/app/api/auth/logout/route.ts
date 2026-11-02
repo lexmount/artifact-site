@@ -1,4 +1,5 @@
 // POST /api/auth/logout — revoke this browser's session.
+import { autoLoginOptOutCookie, cancelPendingSilentLogins } from "@/lib/oidc-auto-login";
 import { AUTH_CHANGE_COOKIE, authChangeCookiePath } from "@/lib/auth-change";
 import { NextResponse } from "next/server";
 import { clearSessionCookie, endSession, isSameOrigin } from "@/lib/session";
@@ -10,12 +11,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Cookie-authenticated write ⇒ Origin must match exactly. A missing or "null" Origin is
     // rejected, not waved through (a sandboxed preview iframe sends exactly Origin: null).
     if (!isSameOrigin(request)) throw new AuthError("Cross-site request rejected");
+    await cancelPendingSilentLogins(request);
     await endSession(request);
     const res = json({ ok: true }, 200);
     // ResponseCookies.set rewrites Set-Cookie: always finish it before appending session/flow cookies.
     res.cookies.set("artifact_analytics_auth", "", { path: "/", maxAge: 0 });
     res.cookies.set(AUTH_CHANGE_COOKIE, "", { path: authChangeCookiePath(), maxAge: 0 });
     res.headers.append("set-cookie", clearSessionCookie(request));
+    res.headers.append("set-cookie", clearSessionCookie(request, true));
+    res.headers.append("set-cookie", autoLoginOptOutCookie(request));
     return res;
   } catch (error) {
     return errorResponse(error);

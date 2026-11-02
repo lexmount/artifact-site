@@ -15,7 +15,7 @@ export default async function NotFound() {
   return (
     <main className="notfound">
       <h1>{t("Site not found")}</h1>
-      <p>{t("The site this link points to does not exist or has been deleted.")}</p>
+      <p>{t("The site this link points to does not exist or has been deleted. Check that the link is correct.")}</p>
       <Link className="btn solid" href="/">{t("Back to home")}</Link>
     </main>
   );

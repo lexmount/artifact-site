@@ -97,6 +97,34 @@ server {
 
 Leave section four of `.env` empty and the service has no accounts: anyone can view, and `ARTIFACT_CREATE_POLICY` decides who can publish. To give people accounts (sites and folders that follow them across devices, named sharing, agent tokens), point the three `ARTIFACT_OIDC_*` settings at an identity provider. The quickest one is Google — an OAuth client and three lines, no code; any OIDC platform you already run works the same way. Both recipes are in [DEPLOY.md, section 1.3](DEPLOY.md#13-register-the-oidc-application-at-the-idp).
 
+The signed-in account menu includes **Switch account**. It first signs out of Artifact, then
+requests `prompt=login`. Cancellation or failure leaves the browser signed out. Signed-out users
+see only **Sign in / Sign up**; after a deliberate local sign-out, this also requests `prompt=login`.
+Fresh visits and ordinary sign-in without a local opt-out can still reuse the IdP session.
+The IdP must support forced authentication and allow a different identity on its sign-in screen.
+Upstream social/enterprise providers may still reuse their own sessions; account selection there
+is provider-specific. Local sign-out revokes both browser session credentials, and other tabs
+refresh their identity through the existing account-change signal. This does not sign out other
+applications or other browsers.
+
+With OIDC configured, anonymous browser visits automatically try authorization with `prompt=none`.
+The provider must honor this parameter: an existing identity-provider session can sign the visitor
+in without a login form; otherwise the visitor returns to the original page as a guest. Each page
+load makes one automatic-sign-in decision on its initial account lookup, with a 60-second retry
+guard across redirects and reloads. Later focus or storage refreshes never start automatic navigation. Browser session
+storage must be available for automatic attempts; manual sign-in remains available without it.
+Local sign-out sets an application-scoped opt-out cookie (up to 400 days, subject to browser cookie
+retention). Only a successful explicit sign-in clears it; starting or cancelling sign-in does not.
+This does not end the identity-provider session or sign out other applications. Applications sharing the same host must use distinct session and OIDC flow
+cookie names. Each silent attempt has its own short-lived flow cookie, isolated from other tabs
+and interactive login. A validated silent callback preserves any already-established application
+session rather than replacing the selected account. Explicit sign-in and local sign-out cancel
+pending silent completions through one-use database records. Automatic sessions use a separate,
+lower-priority cookie: even an already-completed response delivered late cannot overwrite an
+explicit session, and every request honors the local opt-out before accepting an automatic
+session. Local sign-out revokes and clears both session cookies. The existing back-channel
+logout receiver is unchanged.
+
 ## Administration
 
 

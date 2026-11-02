@@ -6,4 +6,6 @@
 export const SESSION_COOKIE_NAMES = {
   secure: "__Host-ah_session",
   development: "ah_session",
+  secureAutomatic: "__Host-ah_sso_session",
+  developmentAutomatic: "ah_sso_session",
 } as const;

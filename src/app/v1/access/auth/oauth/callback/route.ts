@@ -16,6 +16,6 @@ export async function GET(request: Request): Promise<NextResponse> {
     return await handleOidcCallback(request);
   } catch (error) {
     // A browser navigation, not an API call: answer failures with a page, not bare JSON.
-    return oidcFailureResponse(error);
+    return oidcFailureResponse(error, new URL(request.url).searchParams.get("state")?.startsWith("switch."));
   }
 }

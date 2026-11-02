@@ -1,3 +1,4 @@
+import { directorySharingSql } from "@/lib/directory-sharing";
 import { publicDiscoverySql } from "@/lib/sharing-sql";
 import "server-only";
 import { config } from "@/lib/config";
@@ -43,11 +44,16 @@ export async function readDirectory(
       : query.scope === "owned"
         ? `(${owner})`
         : `EXISTS (SELECT 1 FROM authorization_site_members c WHERE c.site_id=s.id AND c.subject_type<>'everyone' AND c.user_id=$1)`;
+  const sharing = directorySharingSql();
   const base = `FROM sites s LEFT JOIN folder_assignments fa ON fa.site_id=s.id AND fa.user_id=$1 WHERE s.deleted_at IS NULL AND s.current_version_id IS NOT NULL AND EXISTS (SELECT 1 FROM tenants t WHERE t.id=s.tenant_id AND t.disabled_at IS NULL) AND (${scope})`;
-  const groups = await rbacQuery(
-    `SELECT fa.folder_id,COUNT(*) AS n ${base} GROUP BY fa.folder_id`,
-    params,
-  );
+  const sharingFilter = query.scope === "owned" && query.sharing && query.sharing !== "all"
+    ? ` AND ${query.sharing === "private" ? "NOT " : ""}${sharing.shared}` : "";
+  const [ownedCount] = query.scope === "owned" ? await rbacQuery(`SELECT COUNT(*) AS n ${base}`, params) : [];
+  let searched = base;
+  if (query.q)
+    searched += ` AND lower(s.title) LIKE lower(${add(`%${query.q.replace(/[\\%_]/g, "\\$&")}%`)}) ESCAPE '\\'`;
+  // Folder counts reflect search and sharing; filter counts reflect search and folder.
+  const groups = await rbacQuery(`SELECT fa.folder_id,COUNT(*) AS n ${searched}${sharingFilter} GROUP BY fa.folder_id`, params);
   const counts = { all: 0, unfiled: 0, byId: {} as Record<string, number> };
   for (const g of groups) {
     const n = Number(g.n);
@@ -55,14 +61,14 @@ export async function readDirectory(
     if (g.folder_id) counts.byId[String(g.folder_id)] = n;
     else counts.unfiled += n;
   }
-  let where = base;
-  if (query.q)
-    where += ` AND lower(s.title) LIKE lower(${add(`%${query.q.replace(/[\\%_]/g, "\\$&")}%`)}) ESCAPE '\\'`;
+  let where = searched;
   if (query.folder !== "all" && query.scope !== "public")
-    where +=
-      query.folder === "unfiled"
-        ? " AND fa.folder_id IS NULL"
-        : ` AND fa.folder_id=${add(query.folder)}`;
+    where += query.folder === "unfiled" ? " AND fa.folder_id IS NULL" : ` AND fa.folder_id=${add(query.folder)}`;
+  const [sharingCount] = query.scope === "owned" ? await rbacQuery(
+    `SELECT COUNT(*) AS n,COALESCE(SUM(CASE WHEN ${sharing.shared} THEN 1 ELSE 0 END),0) AS shared ${where}`, params,
+  ) : [];
+  const sharingCounts = sharingCount ? {all:Number(sharingCount.n),shared:Number(sharingCount.shared),private:Number(sharingCount.n)-Number(sharingCount.shared)} : undefined;
+  where += sharingFilter;
   const [count] = await rbacQuery(`SELECT COUNT(*) AS n ${where}`, params);
   const total = Number(count.n);
   const page = Math.min(
@@ -77,6 +83,7 @@ export async function readDirectory(
   const rows = await rbacQuery(
     `WITH selected AS (SELECT s.*,fa.folder_id ${where} ORDER BY ${order} LIMIT ${add(DIRECTORY_PAGE_SIZE)} OFFSET ${add(page * DIRECTORY_PAGE_SIZE)})
     SELECT s.*,v.entry,
+      ${query.scope === "owned" ? `(${sharing.audience}) AS sharing_audience,CASE WHEN ${sharing.members} THEN 1 ELSE 0 END AS sharing_members,CASE WHEN ${sharing.links} THEN 1 ELSE 0 END AS sharing_links,` : ""}
       (SELECT COUNT(*) FROM versions vc WHERE vc.site_id=s.id) AS version_count,
       (SELECT COUNT(*) FROM versions ov WHERE ov.site_id=s.id AND ov.${seq} <= (SELECT ${seq} FROM versions WHERE id=s.official_version_id)) AS official_version_number,
       ${query.scope === "owned" ? `(SELECT COUNT(*) FROM site_views sv WHERE sv.site_id=s.id)+(SELECT COUNT(*) FROM share_views sv WHERE sv.site_id=s.id)+COALESCE((SELECT opens FROM archived_view_counts av WHERE av.site_id=s.id),0)` : "NULL"} AS total_views,
@@ -111,7 +118,13 @@ export async function readDirectory(
     }
   }
   return {
-    sites: rows.map(toSummary),
+    sites: rows.map(row => ({...toSummary(row), ...(query.scope === "owned" ? {sharingStatus: {
+      shared: row.sharing_audience !== "private" || Boolean(Number(row.sharing_members)) || Boolean(Number(row.sharing_links)),
+      audience: row.sharing_audience as import("@/lib/sharing-policy").SharingPolicy["audience"],
+      members: Boolean(Number(row.sharing_members)), links: Boolean(Number(row.sharing_links)),
+    }} : {})})),
+    ownedTotal: query.scope === "owned" ? Number(ownedCount?.n) : undefined,
+    sharingCounts,
     permissions,
     total,
     query: { ...query, page },

@@ -232,3 +232,34 @@ describe("failed entrances", () => {
     expect(forgetRecentEntrance([shared], "/v/dead", "?version=other")).toEqual([shared]);
   });
 });
+
+
+describe("recent authors", () => {
+  it("preserves named and anonymous authors through storage and projection", () => {
+    for (const authorName of ["Ada", null]) {
+      const saved = entry("a", 7, { authorName });
+      const [parsed] = parseRecent(serializeRecent([saved]));
+      expect(parsed.authorName).toBe(authorName);
+      expect(toSummary(parsed).authorName).toBe(authorName);
+    }
+  });
+  it("keeps old and malformed records usable without inventing an author", () => {
+    for (const authorName of [undefined, 42, {}, "   "]) {
+      const [parsed] = parseRecent(JSON.stringify([{ ...entry("a", 7), authorName }]));
+      expect(parsed.authorName).toBeUndefined();
+      expect(parsed.slug).toBe("a");
+    }
+  });
+  it("retains recorded authors when live summaries omit them, including pinned shares", () => {
+    for (const extra of [{}, { shareToken: "share", versionId: "old" }]) {
+      const saved = entry("a", 7, { ...extra, authorName: "Ada" });
+      expect(recentShelfItems([saved], [toSummary(entry("a", 20))])[0].summary.authorName).toBe("Ada");
+    }
+  });
+  it("updates an author on metadata refresh without changing visit order", () => {
+    const items = [entry("a", 20), entry("b", 10, { authorName: "Old name" })];
+    const updated = refreshRecent(items, entry("b", 99, { authorName: "New name" }));
+    expect(updated.map(item => item.slug)).toEqual(["a", "b"]);
+    expect(updated[1]).toMatchObject({ authorName: "New name", visitedAt: 10 });
+  });
+});

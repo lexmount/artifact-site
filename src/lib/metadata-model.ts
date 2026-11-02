@@ -285,6 +285,8 @@ export interface ListViewer {
   anonId?: string | null;
 }
 export interface UpsertUserInput {
+  /** Explicit public name, never a login identifier fallback. Null clears a previous name. */
+  publicDisplayName?: string | null;
   authProvider: string; providerSubject: string;
   email?: string | null; emailVerified?: boolean;
   displayName?: string | null; avatarUrl?: string | null;

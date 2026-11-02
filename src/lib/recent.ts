@@ -20,6 +20,8 @@ export const EMPTY_RECENT: RecentEntry[] = [];
 
 /** A visited site: everything a card needs, plus when this browser last opened it. */
 export interface RecentEntry {
+  /** Display name at the last visit; null for anonymous uploads, absent for older records. */
+  authorName?: string | null;
   slug: string;
   title: string;
   kind: SiteKind;
@@ -52,6 +54,7 @@ function normalizeEntry(raw: unknown): RecentEntry | null {
   return {
     slug,
     title,
+    ...(r.authorName === null ? { authorName: null } : typeof r.authorName === "string" && r.authorName.trim() ? { authorName: r.authorName.trim() } : {}),
     kind: r.kind === "document" ? "document" : r.kind === "folder" ? "folder" : "single",
     ...(typeof r.shareToken === "string" && r.shareToken ? { shareToken: r.shareToken } : {}),
     ...(typeof r.versionId === "string" && r.versionId ? { versionId: r.versionId } : {}),
@@ -122,7 +125,7 @@ export function recentShelfItems(entries: readonly RecentEntry[], allSites: read
   return entries.map(e => ({
     summary: e.versionId || e.shareToken
       ? { ...toSummary(e), takenDownAt: live.get(e.slug)?.takenDownAt ?? null }
-      : live.get(e.slug) ?? toSummary(e),
+      : { ...toSummary(e), ...live.get(e.slug) },
     visitedAt: e.visitedAt, href: recentHref(e), preview: recentPreview(e),
   }));
 }
@@ -149,7 +152,9 @@ export function recentPreview(entry: Pick<RecentEntry, "slug" | "shareToken" | "
 /** The card shape, for entries whose site we could not refresh from the server. */
 export function toSummary(entry: RecentEntry): SiteSummary {
   const { slug, title, kind, entry: file, versionCount, createdAt, updatedAt } = entry;
-  return { slug, title, kind, entry: file, versionCount, createdAt, updatedAt };
+  return { slug, title, kind, entry: file, versionCount, createdAt, updatedAt,
+    ...(entry.authorName !== undefined ? { authorName: entry.authorName } : {}),
+  };
 }
 
 /** Forget only the entrance that actually failed, never a newer alternate share or version.

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 beforeEach(() => vi.resetModules());
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 const user = { id: "u1", email: null, displayName: "User", avatarUrl: null };
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 
@@ -33,6 +33,69 @@ it("keeps known identity on server failure and permits retry", async () => {
   expect(store.getAuthSnapshot()).toMatchObject({ user, error: true });
   await store.refreshAuth();
   expect(store.getAuthSnapshot()).toMatchObject({ user: null, error: false });
+});
+
+it.each(["headers", "body"])("releases a stalled account %s request so the same tab can retry", async stage => {
+  vi.useFakeTimers();
+  let signal: AbortSignal | undefined;
+  const fetcher = vi.fn().mockImplementationOnce((_url, init: RequestInit) => {
+    signal = init.signal ?? undefined;
+    const stalled = new Promise<never>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    });
+    return stage === "headers" ? stalled : Promise.resolve({ ok: true, json: () => stalled });
+  }).mockResolvedValueOnce(response({ user, oidcEnabled: true }));
+  vi.stubGlobal("fetch", fetcher);
+  const store = await import("@/lib/auth-store");
+  const pending = store.refreshAuth();
+  expect(store.refreshAuth()).toBe(pending);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(store.getAuthSnapshot()).toMatchObject({ loading: false, error: true, user: null });
+  expect(signal?.aborted).toBe(true);
+  await pending;
+  await store.refreshAuth();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(store.getAuthSnapshot()).toMatchObject({ loading: false, error: false, user });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("retains a confirmed identity when a later account check times out", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response({ user, oidcEnabled: true }))
+    .mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    })));
+  const store = await import("@/lib/auth-store");
+  await store.refreshAuth();
+  const pending = store.refreshAuth();
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(store.getAuthSnapshot()).toMatchObject({ loading: false, error: true, user });
+  await pending;
+});
+
+it("does not let a superseded timeout publish an error or clear the newer request", async () => {
+  vi.useFakeTimers();
+  let finish!: (value: Response) => void;
+  const fetcher = vi.fn()
+    .mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }))
+    .mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  vi.stubGlobal("fetch", fetcher);
+  const store = await import("@/lib/auth-store");
+  const old = store.refreshAuth();
+  await vi.advanceTimersByTimeAsync(5_000);
+  store.resetAuthCache();
+  const current = store.refreshAuth();
+  await vi.advanceTimersByTimeAsync(5_000);
+  await old;
+  expect(store.getAuthSnapshot()).toMatchObject({ loading: true, error: false });
+  expect(store.refreshAuth()).toBe(current);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  finish(response({ user, oidcEnabled: true }));
+  await current;
+  expect(store.getAuthSnapshot()).toMatchObject({ loading: false, error: false, user });
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it("does not treat a rejected logout as success", async () => {
@@ -176,4 +239,46 @@ it("does not let a pre-login account request consume a newer callback marker", a
   expect(marker.setItem).not.toHaveBeenCalled();
   await store.refreshAuth();
   expect(marker.setItem).toHaveBeenCalledOnce();
+});
+
+it("automatically authenticates once, preserving mounted path, query and fragment", async () => {
+  vi.stubEnv("NEXT_PUBLIC_ARTIFACT_BASE_PATH", "/artifacts");
+  const replace = vi.fn();
+  const memory = new Map<string, string>();
+  const browser = { location: { pathname: "/artifacts/me", search: "?view=all", hash: "#folder", replace },
+    sessionStorage: { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => memory.set(k, v) } };
+  vi.stubGlobal("window", browser);
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(response({ user: null, oidcEnabled: true, autoLogin: true }))));
+  const store = await import("@/lib/auth-store");
+  await store.refreshAuth();
+  await store.refreshAuth();
+  expect(replace).toHaveBeenCalledTimes(1);
+  expect(replace).toHaveBeenCalledWith("/artifacts/api/auth/login?silent=1&return_to=%2Fartifacts%2Fme%3Fview%3Dall%23folder");
+  vi.resetModules();
+  await (await import("@/lib/auth-store")).refreshAuth();
+  expect(replace).toHaveBeenCalledTimes(1);
+});
+
+it("does not restart automatic navigation on focus after the initial guest cooldown expires", async () => {
+  const replace = vi.fn();
+  const browser = Object.assign(new EventTarget(), {
+    location: { pathname: "/", search: "", hash: "", replace },
+    sessionStorage: { getItem: () => null, setItem: vi.fn() },
+  });
+  vi.stubGlobal("window", browser);
+  let now = 100_000;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  vi.stubGlobal("fetch", vi.fn()
+    .mockResolvedValueOnce(response({ user: null, oidcEnabled: true, autoLogin: false }))
+    .mockResolvedValueOnce(response({ user: null, oidcEnabled: true, autoLogin: true })));
+  const store = await import("@/lib/auth-store");
+  const off = store.subscribeAuth(vi.fn());
+  try {
+    await store.refreshAuth();
+    now += 61_000;
+    browser.dispatchEvent(new Event("focus"));
+    await store.refreshAuth();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(replace).not.toHaveBeenCalled();
+  } finally { off(); clock.mockRestore(); }
 });

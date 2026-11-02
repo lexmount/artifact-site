@@ -7,60 +7,95 @@ import { appPath } from "@/lib/app-path";
 // all of them, so an alias can never be a weaker door than the canonical one.
 import { NextResponse } from "next/server";
 import { upsertUser } from "@/lib/db";
-import { clearFlowCookie, completeLogin, OidcError } from "@/lib/oidc";
-import { mintSession } from "@/lib/session";
+import { clearFlowCookie, completeLogin, OidcError, SilentLoginFailure, rememberLoginFailureTarget, loginFailureTarget } from "@/lib/oidc";
+import { clearSessionCookie, endSession, mintSession, resolveSession } from "@/lib/session";
+import { autoLoginOptOutCookie, autoLoginRetryCookie, cancelPendingSilentLogins } from "@/lib/oidc-auto-login";
+
 import { config } from "@/lib/config";
 
 export async function handleOidcCallback(request: Request): Promise<NextResponse> {
   const params = new URL(request.url).searchParams;
-  const claims = await completeLogin(request, params.get("code") ?? "", params.get("state") ?? "");
-
-  // Normally keyed on (provider, subject). During this temporary cutover, an unknown subject may
-  // adopt the earliest same-provider account whose address was also verified by the IdP.
-  const user = await upsertUser({
-    authProvider: "oidc",
-    providerSubject: claims.subject,
-    email: claims.email,
-    emailVerified: claims.emailVerified,
-    displayName: claims.displayName,
-    avatarUrl: claims.avatarUrl,
-    // Requires one active subject per verified email in the new IdP and the old app retired.
-    migrateVerifiedEmail: true,
-  });
-
-  // A disabled account is refused here, before a session exists. The reason is shown: the person
-  // has to understand what happened, and an administrator wrote it for exactly this screen.
-  if (user.disabledAt) {
-    throw new OidcError(`This account has been disabled by an administrator${user.disabledReason ? `: ${user.disabledReason}` : ""}.`, 403);
+  let claims;
+  try {
+    claims = await completeLogin(request, params.get("code") ?? "", params.get("state") ?? "");
+  } catch (error) {
+    if (error instanceof SilentLoginFailure) return silentReturn(request, error.returnTo);
+    throw error;
   }
-
-  // Claiming now requires an explicit destination tenant on the account page.
-  const adopted = 0;
-
-  const { cookie } = await mintSession(request, user.id, {
-    oidcSid: claims.sid,
-    ip: request.headers.get("x-real-ip"),
-    userAgent: request.headers.get("user-agent"),
-  });
-
-  // Carry the adoption count home so the UI can acknowledge what just changed. It is a hint for
-  // a transition, never an authorization input — the client strips it from the URL on arrival.
-  const base = new URL(requestBase(request)).origin;
-  const dest = new URL(`${base}${claims.returnTo}`);
-  dest.searchParams.set("welcome", String(adopted));
-  const res = NextResponse.redirect(dest.toString(), 302);
-  // The browser consumes this once after checking its session, independently of welcome UI.
-  res.cookies.set(AUTH_CHANGE_COOKIE, randomUUID(), {
-    path: authChangeCookiePath(), maxAge: 120, sameSite: "lax", secure: dest.protocol === "https:", httpOnly: false,
-  });
-  // ResponseCookies.set rewrites Set-Cookie: always finish it before appending session/flow cookies.
-  if (config.gaMeasurementId && config.gaHosts.includes(dest.hostname)) {
-    res.cookies.set("artifact_analytics_auth", user.created ? "new" : "login", {
-      path: "/", maxAge: 120, sameSite: "lax", secure: dest.protocol === "https:", httpOnly: false,
+  try {
+    if (!claims.silent) await cancelPendingSilentLogins(request);
+    // A completed explicit login (or another successful tab) wins over a delayed silent result.
+    // Validate and consume the flow first, but do not create users or replace an existing session.
+    if (claims.silent && await resolveSession(request)) return silentReturn(request, claims.returnTo);
+    // Normally keyed on (provider, subject). During this temporary cutover, an unknown subject may
+    // adopt the earliest same-provider account whose address was also verified by the IdP.
+    const user = await upsertUser({
+      authProvider: "oidc",
+      providerSubject: claims.subject,
+      email: claims.email,
+      emailVerified: claims.emailVerified,
+      displayName: claims.displayName,
+      publicDisplayName: claims.publicDisplayName,
+      avatarUrl: claims.avatarUrl,
+      // Requires one active subject per verified email in the new IdP and the old app retired.
+      migrateVerifiedEmail: true,
     });
+
+    // A disabled account is refused here, before a session exists. The reason is shown: the person
+    // has to understand what happened, and an administrator wrote it for exactly this screen.
+    if (user.disabledAt) {
+      throw new OidcError(`This account has been disabled by an administrator${user.disabledReason ? `: ${user.disabledReason}` : ""}.`, 403);
+    }
+
+    // Claiming now requires an explicit destination tenant on the account page.
+    const adopted = 0;
+
+    const { cookie } = await mintSession(request, user.id, {
+      automatic: claims.silent,
+      oidcSid: claims.sid,
+      ip: request.headers.get("x-real-ip"),
+      userAgent: request.headers.get("user-agent"),
+    });
+
+    // Carry the adoption count home so the UI can acknowledge what just changed. It is a hint for
+    // a transition, never an authorization input — the client strips it from the URL on arrival.
+    const base = new URL(requestBase(request)).origin;
+    const dest = new URL(`${base}${claims.returnTo}`);
+    if (!claims.silent) dest.searchParams.set("welcome", String(adopted));
+    const res = NextResponse.redirect(dest.toString(), 302);
+    res.headers.set("Cache-Control", "private, no-store");
+    // The browser consumes this once after checking its session, independently of welcome UI.
+    res.cookies.set(AUTH_CHANGE_COOKIE, randomUUID(), {
+      path: authChangeCookiePath(), maxAge: 120, sameSite: "lax", secure: dest.protocol === "https:", httpOnly: false,
+    });
+    // ResponseCookies.set rewrites Set-Cookie: always finish it before appending session/flow cookies.
+    if (config.gaMeasurementId && config.gaHosts.includes(dest.hostname)) {
+      res.cookies.set("artifact_analytics_auth", user.created ? "new" : "login", {
+        path: "/", maxAge: 120, sameSite: "lax", secure: dest.protocol === "https:", httpOnly: false,
+      });
+    }
+    res.headers.append("set-cookie", cookie);
+    res.headers.append("set-cookie", clearFlowCookie(request, claims.silent)); // one-shot: burn it either way
+    if (!claims.silent) res.headers.append("set-cookie", autoLoginOptOutCookie(request, true));
+    if (claims.switchAccount) {
+      // Defensively revoke any credentials still present on a direct switch-mode request.
+      // The account-menu action already signs out before starting authorization.
+      await endSession(request);
+      res.headers.append("set-cookie", clearSessionCookie(request, true));
+    }
+    return res;
+  } catch (error) {
+    if (claims.silent) return silentReturn(request, claims.returnTo);
+    rememberLoginFailureTarget(error, claims.returnTo);
+    throw error;
   }
-  res.headers.append("set-cookie", cookie);
-  res.headers.append("set-cookie", clearFlowCookie(request)); // one-shot: burn it either way
+}
+
+function silentReturn(request: Request, returnTo: string): NextResponse {
+  const res = NextResponse.redirect(new URL(returnTo, new URL(requestBase(request)).origin), 302);
+  res.headers.set("Cache-Control", "private, no-store");
+  res.headers.append("set-cookie", clearFlowCookie(request, true));
+  res.headers.append("set-cookie", autoLoginRetryCookie(request));
   return res;
 }
 
@@ -70,11 +105,13 @@ export async function handleOidcCallback(request: Request): Promise<NextResponse
  * one sentence, and a way to try again. OidcError messages are our own copy (safe, actionable);
  * anything else is summarised rather than echoed, then logged server-side.
  */
-export function oidcFailureResponse(error: unknown): NextResponse {
+export function oidcFailureResponse(error: unknown, switchAccount = false): NextResponse {
   const status = error instanceof OidcError ? error.statusCode : 500;
   if (!(error instanceof OidcError)) console.error("[oidc-callback]", error);
   const message = error instanceof OidcError ? error.message : "Something went wrong during sign-in. Please try again.";
   const safe = message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const returnTo = loginFailureTarget(error);
+  const retryTarget = encodeURIComponent(returnTo);
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign-in failed — artifact-site</title>
 <style>body{margin:0;display:grid;place-items:center;min-height:100vh;font:400 15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#fdfdfd;color:#171a17}
@@ -82,6 +119,6 @@ main{max-width:26rem;padding:2rem}h1{font-size:1.4rem;font-weight:600;margin:0 0
 a{display:inline-block;margin-right:.8rem;padding:.55rem .9rem;border:1px solid #e3e7e1;border-radius:7px;color:#171a17;text-decoration:none;font-weight:500;font-size:.9rem}
 a.primary{background:#171a17;border-color:#171a17;color:#fff}</style></head>
 <body><main><h1>Sign-in did not complete</h1><p>${safe}</p>
-<a class="primary" href="${appPath("/api/auth/login?return_to=%2F")}">Sign in again</a><a href="${appPath("/")}">Back to home</a></main></body></html>`;
+<a class="primary" href="${appPath(`/api/auth/login?return_to=${retryTarget}${switchAccount ? "&amp;switch_account=1" : ""}`)}">Sign in again</a><a href="${appPath("/")}">Back to home</a></main></body></html>`;
   return new NextResponse(html, { status, headers: { "content-type": "text/html; charset=utf-8" } });
 }
