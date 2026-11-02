@@ -339,7 +339,13 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.waitForSelector('dialog[open]');
       await page.click('dialog[open] .authorization-actions button[type="button"]:nth-child(2)');
       await page.waitForFunction(()=>!document.querySelector('dialog[open]'));
-      expect((await api(`/s/${created.slug}`,'')).status).toBe(404);
+      const denied = await api(`/s/${created.slug}?lang=en`, '');
+      expect(denied.status).toBe(200);
+      const deniedHtml = await denied.text();
+      expect(deniedHtml).toContain("Access denied");
+      expect(deniedHtml).not.toContain('<iframe');
+      expect(deniedHtml).not.toContain("Grant console acceptance");
+      expect((await api(`/api/preview/${created.slug}`, '')).status).toBe(404);
       await page.click('.authorization-panel .authorization-heading button');
       await page.type('dialog[open] input[placeholder="Name or email"]',member.user.email!);
       await page.waitForFunction(id=>!!document.querySelector(`dialog[open] input[type="radio"][value="${id}"]`),{},member.user.id);
