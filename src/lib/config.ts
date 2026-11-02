@@ -2,6 +2,7 @@
 // Server-only: this module reaches the database / object store / secrets, and must never be
 // bundled into a client component. The import is a build-time tripwire (see next.js docs).
 import "server-only";
+import { DEFAULT_INLINE_BODY_MAX_BYTES, DEFAULT_UPLOAD_LIMITS } from "@/lib/upload-contract";
 import path from "node:path";
 
 const projectRoot = process.cwd();
@@ -42,16 +43,16 @@ export const limits = {
   // time. Raising these two numbers before that was dangerous — production was in fact crashed by a
   // large upload (process restart, everyone 503 meanwhile). The numbers and that channel are one
   // package and should not be tuned separately.
-  get maxBytes(): number { return intFromEnv("ARTIFACT_MAX_BYTES", 300 * 1024 * 1024); }, // the whole version
-  get maxFiles(): number { return intFromEnv("ARTIFACT_MAX_FILES", 2000); },
-  get maxFileBytes(): number { return intFromEnv("ARTIFACT_MAX_FILE_BYTES", 250 * 1024 * 1024); }, // a single file
+  get maxBytes(): number { return intFromEnv("ARTIFACT_MAX_BYTES", DEFAULT_UPLOAD_LIMITS.maxBytes); }, // the whole version
+  get maxFiles(): number { return intFromEnv("ARTIFACT_MAX_FILES", DEFAULT_UPLOAD_LIMITS.maxFiles); },
+  get maxFileBytes(): number { return intFromEnv("ARTIFACT_MAX_FILE_BYTES", DEFAULT_UPLOAD_LIMITS.maxFileBytes); }, // a single file
   /**
    * The line the one-shot upload (the old path, everything into memory) still holds. Anything over
    * it must go through the chunked channel. This is not a "limit" but a "protection": without it, a
    * 300MB multipart would blow up the process during formData parsing — raising the ceiling makes
    * the crash easier, not harder.
    */
-  get inlineUploadMaxBytes(): number { return intFromEnv("ARTIFACT_INLINE_UPLOAD_MAX_BYTES", 24 * 1024 * 1024); },
+  get inlineUploadMaxBytes(): number { return intFromEnv("ARTIFACT_INLINE_UPLOAD_MAX_BYTES", DEFAULT_INLINE_BODY_MAX_BYTES); },
 };
 
 // Per-client token bucket for write routes (create / fork / edit). In-memory by design. In a
