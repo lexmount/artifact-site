@@ -1,3 +1,4 @@
+import { isInlineUploadRejection, supportsChunkedSingleFile } from "./upload-contract.js";
 import { tmpdir } from "node:os";
 import { recovery } from "./recovery.js";
 // The two operations agents and humans actually want — "put this online" and "replace what is
@@ -54,7 +55,7 @@ async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, op
     case "document": {
       if (shape.size > oneShotLimit()) {
 
-        if (shape.type === "document" && path.extname(shape.file).toLowerCase() !== ".pdf") throw new Error("Office documents over the one-shot limit must be converted to PDF first");
+        if (shape.type === "document" && !supportsChunkedSingleFile(shape.file)) throw new Error("Office documents over the one-shot limit must be converted to PDF first");
         say(`large ${shape.type === "html" ? "HTML" : "PDF"} (${mb(shape.size)}): chunked upload`);
         return { result: await chunkedCreate(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], opts), route: "chunked" };
       }
@@ -122,8 +123,7 @@ async function uploadWithRecovery(client: ArtifactSiteClient, files: WalkedFile[
         if (j) { j.result = result as VersionResult; await state!.save(); }
         return { result, route };
       } catch (error) {
-        const details = error instanceof ApiError ? error.body as { effect?: string } | null : null;
-        if (!(error instanceof ApiError && error.status === 413 && error.code === "inline_upload_too_large" && details?.effect === "none")) throw error;
+        if (!(error instanceof ApiError && isInlineUploadRejection(error.status, error.body))) throw error;
         preflightTree(files, await client.uploadLimits()); say("The server rejected the inline body before publication; switching to file uploads");
       }
     }
@@ -225,7 +225,7 @@ export async function updateFromPath(client: ArtifactSiteClient, slug: string, t
     case "document": {
       if (shape.type !== "document") throw new Error(`${slug} is a document site: give it a pdf/pptx/ppt/docx/doc file`);
       if (shape.size > oneShotLimit()) {
-        if (path.extname(shape.file).toLowerCase() !== ".pdf") throw new Error("Office documents over the one-shot limit must be converted to PDF first");
+        if (!supportsChunkedSingleFile(shape.file)) throw new Error("Office documents over the one-shot limit must be converted to PDF first");
         return { ...(await chunkedCreate(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], { ...opts, slug })), kind: "document" };
       }
       say(`uploading ${path.basename(shape.file)}`);

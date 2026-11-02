@@ -1,4 +1,4 @@
-import { DEFAULT_UPLOAD_LIMITS, type UploadLimits } from "./archive.js";
+import { DEFAULT_UPLOAD_LIMITS, type UploadLimits } from "./upload-contract.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 // Typed client for the artifact-site HTTP API. One method per endpoint, no CLI or MCP concerns.

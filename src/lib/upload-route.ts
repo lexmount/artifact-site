@@ -13,17 +13,12 @@
 // inherently a one-shot path; over the limit they rely on raising inlineMax rather than switching
 // to chunked here.
 
+import { BROWSER_INLINE_PAYLOAD_MAX_BYTES, supportsChunkedSingleFile, uploadFileKind } from "@/lib/upload-contract";
 import type { Translator } from "@/lib/i18n";
 
 const MiB = 1024 * 1024;
-/** Frontend default aligned with the server's ARTIFACT_INLINE_UPLOAD_MAX_BYTES; the real decision uses the inlineMax passed in. */
-export const INLINE_UPLOAD_MAX_BYTES = 20 * MiB;
-
-/** Single-file types that can take the chunked channel: HTML sites and single PDF documents. Deliberately
- *  excludes .htm (the server's entry detection only recognises .html) and Office (converted in memory). */
-const CHUNKABLE_SINGLE = /\.(html|pdf)$/i;
-const SINGLE_SITE_FILE = /\.(html?|pdf|pptx?|docx?)$/i;
-const ZIP_FILE = /\.zip$/i;
+/** Browser routing budget; deliberately below the server's default body limit. */
+export const INLINE_UPLOAD_MAX_BYTES = BROWSER_INLINE_PAYLOAD_MAX_BYTES;
 
 export const zipTooLargeMessage = (bytes: number, inlineMax: number, t: Translator): string =>
   t("This zip is {size}MB, over the {max}MB limit for a single upload. Unzip it and drop the whole folder in instead — the page uploads it in parts automatically.", {
@@ -46,18 +41,19 @@ export function chooseUploadRoute(files: readonly RoutedFile[], inlineMax: numbe
 
   if (files.length === 1) {
     const only = files[0];
-    if (SINGLE_SITE_FILE.test(only.path)) {
-      if (CHUNKABLE_SINGLE.test(only.path) && only.size > inlineMax) return { kind: "chunked" };
+    const kind = uploadFileKind(only.path);
+    if (kind === "html" || kind === "document") {
+      if (supportsChunkedSingleFile(only.path) && only.size > inlineMax) return { kind: "chunked" };
       return { kind: "file" };
     }
-    if (ZIP_FILE.test(only.path)) {
+    if (kind === "zip") {
       if (only.size > inlineMax) return { kind: "error", message: zipTooLargeMessage(only.size, inlineMax, t) };
       return { kind: "zip" };
     }
     // A single file of any other type: neither a site entry nor an archive; leave it to the folder branch to report "no HTML entry"
   }
 
-  const hasHtml = files.some((f) => /\.html?$/i.test(f.path));
+  const hasHtml = files.some((f) => uploadFileKind(f.path) === "html");
   if (!hasHtml) {
     return { kind: "error", message: t("No .html entry file found. A folder needs at least one HTML page; for a single PDF or Office document, drop the file itself.") };
   }

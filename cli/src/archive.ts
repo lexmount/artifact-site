@@ -1,3 +1,5 @@
+import { DEFAULT_INLINE_BODY_MAX_BYTES, DEFAULT_UPLOAD_LIMITS, uploadFileKind, type UploadLimits } from "./upload-contract.js";
+export { DEFAULT_UPLOAD_LIMITS, DOCUMENT_EXTENSIONS, type UploadLimits } from "./upload-contract.js";
 import { createReadStream, mkdirSync, openSync, writeSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 // Turning a local path into something the API accepts: walk a directory (skipping what the
@@ -17,10 +19,8 @@ export const IGNORED_NAMES = new Set(["__MACOSX", "Thumbs.db"]);
  *  `ARTIFACT_SITE_ONE_SHOT_LIMIT` overrides it (deployments that raised the ceiling; tests). Read at call
  *  time, not import time, so the override is honoured wherever it is set. */
 export function oneShotLimit(): number {
-  return Number(process.env.ARTIFACT_SITE_ONE_SHOT_LIMIT || process.env.ARTIFACT_HUB_ONE_SHOT_LIMIT) || 24 * 1024 * 1024;
+  return Number(process.env.ARTIFACT_SITE_ONE_SHOT_LIMIT || process.env.ARTIFACT_HUB_ONE_SHOT_LIMIT) || DEFAULT_INLINE_BODY_MAX_BYTES;
 }
-
-export const DOCUMENT_EXTENSIONS = new Set([".pdf", ".pptx", ".ppt", ".docx", ".doc"]);
 
 export interface WalkedFile { relpath: string; absPath: string; size: number }
 
@@ -80,9 +80,8 @@ export async function inspect(target: string): Promise<LocalShape> {
     return { type: "dir", root: abs, files, size: totalSize(files) };
   }
   const ext = path.extname(abs).toLowerCase();
-  if (ext === ".zip") return { type: "zip", file: abs, size: s.size };
-  if (DOCUMENT_EXTENSIONS.has(ext)) return { type: "document", file: abs, size: s.size };
-  if (ext === ".html" || ext === ".htm") return { type: "html", file: abs, size: s.size };
+  const kind = ext ? uploadFileKind(abs) : undefined;
+  if (kind) return { type: kind, file: abs, size: s.size };
   throw new Error(`Unsupported file type ${ext || "(none)"}: publish a .html, a .zip, a directory, or a pdf/pptx/ppt/docx/doc document`);
 }
 
@@ -94,8 +93,6 @@ export function safeRelativePath(input: string): string {
   return normalized;
 }
 
-export interface UploadLimits { maxBytes: number; maxFileBytes: number; maxFiles: number }
-export const DEFAULT_UPLOAD_LIMITS: UploadLimits = { maxBytes: 300 * 1048576, maxFileBytes: 250 * 1048576, maxFiles: 2000 };
 export function preflightTree(files: WalkedFile[], limits: UploadLimits = DEFAULT_UPLOAD_LIMITS): void {
   if (files.length > limits.maxFiles || totalSize(files) > limits.maxBytes || files.some(f => f.size > limits.maxFileBytes)) throw new Error(`Project exceeds upload limits: ${limits.maxBytes} bytes total, ${limits.maxFileBytes} bytes per file, ${limits.maxFiles} files`);
   for (const f of files) safeRelativePath(f.relpath);
