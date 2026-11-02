@@ -1,3 +1,5 @@
+import { sharePeopleAdmit } from "@/lib/share-admission";
+import { rbacQuery } from "@/lib/db";
 // Share links — the storage layer.
 //
 // These are the queries the read gate will sit on, so the tests are written as the gate's
@@ -34,7 +36,6 @@ import {
   recordShareView,
   removeShareGrant,
   revokeShare,
-  shareAdmits,
   updateSharePolicy,
   upsertUser,
 } from "@/lib/db";
@@ -234,47 +235,40 @@ describe("listLiveShares — the read gate's input", () => {
   });
 });
 
-describe("shareAdmits", () => {
-  it("admits the named account, and an e-mail grant regardless of case", async () => {
+describe("people-share identity admission", () => {
+  it("admits direct accounts and only verified nonempty addresses, case-insensitively", async () => {
     const share = await mkShare({ policy: "people" });
-    const invited = await mkUser("invited", "受邀的人");
+    const invited = await mkUser("invited", "Invited reader");
     const stranger = await mkUser("stranger");
-
     await addShareGrant(share.id, { userId: invited.id }, null);
     await addShareGrant(share.id, { email: "Boss@Example.COM" }, invited.id);
-
-    expect(await shareAdmits(share.id, invited.id, null)).toBe(true); // by account
-    expect(await shareAdmits(share.id, stranger.id, "boss@example.com")).toBe(true);
-    expect(await shareAdmits(share.id, stranger.id, "BOSS@EXAMPLE.COM")).toBe(true);
-    expect(await shareAdmits(share.id, stranger.id, "Boss@Example.COM")).toBe(true);
-
-    expect(await shareAdmits(share.id, stranger.id, "someone.else@example.com")).toBe(false);
-
-    // Grants are per LINK. The same person on another share of the same site is not admitted here.
+    expect(await sharePeopleAdmit(share.id, invited.id)).toBe(true);
+    for (const email of ["boss@example.com", "BOSS@EXAMPLE.COM", "Boss@Example.COM"]) {
+      await rbacQuery("UPDATE users SET email=$1,email_verified=TRUE WHERE id=$2", [email, stranger.id]);
+      expect(await sharePeopleAdmit(share.id, stranger.id)).toBe(true);
+    }
+    for (const email of [null, "", "someone.else@example.com"]) {
+      await rbacQuery("UPDATE users SET email=$1,email_verified=TRUE WHERE id=$2", [email, stranger.id]);
+      expect(await sharePeopleAdmit(share.id, stranger.id)).toBe(false);
+    }
+    await rbacQuery("UPDATE users SET email='boss@example.com',email_verified=FALSE WHERE id=$1", [stranger.id]);
+    expect(await sharePeopleAdmit(share.id, stranger.id)).toBe(false);
     const other = await mkShare({ policy: "people" });
-    expect(await shareAdmits(other.id, invited.id, "boss@example.com")).toBe(false);
+    expect(await sharePeopleAdmit(other.id, invited.id)).toBe(false);
+    expect(await sharePeopleAdmit(share.id, "missing-user")).toBe(false);
   });
 
-  it("a reader with no verified address matches no e-mail row, ever", async () => {
-    // The one that turns "invite by e-mail" into "anyone signed in", if the e-mail arm is ever
-    // written so that a null address degrades to a wildcard.
+  it("does not treat a grant's creator as an invited reader", async () => {
     const share = await mkShare({ policy: "people" });
-    const stranger = await mkUser("stranger");
-    await addShareGrant(share.id, { email: "boss@example.com" }, null);
-
-    expect(await shareAdmits(share.id, stranger.id, null)).toBe(false);
-    expect(await shareAdmits(share.id, stranger.id, "")).toBe(false); // "" is not an address either
-    // Not even for the account that created the grant: an e-mail row has user_id NULL, so the
-    // account arm cannot pick it up.
     const granter = await mkUser("granter");
     await addShareGrant(share.id, { email: "second@example.com" }, granter.id);
-    expect(await shareAdmits(share.id, granter.id, null)).toBe(false);
+    expect(await sharePeopleAdmit(share.id, granter.id)).toBe(false);
   });
 
   it("says no on a share with no grants at all", async () => {
     const share = await mkShare({ policy: "people" });
     const anyone = await mkUser("anyone");
-    expect(await shareAdmits(share.id, anyone.id, "anyone@example.com")).toBe(false);
+    expect(await sharePeopleAdmit(share.id, anyone.id)).toBe(false);
   });
 });
 

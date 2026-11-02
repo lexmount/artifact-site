@@ -17,7 +17,7 @@ import { loadGrants, parseEmail, resolveOwnedShare, ShareInputError } from "../.
  * /collaborators, which refuses an address nobody has signed in with — a rule that quietly makes
  * "share this with Alice" impossible until Alice has independently discovered the platform and logged
  * in. Here the address is stored as-is and starts admitting them the moment they sign in with it
- * VERIFIED (see shareAdmits). The response says which of the two happened so the panel can tell the
+ * VERIFIED (see sharePeopleAdmit). The response says which of the two happened so the panel can tell the
  * owner "takes effect once they sign in" instead of leaving them wondering whether it took.
  *
  * The lookup is on VERIFIED addresses only, and so is the later match: an unverified address is
@@ -62,7 +62,7 @@ export async function POST(
     const user = await getUserByVerifiedEmail(email);
     if (user) {
       // Store the ACCOUNT, not the address, once we know who it is: an account id survives the
-      // person changing their e-mail, and it is what shareAdmits can match without a second lookup.
+      // person changing their e-mail, and it is what sharePeopleAdmit matches by account ID.
       await withPermissionCommit(request,site.id,"site.sharing.manage", async () => addShareGrant(share.id, { userId: user.id }, grantedBy));
       await recordSiteAudit(site.id, "share", apiAuditContext(request, actor));
       return json({

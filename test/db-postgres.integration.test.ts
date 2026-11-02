@@ -1,3 +1,4 @@
+import { sharePeopleAdmit } from "@/lib/share-admission";
 import { insertSiteWithVersionForTests, addVersionForTests } from "@/lib/publication-fixtures";
 import { putUserSiteRole } from "@/lib/role-bindings";
 // Integration test against a REAL Postgres. Skipped unless ARTIFACT_DATABASE_URL is set, so it
@@ -369,14 +370,20 @@ describe.skipIf(!live)("PostgresStore — live round-trip", () => {
       expect(grants.find((g) => g.email != null)).toMatchObject({ userId: null, email: "Boss@Example.COM", displayName: null });
       await expect(store.addShareGrant(forever.id, {}, null)).rejects.toThrow(/exactly one/);
 
-      // shareAdmits — the arm that must never fire without a verified address.
-      expect(await store.shareAdmits(forever.id, invited.id, null)).toBe(true);
-      expect(await store.shareAdmits(forever.id, stranger.id, "BOSS@EXAMPLE.COM")).toBe(true);
-      expect(await store.shareAdmits(forever.id, stranger.id, null)).toBe(false);
-      expect(await store.shareAdmits(forever.id, stranger.id, "")).toBe(false);
-      expect(await store.shareAdmits(forever.id, stranger.id, "nobody@example.com")).toBe(false);
-      await store.removeShareGrant(forever.id, { email: "BOSS@EXAMPLE.COM" }); // folds case
-      expect(await store.shareAdmits(forever.id, stranger.id, "boss@example.com")).toBe(false);
+      // The application admission predicate runs against this store's query connection.
+      const admissionQuery = store.rbacQuery.bind(store);
+      expect(await sharePeopleAdmit(forever.id, invited.id, admissionQuery)).toBe(true);
+      await admissionQuery("UPDATE users SET email='BOSS@EXAMPLE.COM',email_verified=TRUE WHERE id=$1", [stranger.id]);
+      expect(await sharePeopleAdmit(forever.id, stranger.id, admissionQuery)).toBe(true);
+      await admissionQuery("UPDATE users SET email_verified=FALSE WHERE id=$1", [stranger.id]);
+      expect(await sharePeopleAdmit(forever.id, stranger.id, admissionQuery)).toBe(false);
+      for (const email of [null, "", "nobody@example.com"]) {
+        await admissionQuery("UPDATE users SET email=$1,email_verified=TRUE WHERE id=$2", [email, stranger.id]);
+        expect(await sharePeopleAdmit(forever.id, stranger.id, admissionQuery)).toBe(false);
+      }
+      await admissionQuery("UPDATE users SET email='boss@example.com' WHERE id=$1", [stranger.id]);
+      await store.removeShareGrant(forever.id, { email: "BOSS@EXAMPLE.COM" });
+      expect(await sharePeopleAdmit(forever.id, stranger.id, admissionQuery)).toBe(false);
 
       // Views: the identity ladder, then retention.
       const view = { shareId: forever.id, siteId: SS, userAgent: "UA" };

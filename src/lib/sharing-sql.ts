@@ -6,3 +6,6 @@ export const mainSharingActiveSql = `NOT EXISTS (
     NOT EXISTS (SELECT 1 FROM sharing_scopes scope WHERE scope.id=scoped.source_id AND scope.enabled=1 AND scope.owner_id=scoped.owner_id)
   )
 )`;
+
+/** Discovery intentionally excludes unlisted addresses, even when their bytes are readable. */
+export const publicDiscoverySql = `COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL AND ${mainSharingActiveSql}`;

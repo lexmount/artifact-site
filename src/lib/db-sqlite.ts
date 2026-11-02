@@ -1,4 +1,4 @@
-import { mainSharingActiveSql } from "@/lib/sharing-sql";
+import { publicDiscoverySql } from "@/lib/sharing-sql";
 import { listSharesQuery } from "@/lib/share-queries";
 import { migrateNumbered } from "@/lib/migrations";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -563,7 +563,7 @@ export class SqliteStore implements MetadataStore {
       FROM sites s
       LEFT JOIN versions v ON v.id = s.current_version_id
       WHERE EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL AND s.current_version_id IS NOT NULL
-        AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL AND ${mainSharingActiveSql})
+        AND ((${publicDiscoverySql})
              OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = ?)
              OR EXISTS (SELECT 1 FROM authorization_site_members c
@@ -785,20 +785,6 @@ export class SqliteStore implements MetadataStore {
          FROM share_grants g LEFT JOIN users u ON u.id = g.user_id
         WHERE g.share_id=?
         ORDER BY g.granted_at, COALESCE(g.user_id, g.email)`).all(shareId) as Row[]).map(toShareGrantRow);
-  }
-
-  async shareAdmits(shareId: string, userId: string, verifiedEmail: string | null): Promise<boolean> {
-    // `|| null` so an empty string cannot stand in for a verified address. The e-mail arm is gated
-    // on the PARAMETER being non-null: no verified address admits nobody, stated rather than left to
-    // be inferred from SQL's NULL semantics. An e-mail row cannot slip through the account arm
-    // either — its user_id is NULL, and `NULL = ?` is NULL.
-    const email = verifiedEmail || null;
-    const row = this.db.prepare(
-      `SELECT 1 AS ok FROM share_grants
-        WHERE share_id=?
-          AND (user_id = ? OR (? IS NOT NULL AND email IS NOT NULL AND lower(email) = lower(?)))
-        LIMIT 1`).get(shareId, userId, email, email);
-    return row != null;
   }
 
   async recordShareView(view: ShareView): Promise<void> {
@@ -1405,8 +1391,8 @@ export class SqliteStore implements MetadataStore {
       FROM site_texts_fts f
       JOIN site_texts t ON t.site_id = f.site_id
       JOIN sites s ON s.id = t.site_id AND s.current_version_id = t.version_id
-      WHERE site_texts_fts MATCH ? AND s.deleted_at IS NULL
-        AND ((COALESCE(s.visibility, 'public') = 'public' AND s.taken_down_at IS NULL AND ${mainSharingActiveSql})
+      WHERE site_texts_fts MATCH ? AND EXISTS (SELECT 1 FROM tenants rt WHERE rt.id=s.tenant_id AND rt.disabled_at IS NULL) AND s.deleted_at IS NULL
+        AND ((${publicDiscoverySql})
              OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id))
              OR (s.owner_id IS NULL AND s.anon_owner_id = ?)
              OR EXISTS (SELECT 1 FROM authorization_site_members c WHERE c.site_id = s.id AND c.subject_type<>'everyone' AND c.user_id = ?))

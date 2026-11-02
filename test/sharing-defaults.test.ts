@@ -712,3 +712,65 @@ it.each(["default", "manual"] as const)("revokes immediate independent links on 
   expect(await (await GET(owner.request, context)).json()).toMatchObject({ pending: false, links: 0 });
   expect((await (await import("@/lib/share")).resolveShareAccess(new Request(origin), token)).ok).toBe(false);
 });
+
+it.each([
+  { visibility: "public", blocked: null, listed: true, readable: true },
+  { visibility: "unlisted", blocked: null, listed: false, readable: true },
+  { visibility: "private", blocked: null, listed: false, readable: false },
+  { visibility: "public", blocked: "taken_down_at", listed: false, readable: false },
+  { visibility: "public", blocked: "deleted_at", listed: false, readable: false },
+  { visibility: "public", blocked: "tenant", listed: false, readable: false },
+  { visibility: "public", blocked: "scope", listed: false, readable: false },
+] as const)("keeps discovery and direct access distinct for $visibility / $blocked", async ({ visibility, blocked, listed, readable }) => {
+  const owner = await actor();
+  const site = (await createSite({ mode: "paste", html: "<h1>Boundarymatrix</h1>" }, { ownerId: owner.user.id })).site;
+  await (await import("@/lib/site-text")).flushTextIndexForTests();
+  await rbacQuery("UPDATE sites SET visibility=$1 WHERE id=$2", [visibility, site.id]);
+  if (blocked === "tenant") await rbacQuery("UPDATE tenants SET disabled_at=1 WHERE id=$1", [site.tenantId]);
+  else if (blocked === "scope") await rbacQuery(
+    "INSERT INTO site_sharing_state(site_id,owner_id,audience,comments,source,source_id,revision,updated_at) VALUES($1,$2,'public',1,'all',NULL,1,$3)",
+    [site.id, owner.user.id, Date.now()],
+  );
+  else if (blocked) await rbacQuery(`UPDATE sites SET ${blocked}=1 WHERE id=$1`, [site.id]);
+  const fresh = (await getSite(site.id))!;
+  const summaries = await (await import("@/lib/db")).listSiteSummaries();
+  const directory = await (await import("@/lib/directory")).readDirectory({}, { scope: "public", folder: "all", q: "", sort: "updated", page: 0 });
+  const search = await (await import("@/lib/search")).searchSites(undefined, "Boundarymatrix", 10);
+  const directReadable = await canReadSite(new Request(origin), fresh);
+  if (blocked === "tenant") await rbacQuery("UPDATE tenants SET disabled_at=NULL WHERE id=$1", [site.tenantId]);
+  expect(summaries.some(row => row.slug === site.slug)).toBe(listed);
+  expect(directory.sites.some(row => row.slug === site.slug)).toBe(listed);
+  expect(search.some(row => row.slug === site.slug)).toBe(listed);
+  expect(directReadable).toBe(readable);
+});
+
+it.each(["verified-email", "unverified-email", "direct-account", "revoked", "expired", "disabled-user"] as const)(
+  "keeps request and keyed preview people admission aligned for %s",
+  async (mode) => {
+    const owner = await actor(), reader = await actor();
+    const site = (await createSite({ mode: "paste", html: "Private bytes" }, { ownerId: owner.user.id })).site;
+    await rbacQuery("UPDATE sites SET visibility='private' WHERE id=$1", [site.id]);
+    const db = await import("@/lib/db");
+    const { hashToken, resolveShareAccess } = await import("@/lib/share");
+    const { authorizePreview } = await import("@/lib/preview-access");
+    const token = createId("token"), id = createId("share");
+    await db.createShare({ id, siteId: site.id, tokenHash: hashToken(token), policy: "people", passcodeHash: null, label: null, createdBy: owner.user.id, createdAnonId: null, expiresAt: null });
+    await db.addShareGrant(id, mode === "direct-account" ? { userId: reader.user.id } : { email: reader.user.email!.toUpperCase() }, owner.user.id);
+    const request = new Request(origin, { headers: { cookie: reader.request.headers.get("cookie")!, "x-artifact-share": token } });
+    const fresh = (await getSite(site.id))!;
+    const preview = await authorizePreview(request, fresh, null);
+    expect(preview?.key).toBeTruthy();
+    if (mode === "unverified-email" || mode === "direct-account") await rbacQuery("UPDATE users SET email_verified=FALSE WHERE id=$1", [reader.user.id]);
+    if (mode === "revoked") await db.revokeShare(id);
+    if (mode === "expired") await rbacQuery("UPDATE site_shares SET expires_at=1 WHERE id=$1", [id]);
+    if (mode === "disabled-user") {
+      await rbacQuery("UPDATE users SET disabled_at=1 WHERE id=$1", [reader.user.id]);
+      // Keyed preview checks account status independently of administrative session revocation.
+      expect(await authorizePreview(new Request(origin), fresh, preview!.key)).toBeNull();
+      await db.revokeUserSessions(reader.user.id);
+    }
+    const allowed = mode === "verified-email" || mode === "direct-account";
+    expect((await resolveShareAccess(new Request(request), token)).ok).toBe(allowed);
+    expect(Boolean(await authorizePreview(new Request(origin), fresh, preview!.key))).toBe(allowed);
+  },
+);

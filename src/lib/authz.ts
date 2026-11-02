@@ -116,7 +116,7 @@ export async function resolveAuthority(viewer: Viewer, site: Site): Promise<Auth
   if (anonymous && isAnonymousCreator(viewer, site)) {
     return { role: policy.anonymousSites === "read-only" ? "viewer" : "owner", source: "anonymous-cookie" };
   }
-  const mainRole = await (await import("@/lib/sharing-defaults")).mainSharingRole(site, viewer.session?.userId ?? null);
+  const mainRole = await (await import("@/lib/sharing-read")).mainSharingRole(site, viewer.session?.userId ?? null);
   if (mainRole && !account.role) account = { role: mainRole, source: "main" };
   if (!viewer.session && await everyoneRole(site.id)) account = {role:"viewer",source:"everyone"};
   if (viewer.request) {
