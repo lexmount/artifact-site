@@ -691,7 +691,7 @@ it("publishes shared defaults immediately without private review schema", async 
   expect(migrations.map(row => row.id)).toContain("0017-tenant-slugs");
   expect(migrations.map(row => row.id)).toContain("0018-sharing-defaults");
   expect(migrations.map(row => row.id)).toContain("0021-public-author-name");
-  expect(migrations).toHaveLength(17);
+  expect(migrations).toHaveLength(19);
   expect(migrations.some(row => /0015|0016|0019|0020/.test(String(row.id)))).toBe(false);
   const tables = process.env.ARTIFACT_DB_DRIVER === "postgres"
     ? await rbacQuery("SELECT table_name AS name FROM information_schema.tables WHERE table_schema=current_schema()")

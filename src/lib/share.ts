@@ -1,3 +1,5 @@
+import { backgroundPasscode, type PasscodeAdmission } from "@/lib/background-session";
+import { backgroundShare } from "@/lib/background-session";
 import { sharePeopleAdmit } from "@/lib/share-admission";
 import { mainSharingActive } from "@/lib/sharing-read";
 import { publicationPolicy } from "@/lib/publication-policy";
@@ -81,7 +83,7 @@ export async function resolveShareAccess(
   token: string,
   opts: { passcodeAttempt?: string | null; session?: Session | null } = {},
 ): Promise<ShareAccess> {
-  const share = await getShareByTokenHash(hashToken(token));
+  const share = await getShareByTokenHash(backgroundShare(request) ?? hashToken(token));
   if (!share || !isLive(share)) return { ok: false, reason: "notFound" };
   const site = await getSite(share.siteId);
   if (!site || site.deletedAt || site.takenDownAt || !(await tenantActive(site.tenantId))) return { ok: false, reason: "notFound" };
@@ -162,6 +164,8 @@ export function buildPasscodeCookie(request: Request, share: ShareRow): string {
 
 /** Exported for tests: the cookie's whole invalidation story lives in how it is computed. */
 export function hasPasscodeCookie(request: Request, share: ShareRow): boolean {
+  const admission = backgroundPasscode(request);
+  if (admission && share.passcodeHash && admission.shareId === share.id && admission.expiresAt > Date.now() && safeEqual(admission.binding, sha256hex(share.passcodeHash))) return true;
   const header = request.headers.get("cookie");
   if (!header || !share.passcodeHash) return false;
   const name = passcodeCookieName(share.id);
@@ -228,8 +232,8 @@ export function shareTokenFromRequest(request: Request): string | null {
 }
 export async function requestShareAccess(request: Request, site: Site, session?: Session | null): Promise<ShareRow | null> {
   const token = shareTokenFromRequest(request);
-  if (!token) return null;
-  const access = await resolveShareAccess(request,token,{session});
+  if (!token && !backgroundShare(request)) return null;
+  const access = await resolveShareAccess(request,token ?? "",{session});
   return access.ok && access.share.siteId === site.id ? access.share : null;
 }
 /** A share grants exactly its fixed snapshot or the current version, never all history. */
@@ -360,4 +364,14 @@ function viewErrorDiagnostic(error: unknown) {
   const reason = typeof value.message === "string" && /timeout exceeded when trying to connect|connection timeout|timeout acquiring a client/i.test(value.message)
     ? "connection_timeout" : undefined;
   return { errorName, code, reason };
+}
+
+/** Keep only validated, expiring admission; never persist the cookie or passcode. */
+export async function capturePasscodeAdmission(request: Request, token: string | null): Promise<PasscodeAdmission | undefined> {
+  if (!token) return;
+  const share = await getShareByTokenHash(hashToken(token));
+  if (!share || !isLive(share) || share.policy !== "passcode" || !hasPasscodeCookie(request, share)) return;
+  const name = passcodeCookieName(share.id);
+  const cookie = request.headers.get("cookie")!.split(";").map(p => p.trim()).find(p => p.startsWith(`${name}=`))!;
+  return { shareId: share.id, binding: sha256hex(share.passcodeHash!), expiresAt: Number(cookie.slice(name.length + 1).split(".")[0]) };
 }

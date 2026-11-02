@@ -12,3 +12,11 @@ it.each([
   try { expected = safeRelativePath(input); } catch { expected = null; }
   expect(canonicalPreviewPath(input)).toBe(expected);
 });
+
+it("allows repository/dependency anchors only for package previews", () => {
+  for (const name of [".git/image.png", "node_modules/lib/image.png"]) {
+    expect(canonicalPreviewPath(name)).toBe(null);
+    expect(canonicalPreviewPath(name, true)).toBe(name);
+  }
+  expect(canonicalPreviewPath("../escape.png", true)).toBe(null);
+});

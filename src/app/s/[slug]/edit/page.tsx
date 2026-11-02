@@ -109,7 +109,7 @@ export default async function EditorPage({ params, searchParams }: {
   if (!context) notFound();
   const { view, session, readable, presentation, versions, plan, base, allowed } = context;
   // Document sites are updated by re-uploading rather than editing a generated wrapper.
-  if (view.site.kind === "document") redirect(`/s/${slug}`);
+  if (view.site.kind === "document" || view.version.packageMeta || base?.packageMeta) redirect(`/s/${slug}`);
   if (!allowed) return SiteAccessDenied({ session, viewingHref: readable ? (sp.share ? `/v/${encodeURIComponent(sp.share)}` : `/s/${encodeURIComponent(slug)}`) : undefined });
   const canEdit = allowed;
   const { id: siteId } = view.site;

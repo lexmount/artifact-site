@@ -15,7 +15,7 @@ PLATFORM ?= linux/amd64
 DIST    := dist
 TARBALL  = $(DIST)/$(subst /,_,$(subst :,-,$(IMAGE))).tar.gz
 
-.PHONY: help doctor up down restart logs ps build image load pull upgrade backup restore psql dev test test-pg
+.PHONY: help doctor up down restart logs ps build image load pull upgrade upgradecn backup restore psql dev test test-pg
 
 help: ## List all targets
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*##/{printf "  \033[36m%-10s\033[0m %s\n",$$1,$$2}' $(MAKEFILE_LIST)
@@ -54,7 +54,7 @@ ps: ## Show the status of each container
 	@$(COMPOSE) ps
 
 build: ## Build the image locally (NODE_IMAGE / NPM_REGISTRY from .env are passed as build args)
-	@$(COMPOSE) build app
+	@$(COMPOSE) build $(if $(filter 1,$(USE_CN_MIRROR)),--build-arg USE_CN_MIRROR=1) app
 
 image: ## On a dev machine, build the image for the server platform and pack it into dist/ (for servers that cannot reach Docker Hub / npm)
 	@mkdir -p $(DIST)
@@ -76,6 +76,9 @@ upgrade: ## Pull code + rebuild the image + restart (one-step upgrade when the s
 	git pull --ff-only
 	@$(MAKE) build
 	@$(MAKE) up
+
+upgradecn: ## Upgrade using the USTC Debian package mirror (keeps the configured URL path)
+	@$(MAKE) upgrade USE_CN_MIRROR=1
 
 backup: ## Back up to backups/<timestamp>/ (pg_dump + tarball of the local file directory)
 	@$(DEPLOY)/backup.sh

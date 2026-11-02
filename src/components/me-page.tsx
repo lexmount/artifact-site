@@ -1,4 +1,6 @@
 "use client";
+import PackageJobs, { PackageTaskBadge } from "@/components/package-jobs";
+import { usePackageJobs } from "@/components/use-package-jobs";
 
 import { appPath } from "@/lib/app-path";
 // /me — the person's own sites: title and the upload action, two scopes (created by me / I can
@@ -30,7 +32,7 @@ import { refreshAuth } from "@/lib/auth-store";
 import type { SiteSummary } from "@/lib/types";
 import { NO_SLUGS, mergeMySites, useOwnerSlugs } from "@/lib/my-sites";
 
-type TabId = "owned" | "collab" | "recent" | "tokens" | "connections";
+type TabId = "owned" | "collab" | "recent" | "uploads" | "tokens" | "connections";
 
 type AccountLookup<T> = { userId: string; status: "loading" | "error" | "success"; value?: T };
 
@@ -97,6 +99,7 @@ function MePageContent({ allSites, directory, userId }: MePageProps) {
   const loading = auth.loading && !userId;
   const router = useRouter();
   const params = useSearchParams();
+  const packageJobs = usePackageJobs();
   const tab = (params.get("tab") ?? "owned") as TabId;
   const setPicked = (tab: TabId) => router.push(`/me?tab=${tab}`, {scroll:false});
   const browserSlugs = useOwnerSlugs();
@@ -118,11 +121,14 @@ function MePageContent({ allSites, directory, userId }: MePageProps) {
             <Link className="primary" href="/"><ArrowUp size={16} aria-hidden="true" /> {t("Upload")}</Link>
           </div>
           <div className="work-tabs" role="tablist" aria-label={t("Account views")}>
-            <button type="button" role="tab" id="me-tab-browser" aria-controls="me-panel" aria-selected={tab !== "recent"} onClick={() => setPicked("owned")}>
+            <button type="button" role="tab" id="me-tab-browser" aria-controls="me-panel" aria-selected={tab === "owned"} onClick={() => setPicked("owned")}>
               {t("Created in this browser")} · {mine.length}
             </button>
             <button type="button" role="tab" id="me-tab-recent" aria-controls="me-panel" aria-selected={tab === "recent"} onClick={() => setPicked("recent")}>
               {t("Recently viewed")} · {shelf.items.length}
+            </button>
+            <button type="button" role="tab" id="me-tab-uploads" aria-controls="me-panel" aria-selected={tab === "uploads"} onClick={() => setPicked("uploads")}>
+              {t("Upload tasks")} <PackageTaskBadge model={packageJobs} />
             </button>
             <span className="work-tabs-tools">
               {tab === "recent"
@@ -131,9 +137,9 @@ function MePageContent({ allSites, directory, userId }: MePageProps) {
                 : oidcEnabled && <a className="quiet" href={appPath(loginHref(typeof window === "undefined" ? "/me" : `/me${window.location.search}`))}>{t("Sign in to see your sites on every device")}</a>}
             </span>
           </div>
-          <div role="tabpanel" id="me-panel" aria-labelledby={tab === "recent" ? "me-tab-recent" : "me-tab-browser"}>
+          <div role="tabpanel" id="me-panel" aria-labelledby={tab === "uploads" ? "me-tab-uploads" : tab === "recent" ? "me-tab-recent" : "me-tab-browser"}>
             {/* No onMutated: the list is the server page's prop, and useSiteActions already calls router.refresh() after a delete or rename. */}
-            {tab === "recent" ? <RecentList shelf={shelf} /> : <MySites sites={mine} />}
+            {tab === "uploads" ? <PackageJobs model={packageJobs} /> : tab === "recent" ? <RecentList shelf={shelf} /> : <MySites sites={mine} />}
           </div>
         </>
       )}
@@ -153,6 +159,9 @@ function MePageContent({ allSites, directory, userId }: MePageProps) {
             </button>
             <button type="button" role="tab" id="me-tab-recent" aria-controls="me-panel" aria-selected={tab === "recent"} onClick={() => setPicked("recent")}>
               {t("Recently viewed")} · {shelf.items.length}
+            </button>
+            <button type="button" role="tab" id="me-tab-uploads" aria-controls="me-panel" aria-selected={tab === "uploads"} onClick={() => setPicked("uploads")}>
+              {t("Upload tasks")} <PackageTaskBadge model={packageJobs} />
             </button>
             <span className="work-tabs-tools">
               {tab === "recent" && shelf.items.length > 0 && <button type="button" className="quiet" onClick={clearHistory}>{t("Clear history")}</button>}
@@ -176,9 +185,10 @@ function MePageContent({ allSites, directory, userId }: MePageProps) {
             </p>
           ))}
           {Boolean(unclaimed.value) && <p className="account-claim-notice"><Link href="/me/claim">{t("Add browser-created artifacts to my account")}</Link><span>{t("{n} artifacts available", { n: unclaimed.value! })}</span></p>}
-          <div role="tabpanel" id="me-panel" aria-labelledby={tab === "owned" || tab === "collab" || tab === "recent" ? `me-tab-${tab}` : undefined} aria-label={tab === "tokens" ? t("Publish tokens") : tab === "connections" ? t("Connected applications") : undefined}>
+          <div role="tabpanel" id="me-panel" aria-labelledby={tab === "owned" || tab === "collab" || tab === "recent" || tab === "uploads" ? `me-tab-${tab}` : undefined} aria-label={tab === "tokens" ? t("Publish tokens") : tab === "connections" ? t("Connected applications") : undefined}>
             {(tab === "owned" || tab === "collab") && directory && <MySites key={directory.query.scope} sites={directory.sites} directory={directory} userId={userId} onMutated={load} manage={tab === "owned"} />}
             {tab === "recent" && <RecentList shelf={shelf} />}
+            {tab === "uploads" && <PackageJobs model={packageJobs} />}
             {tab === "tokens" && <div className="account-tool"><PublishTokensCard /></div>}
             {tab === "connections" && <div className="account-tool"><ConnectedAppsCard /></div>}
           </div>

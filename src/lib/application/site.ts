@@ -40,14 +40,14 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
       return json({ error: "site not found" }, 404);
     }
     await requirePermission(request, view.site, "site.source.export");
-    const files = await getStorage().list(view.site.id, view.version.id);
+    const files = view.version.packageMeta ? view.version.packageMeta.files.map(file => file.path) : await getStorage().list(view.site.id, view.version.id);
 
     // Which file's source to return: an explicit ?file, else the entry.
     const requested = new URL(request.url).searchParams.get("file") ?? view.version.entry;
-    const safe = files.includes(requested) ? requested : null;
+    const safe = files.includes(requested) || (view.version.packageMeta && requested === view.version.entry) ? requested : null;
     if (!safe) return json({ error: `file not found: ${requested}` }, 404);
     // storage.read re-applies the path guards (throws → 400) before returning bytes.
-    const content = Buffer.from(await getStorage().read(view.site.id, view.version.id, safe)).toString("utf8");
+    const content = Buffer.from(await getStorage(view.version.packageMeta ? "package" : "website").read(view.site.id, view.version.id, safe)).toString("utf8");
 
     return json({
       slug: view.site.slug,

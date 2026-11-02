@@ -32,7 +32,7 @@
     {
       "name": "artifact_site_publish",
       "title": "Publish a site",
-      "description": "Save a new AI-generated page, report, chart, prototype or document to the remote Artifact Site library and get its address. Use for 'publish this report' or 'give this page a link'. Supply inline HTML, a UTF-8/base64 file tree, or a completed upload_id. For requests over 2 MiB, use upload_start and upload_write first. Creates a private artifact by default without an independent share link. Giving the user a link does not authorize opening access. Use artifact_site_set_visibility with unlisted only when the user asks to share; use public only for explicit public discovery. To change an existing artifact at the same URL, use update or edit instead. Returns the artifact, main URL and actual visibility. Explicit advanced share requests also return their link; retry a failed access/share operation rather than publishing again.",
+      "description": "Save a new AI-generated page, report, chart, prototype or document to the remote Artifact Site library and get its address. Use for 'publish this report' or 'give this page a link'. Supply inline HTML, a UTF-8/base64 file tree, or a completed upload_id. For requests over 2 MiB, use upload_start and upload_write first. Creates a private artifact by default without an independent share link. Giving the user a link does not authorize opening access. Use artifact_site_set_visibility with unlisted only when the user asks to share; use public only for explicit public discovery. To change an existing artifact at the same URL, use update or edit instead. Packages return processing status and upload ID first; poll artifact_site_upload_status until completed, then return result and URL. Other uploads return the artifact, main URL and actual visibility. Explicit advanced share requests also return their link; retry a failed access/share operation rather than publishing again.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1333,9 +1333,45 @@
       }
     },
     {
+      "name": "artifact_site_upload_retry",
+      "title": "Retry package processing",
+      "description": "Retry a failed package task only when retryable is true. Reuses uploaded bytes; poll upload_status until completed. Does not create another artifact.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "upload_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "tenant_id": {
+            "description": "Destination tenant for creation; defaults to the account tenant.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "share_token": {
+            "description": "Token from a user-provided share URL; carries only that share permission.",
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "upload_id"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      }
+    },
+    {
       "name": "artifact_site_upload_status",
       "title": "Upload progress",
-      "description": "Inspect an unfinished upload and its finalized files before resuming. Sessions expire after six hours. Use operation_status for a commit whose response was lost.",
+      "description": "Inspect upload or durable package processing status: queued, processing, failed, completed. Poll every few seconds until completed before claiming publication succeeded; completed includes result and URL. Tasks survive disconnects and server restarts. Recovery expires after six hours.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1387,6 +1423,32 @@
             "type": "string",
             "maxLength": 500
           },
+          "package": {
+            "description": "Use for a directory-first file package; archive uploads preserve the original bytes.",
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "archive",
+                  "folder"
+                ]
+              },
+              "name": {
+                "description": "Original ZIP/RAR/7z/TAR/TAR.GZ/TGZ filename. Send archive chunks to path original.",
+                "type": "string"
+              },
+              "directories": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
           "operation_key": {
             "description": "Persist a unique key before this write. Reuse exactly the same key and arguments after errors; recover results for seven days using operation_status.",
             "type": "string",
@@ -1416,7 +1478,7 @@
     {
       "name": "artifact_site_upload_write",
       "title": "Write upload content",
-      "description": "Transfer one file's bytes into a remote upload. Use after upload_start; file creation and assembly are automatic. Send files and chunks sequentially, index starting at 0 for each relative path, at most 256 KiB decoded bytes per chunk. Set final:true on the last chunk of EVERY file (empty files use empty base64). Identical chunk retries are safe, including the final chunk; finalized files cannot be changed in this upload. After all files finish, use publish with upload_id or update with slug, upload_id and expected_version. Does not publish by itself.",
+      "description": "Transfer one file's bytes into a remote upload. Use after upload_start; file creation and assembly are automatic. Send files and chunks sequentially, index starting at 0 for each relative path, at most 256 KiB decoded bytes per chunk. Set final:true on the last chunk of EVERY file (empty files use empty base64). Identical chunk retries are safe, including the final chunk; finalized files cannot be changed in this upload. After all files finish, use publish with upload_id or update with slug, upload_id and expected_version. Archive final chunks are sealed promptly; assembly runs in the background after publish/update. Does not publish by itself.",
       "inputSchema": {
         "type": "object",
         "properties": {

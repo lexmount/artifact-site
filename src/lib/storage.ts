@@ -15,26 +15,28 @@ import { BadRequestError } from "@/lib/errors";
 import type { UploadFile } from "@/lib/types";
 import { S3Storage } from "@/lib/storage-s3";
 
-// --- path guards (verbatim from the legacy platform audit; do NOT weaken) ------
+// --- structural path safety, with website-only name exclusions ----------------
 
-export function safeRelativePath(input: string): string {
+export type StoragePathMode = "website" | "package";
+
+export function safeRelativePath(input: string, mode: StoragePathMode = "website"): string {
   const normalized = input.normalize("NFC").replaceAll("\\", "/").replace(/^\.\//, "");
-  if (!normalized || normalized.startsWith("/") || /[\u0000-\u001f\u007f]/.test(normalized)) {
+  if (!normalized || (mode === "package" && /^[a-z]:/i.test(normalized)) || normalized.startsWith("/") || /[\u0000-\u001f\u007f]/.test(normalized)) {
     throw new BadRequestError(`invalid relative path: ${input}`);
   }
   if (Buffer.byteLength(normalized, "utf8") > 1024) throw new BadRequestError(`relative path is too long: ${input}`);
   const parts = normalized.split("/");
   if (parts.some((part) => {
     const lower = part.toLowerCase();
-    return !part || part === "." || part === ".." || lower === ".git" || lower === "node_modules" || Buffer.byteLength(part, "utf8") > 255;
+    return !part || part === "." || part === ".." || (mode === "website" && (lower === ".git" || lower === "node_modules")) || Buffer.byteLength(part, "utf8") > 255;
   })) {
     throw new BadRequestError(`unsafe relative path: ${input}`);
   }
   return parts.join("/");
 }
 
-export function resolveInside(root: string, relative: string): string {
-  const safe = safeRelativePath(relative);
+export function resolveInside(root: string, relative: string, mode: StoragePathMode = "website"): string {
+  const safe = safeRelativePath(relative, mode);
   const resolved = path.resolve(root, safe);
   const rootResolved = path.resolve(root);
   if (resolved !== rootResolved && !resolved.startsWith(`${rootResolved}${path.sep}`)) {
@@ -55,12 +57,12 @@ export function versionDir(siteId: string, versionId: string): string {
 
 /**
  * The object key a (siteId, versionId, relpath) maps to in an S3/COS bucket. `relpath` runs through
- * safeRelativePath (blocks "..", absolute, control chars, ".git", overlong segments), so the key can
+ * safeRelativePath (blocks "..", absolute, control chars and overlong segments), so the key can
  * never escape its version prefix — the S3 analogue of resolveInside's containment. siteId/versionId
  * are server-generated ids (createId), never user input, so only relpath needs validating.
  */
-export function storageKey(siteId: string, versionId: string, relpath: string): string {
-  return `sites/${siteId}/${versionId}/${safeRelativePath(relpath)}`;
+export function storageKey(siteId: string, versionId: string, relpath: string, mode: StoragePathMode = "website"): string {
+  return `sites/${siteId}/${versionId}/${safeRelativePath(relpath, mode)}`;
 }
 
 // --- limits (pure) ------------------------------------------------------------
@@ -98,6 +100,10 @@ export interface StoredVersion { siteId: string; versionId: string; newestMtime:
 export interface RangeSlice { bytes: Uint8Array; total: number }
 
 export interface Storage {
+  /** Short-lived private object download; absent on local storage. Never used for previews. */
+  /** Lazily cache a whole-version ZIP outside preview/source trees and sign its download. */
+  exportDownloadUrl?(siteId: string, versionId: string, filename: string, build: () => Promise<Uint8Array>): Promise<string>;
+  downloadUrl?(siteId: string, versionId: string, relpath: string, filename: string, contentType: string): Promise<string>;
   /** Private re-encoded comment images, never part of a publicly served version tree. */
   writeCommentAttachment(id: string, bytes: Uint8Array, mimeType: "image/png" | "image/jpeg"): Promise<void>;
   readCommentAttachment(id: string): Promise<Uint8Array>;
@@ -143,31 +149,35 @@ export interface Storage {
 // --- Local (filesystem) backend ----------------------------------------------
 
 class LocalStorage implements Storage {
+  constructor(private readonly pathMode: StoragePathMode = "website") {}
+  private safePath(input: string) { return safeRelativePath(input, this.pathMode); }
+  private resolvePath(root: string, relative: string) { return resolveInside(root, relative, this.pathMode); }
+
   async writeCommentAttachment(id: string, bytes: Uint8Array, mimeType: "image/png" | "image/jpeg") {
     // The filesystem has no MIME metadata; authorized reads use the attachment row.
     void mimeType;
-    const dest = resolveInside(dataPath("comment-attachments"), safeRelativePath(id));
+    const dest = this.resolvePath(dataPath("comment-attachments"), this.safePath(id));
     await mkdir(path.dirname(dest), {recursive:true});
     await writeFile(dest, bytes);
   }
   async readCommentAttachment(id: string) {
-    const root = dataPath("comment-attachments"), file = resolveInside(root, safeRelativePath(id));
+    const root = dataPath("comment-attachments"), file = this.resolvePath(root, this.safePath(id));
     if ((await lstat(file)).isSymbolicLink()) throw new StorageError("symbolic links are not served");
     const [realRoot, realFile] = await Promise.all([realpath(root), realpath(file)]);
     if (!realFile.startsWith(`${realRoot}${path.sep}`)) throw new StorageError("path escapes root");
     return readFile(file);
   }
   async removeCommentAttachment(id: string) {
-    await rm(resolveInside(dataPath("comment-attachments"), safeRelativePath(id)), {force:true});
+    await rm(this.resolvePath(dataPath("comment-attachments"), this.safePath(id)), {force:true});
   }
 
   async writeVersionFiles(siteId: string, versionId: string, files: readonly UploadFile[]): Promise<{ fileCount: number; byteSize: number }> {
-    const safe = files.map((file) => ({ relpath: safeRelativePath(file.relpath), bytes: file.bytes }));
+    const safe = files.map((file) => ({ relpath: this.safePath(file.relpath), bytes: file.bytes }));
     assertWithinLimits(safe);
     const root = versionDir(siteId, versionId);
     let byteSize = 0;
     for (const file of safe) {
-      const dest = resolveInside(root, file.relpath);
+      const dest = this.resolvePath(root, file.relpath);
       await mkdir(path.dirname(dest), { recursive: true });
       await writeFile(dest, file.bytes);
       byteSize += file.bytes.byteLength;
@@ -176,8 +186,8 @@ class LocalStorage implements Storage {
   }
 
   async writeStreamToVersion(siteId: string, versionId: string, relpath: string, body: ReadableStream<Uint8Array>): Promise<number> {
-    const safe = safeRelativePath(relpath);
-    const dest = resolveInside(versionDir(siteId, versionId), safe);
+    const safe = this.safePath(relpath);
+    const dest = this.resolvePath(versionDir(siteId, versionId), safe);
     await mkdir(path.dirname(dest), { recursive: true });
     // pipeline propagates backpressure all the way back to the request stream: when disk writes slow
     // down, reads slow down with them, and buffers never pile up unbounded.
@@ -202,14 +212,14 @@ class LocalStorage implements Storage {
 
   async sizeOf(siteId: string, versionId: string, relpath: string): Promise<number | null> {
     try {
-      const file = resolveInside(versionDir(siteId, versionId), safeRelativePath(relpath));
+      const file = this.resolvePath(versionDir(siteId, versionId), this.safePath(relpath));
       const info = await stat(file);
       return info.isFile() ? info.size : null;
     } catch { return null; }
   }
 
   async readRange(siteId: string, versionId: string, relpath: string, start: number, end: number): Promise<RangeSlice> {
-    const file = resolveInside(versionDir(siteId, versionId), safeRelativePath(relpath));
+    const file = this.resolvePath(versionDir(siteId, versionId), this.safePath(relpath));
     // Same defence as read(): symlinks are not served, and the real path must still be inside the version root.
     if ((await lstat(file)).isSymbolicLink()) throw new StorageError("symbolic links are not served");
     const [realRoot, realFile] = await Promise.all([realpath(versionDir(siteId, versionId)), realpath(file)]);
@@ -224,7 +234,7 @@ class LocalStorage implements Storage {
     if (bytes.byteLength > limits.maxFileBytes) {
       throw new BadRequestError(`file too large: ${relpath} (${bytes.byteLength} bytes > ${limits.maxFileBytes})`);
     }
-    const dest = resolveInside(versionDir(siteId, versionId), relpath);
+    const dest = this.resolvePath(versionDir(siteId, versionId), relpath);
     await mkdir(path.dirname(dest), { recursive: true });
     await writeFile(dest, bytes);
   }
@@ -268,7 +278,7 @@ class LocalStorage implements Storage {
   }
 
   async stat(siteId: string, versionId: string, relpath: string): Promise<PathKind> {
-    const target = resolveInside(versionDir(siteId, versionId), relpath);
+    const target = this.resolvePath(versionDir(siteId, versionId), relpath);
     const info = await stat(target).catch(() => null);
     if (!info) return "missing";
     return info.isDirectory() ? "directory" : info.isFile() ? "file" : "missing";
@@ -276,7 +286,7 @@ class LocalStorage implements Storage {
 
   async read(siteId: string, versionId: string, relpath: string): Promise<Uint8Array> {
     const root = versionDir(siteId, versionId);
-    const file = resolveInside(root, relpath);
+    const file = this.resolvePath(root, relpath);
     // Preserve preview's exact defenses: reject a symlinked file, and confirm the resolved real
     // path is still contained by the version root (blocks symlink-to-outside escapes).
     if ((await lstat(file)).isSymbolicLink()) throw new Error("symbolic links are not served");
@@ -304,26 +314,20 @@ class LocalStorage implements Storage {
 
 // --- backend selection --------------------------------------------------------
 
-let cached: Storage | null = null;
+const cached = new Map<StoragePathMode, Storage>();
 
-export function getStorage(): Storage {
-  if (cached) return cached;
+/** Package mode is selected only from an upload session or persisted version metadata. */
+export function getStorage(mode: StoragePathMode = "website"): Storage {
+  const existing = cached.get(mode);
+  if (existing) return existing;
   const driver = config.storageDriver;
-  if (driver === "local") {
-    cached = new LocalStorage();
-    return cached;
-  }
-  if (driver === "s3") {
-    // storageKey() maps every path safely into the bucket; the S3 backend reuses it +
-    // assertWithinLimits identically. Credentials are captured in the S3Client at construction,
-    // so changing ARTIFACT_S3_* requires a restart to take effect.
-    cached = new S3Storage();
-    return cached;
-  }
-  throw new Error(`unknown ARTIFACT_STORAGE_DRIVER: ${driver}`);
+  const storage = driver === "local" ? new LocalStorage(mode) : driver === "s3" ? new S3Storage(mode) : null;
+  if (!storage) throw new Error(`unknown ARTIFACT_STORAGE_DRIVER: ${driver}`);
+  cached.set(mode, storage);
+  return storage;
 }
 
-/** Test-only: drop the memoized backend so a test can switch drivers. */
+/** Test-only: drop the memoized backends so a test can switch drivers. */
 export function __resetStorageForTests(): void {
-  cached = null;
+  cached.clear();
 }

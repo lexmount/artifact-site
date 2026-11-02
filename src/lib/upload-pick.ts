@@ -1,11 +1,9 @@
+import { normalizePickedFolder, type PackagePickedFiles } from "@/lib/package-upload-client";
 export type Picked = { path: string; file: File };
 
 
-/** Zips cannot take the chunked route (the server has to unpack one to know what is inside), so a
- *  large zip can only be called out up front rather than sent off to wait for a 413 — an error that
- *  would then need explaining all over again. */
 /** Recursively read a dropped directory entry into files carrying their relative paths. */
-function readEntry(entry: FileSystemEntry, out: Picked[]): Promise<void> {
+function readEntry(entry: FileSystemEntry, out: PackagePickedFiles): Promise<void> {
   return new Promise((resolve) => {
     if (entry.isFile) {
       (entry as FileSystemFileEntry).file((file) => {
@@ -13,6 +11,8 @@ function readEntry(entry: FileSystemEntry, out: Picked[]): Promise<void> {
         resolve();
       }, () => resolve());
     } else if (entry.isDirectory) {
+      out.folder = true;
+      (out.directories ??= []).push(entry.fullPath.replace(/^\//, ""));
       const reader = (entry as FileSystemDirectoryEntry).createReader();
       const entries: FileSystemEntry[] = [];
       const readBatch = () => {
@@ -33,13 +33,13 @@ function readEntry(entry: FileSystemEntry, out: Picked[]): Promise<void> {
   });
 }
 
-export async function collectFromDrop(dt: DataTransfer): Promise<Picked[]> {
+export async function collectFromDrop(dt: DataTransfer): Promise<PackagePickedFiles> {
   const items = Array.from(dt.items).filter((i) => i.kind === "file");
   const entries = items.map((i) => i.webkitGetAsEntry?.() ?? null);
   if (entries.some(Boolean)) {
-    const out: Picked[] = [];
+    const out: PackagePickedFiles = [];
     await Promise.all(entries.map((e) => (e ? readEntry(e, out) : Promise.resolve())));
-    if (out.length) return out;
+    if (out.length || out.directories?.length) return normalizePickedFolder(out);
   }
   // Fallback: plain file list with no directory structure.
   return Array.from(dt.files).map((file) => ({ path: file.name, file }));

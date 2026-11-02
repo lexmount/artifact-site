@@ -9,6 +9,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import puppeteer from 'puppeteer-core';
+import { zipSync } from 'fflate';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 const exec = promisify(execFile);
@@ -406,6 +407,122 @@ try {
   await Promise.all([guestPage.waitForNavigation({waitUntil:'domcontentloaded'}),guestPage.click('button[type="submit"]')]);
   assert(guestPage.url().startsWith(localShare));await guestPage.waitForSelector('iframe');await guest.close();
  }
+ console.log('Checking asynchronous archive processing in the final subpath image');
+ const archive=zipSync({
+  'reports/index.html':Buffer.from('<!doctype html><h1 id="archive-report">Subpath archive report</h1>'),
+  'notes.txt':Buffer.from('Retained package notes'),
+ });
+ const {versionId:archiveVersion}=await api(page,B,'/api/uploads',{title:'Subpath archive',package:{source:'archive',name:'subpath.zip'}});
+ const uploaded=await page.evaluate(async(url,bytes)=>{
+  const response=await fetch(url,{method:'PUT',body:new Uint8Array(bytes)});
+  return {status:response.status,body:await response.text()};
+ },`${B}/api/uploads/${archiveVersion}/files/original`,Array.from(archive));
+ assert.equal(uploaded.status,200,uploaded.body);
+ const queued=await page.evaluate(async (url,key)=>{
+  const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json','idempotency-key':key},body:'{}'});
+  return {status:response.status,body:await response.json()};
+ },`${B}/api/uploads/${archiveVersion}/commit?async=1`,randomBytes(16).toString('hex'));
+ assert.equal(queued.status,202,JSON.stringify(queued));
+ let archiveJob;
+ for(let attempt=0;attempt<90;attempt++){
+  archiveJob=await api(page,B,`/api/uploads/${archiveVersion}`);
+  if(['completed','failed'].includes(archiveJob.status))break;
+  await sleep(1000);
+ }
+ assert.equal(archiveJob.status,'completed',JSON.stringify(archiveJob));
+ assert.equal(archiveJob.result.versionId,archiveVersion);
+ const archiveSlug=archiveJob.result.slug;
+ await page.goto(`${B}/s/${archiveSlug}`,{waitUntil:'domcontentloaded'});
+ await page.waitForSelector('iframe.fs-frame');
+ const archiveFrame=await (await page.$('iframe.fs-frame')).contentFrame();
+ await archiveFrame.waitForSelector('a[href="reports/index.html"]');
+ assert((await archiveFrame.$eval('body',el=>el.textContent)).includes('notes.txt'));
+ assert.equal(await archiveFrame.$$eval("details[open]", nodes => nodes.length), 0);
+ await archiveFrame.click('[data-expand="true"]');
+ await Promise.all([archiveFrame.waitForNavigation({waitUntil:'load'}),archiveFrame.click('a[href="reports/index.html"]')]);
+ await archiveFrame.waitForSelector('#archive-report');
+ const retained=await page.evaluate(async url=>{
+  const response=await fetch(url);
+  return {status:response.status,bytes:Array.from(new Uint8Array(await response.arrayBuffer()))};
+ },`${B}/api/sites/${archiveSlug}/download?version=${archiveVersion}`);
+ assert.equal(retained.status,200);
+ assert.deepEqual(Buffer.from(retained.bytes),Buffer.from(archive));
+
+ console.log('Checking the current upload hint without historical task cards');
+ await page.goto(B+'/',{waitUntil:'domcontentloaded'});
+ assert.equal(await page.$('.package-upload-hint'),null);
+ await writeFile('test-results/subpath.zip',archive);
+ const archivePicker=await page.$('input[type="file"][accept*=".pdf"]');assert(archivePicker);
+ await archivePicker.uploadFile(new URL('../test-results/subpath.zip',import.meta.url).pathname);
+ await page.waitForSelector('dialog[open]');
+ await page.$eval('dialog[open] button.primary, dialog[open] button.solid',button=>button.click());
+ await page.waitForSelector('.package-upload-hint a[href="/artifact-site/me?tab=uploads"]');
+ assert.equal(await page.$('.package-tasks'),null);
+ await page.setViewport({width:1280,height:900});
+ await page.screenshot({path:'test-results/upload-hint-desktop.png',fullPage:true});
+ await page.setViewport({width:390,height:844});
+ await page.screenshot({path:'test-results/upload-hint-mobile.png',fullPage:true});
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Upload hint must fit narrow screens');
+ await page.setViewport({width:1280,height:900});
+ await page.click('.package-upload-hint a[href="/artifact-site/me?tab=uploads"]');
+ await page.waitForSelector('#me-tab-uploads[aria-selected="true"]');
+
+ console.log('Checking upload task tabs, unread receipts, retries and responsive layout');
+ const noticeJob=(versionId,status,attempts=3)=>({generation:'round-one',versionId,title:versionId==='ver_notice_running'?'项目资料.zip':versionId==='ver_notice_failed'?'VerifiedLab-Local (1).zip':'设计规范.zip',targetSlug:null,status,stage:status,attempts,retryable:true,expiresAt:Date.now()+3600000,processedFiles:0,totalFiles:null,...(status==='completed'?{result:{slug:archiveSlug,versionId:archiveVersion}}:{})});
+ let noticeJobs=[noticeJob('ver_notice_running','processing'),noticeJob('ver_notice_failed','failed'),noticeJob('ver_notice_completed','completed')];
+ let rejectRetry=true;
+ const taskRequests=req=>{
+  if(req.url()===B+'/api/uploads/jobs')return req.respond({status:200,contentType:'application/json',body:JSON.stringify({jobs:noticeJobs})});
+  if(req.url()===B+'/api/uploads/ver_notice_failed/retry'){
+   if(rejectRetry)return req.respond({status:503,contentType:'application/json',body:'{"error":"Temporary failure"}'});
+   noticeJobs=noticeJobs.map(job=>job.versionId==='ver_notice_failed'?{...job,status:'queued',stage:'queued',attempts:0,generation:'round-two'}:job);
+   return req.respond({status:202,contentType:'application/json',body:JSON.stringify(noticeJobs[1])});
+  }
+  return req.continue();
+ };
+ await page.setRequestInterception(true);page.on('request',taskRequests);
+ await page.goto(B+'/me',{waitUntil:'domcontentloaded'});
+ await page.waitForSelector('#me-tab-uploads .job-dot-failed');
+ assert.equal(await page.$('.package-tasks'),null,'Tasks must not precede the library');
+ const taskPeer=await browser.newPage();
+ await taskPeer.setRequestInterception(true);taskPeer.on('request',taskRequests);
+ await taskPeer.goto(B+'/me',{waitUntil:'domcontentloaded'});
+ await taskPeer.waitForSelector('#me-tab-uploads .job-dot-failed');
+ await page.bringToFront();
+ const tabLabels=await page.$$eval('.work-tabs > [role="tab"]',nodes=>nodes.map(node=>node.id));
+ assert(tabLabels.indexOf('me-tab-uploads')>tabLabels.indexOf('me-tab-recent'));
+ await page.click('#me-tab-uploads');
+ await page.waitForSelector('[data-job-id="ver_notice_failed"]');
+ await page.waitForSelector('#me-tab-uploads .job-dot-running');
+ await taskPeer.waitForSelector('#me-tab-uploads .job-dot-running');
+ await taskPeer.close();
+ assert(await page.$('[data-job-id="ver_notice_failed"] .job-dot-failed'),'Read failures retain their row status');
+ await page.click('[data-job-id="ver_notice_failed"] .package-task-actions button');
+ await page.waitForSelector('.package-task-error');
+ rejectRetry=false;
+ await page.click('[data-job-id="ver_notice_failed"] .package-task-actions button');
+ await page.waitForSelector('[data-job-id="ver_notice_failed"] .job-dot-running');
+ await page.click('#me-tab-owned');
+ noticeJobs=noticeJobs.map(job=>job.versionId==='ver_notice_failed'?{...job,status:'failed',stage:'failed',attempts:3}:job);
+ await page.evaluate(()=>window.dispatchEvent(new Event('package-job-submitted')));
+ await page.waitForSelector('#me-tab-uploads .job-dot-failed');
+ await page.click('#me-tab-uploads');
+ await page.waitForSelector('#me-tab-uploads .job-dot-running');
+ await page.reload({waitUntil:'domcontentloaded'});
+ await page.waitForSelector('#me-tab-uploads .job-dot-running');
+ await page.screenshot({path:'test-results/upload-tasks-desktop.png',fullPage:true});
+ await page.setViewport({width:390,height:844});
+ await page.screenshot({path:'test-results/upload-tasks-mobile.png',fullPage:true});
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Tasks must fit narrow screens');
+ await page.setViewport({width:1280,height:900});
+ await page.click('#me-tab-owned');
+ noticeJobs=noticeJobs.map(job=>job.status==='processing'?{...job,status:'completed',stage:'completed',result:{slug:archiveSlug,versionId:archiveVersion}}:job);
+ await page.evaluate(()=>window.dispatchEvent(new Event('package-job-submitted')));
+ await page.waitForSelector('#me-tab-uploads .job-dot-completed');
+ await page.click('#me-tab-uploads');
+ await page.waitForSelector('#me-tab-uploads .job-dot',{hidden:true});
+ page.off('request',taskRequests);await page.setRequestInterception(false);
+
  console.log('Checking browser UI upload and PDF resources under the subpath');
  await page.goto(B+'/',{waitUntil:'domcontentloaded'});
  await writeFile('test-results/migration.pdf',pdf());
@@ -440,7 +557,7 @@ try {
  assert.deepEqual(escaped,[],'B requests escaped its mount');assert.deepEqual(pageErrors,[],'Browser JavaScript errors');
  assert(discoveryRequests.has('/.well-known/oauth-authorization-server/artifact-site'));
  assert.equal((await fetch(`http://127.0.0.1:${appPort}/artifact-site/api/auth/me`)).status,200);
- console.log('PASS: canonical subpath, gateway redirects, login, edit/download, share unlock, UI upload/PDF, SDK OAuth/refresh and old-entry removal');
+ console.log('PASS: canonical subpath, gateway redirects, login, edit/download, share unlock, UI upload/PDF, async archive preview/original, SDK OAuth/refresh and old-entry removal');
 }finally{
  for(const client of clients)await client.close().catch(()=>{});
  if(browser){

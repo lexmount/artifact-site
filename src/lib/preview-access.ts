@@ -138,7 +138,7 @@ export async function authorizePreview(
   const independentlyReadable=(await readableVersionFilter(request,site,session))(versionId);
   const receipt=!independentlyReadable && !shareTokenFromRequest(request) ? await sessionReceiptShare(site,versionId,session):null;
   if(!independentlyReadable && !receipt)return null;
-  if (site.visibility !== "private" && await mainSharingActive(site) && !site.takenDownAt && versionId === site.currentVersionId && !share && await publicationPolicy.allowsVersion(site,versionId))
+  if (!version.packageMeta && site.visibility !== "private" && await mainSharingActive(site) && !site.takenDownAt && versionId === site.currentVersionId && !share && await publicationPolicy.allowsVersion(site,versionId))
     return { versionId, key: null };
   // Version filtering is side-effect free; this entry point owns the administrative read audit.
   const access = await readAccess(request, site, session);

@@ -39,12 +39,12 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     let text: string;
     if (file !== null) {
       await requirePermission(request, view.site, "site.source.export");
-      const files = await getStorage().list(view.site.id, view.version.id);
+      const files = await getStorage(view.version.packageMeta ? "package" : "website").list(view.site.id, view.version.id);
       if (!files.includes(file)) return json({ error: `file not found: ${file}` }, 404);
       if (!TEXT_FILE.test(file)) return json({ error: "not a text file; download it from the site instead", code: "not_text" }, 415);
       // One bounded range read: the cap holds even when the backend cannot say the size up front
       // (a failed probe must not fall open into a whole-file read of something 250 MB large).
-      const slice = await getStorage().readRange(view.site.id, view.version.id, file, 0, MAX_FILE_BYTES - 1);
+      const slice = await getStorage(view.version.packageMeta ? "package" : "website").readRange(view.site.id, view.version.id, file, 0, MAX_FILE_BYTES - 1);
       if (slice.total > MAX_FILE_BYTES) return json({ error: `file too large to return as text (over ${MAX_FILE_BYTES} bytes)` }, 413);
       text = new TextDecoder("utf-8", { fatal: false }).decode(slice.bytes);
     } else {

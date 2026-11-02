@@ -11,12 +11,12 @@ import { acceptPreviewCommentEvent } from "@/lib/comments/preview-channel";
 
 export type CommentMarker = { threadId: string; anchor: CommentAnchor };
 /** A new mount/load gets a fresh channel. The host retains all drafts and credentials. */
-export function useCommentPreview({ frameRef, scope, generation = 0 }: { frameRef: RefObject<HTMLIFrameElement | null>; scope: CommentScope; generation?: number }) {
+export function useCommentPreview({ frameRef, scope, generation = 0, packagePaths = false }: { frameRef: RefObject<HTMLIFrameElement | null>; scope: CommentScope; generation?: number; packagePaths?: boolean }) {
   const channel = useRef("");
   const beginNavigation = useRef<((path: string, waitForLoad?: boolean) => void) | null>(null);
   const active = useRef(false);
   const previousScope = useRef<string | null>(null);
-  const scopeKey = JSON.stringify(scope);
+  const scopeKey = JSON.stringify({ scope, packagePaths });
   const [readyScope, setReadyScope] = useState<string | null>(null);
   const selecting = useRef(false);
   const textSelection = useRef({ enabled: false, label: "" });
@@ -55,7 +55,7 @@ export function useCommentPreview({ frameRef, scope, generation = 0 }: { frameRe
       if (!parsed) return;
       if (parsed.event.type === "ready") {
         const path = parsed.event.filePath;
-        const canonical = path ? canonicalPreviewPath(path) : null;
+        const canonical = path ? canonicalPreviewPath(path, packagePaths) : null;
         if (!handshake?.accept(canonical)) return;
         acknowledgedPath.current = canonical; setCurrentFilePath(canonical);
         setReadyScope(scopeKey); setReady(true);
@@ -92,7 +92,7 @@ export function useCommentPreview({ frameRef, scope, generation = 0 }: { frameRe
       beginNavigation.current = null;
       handshake?.stop(); frame.removeEventListener("load", loaded); window.removeEventListener("message", receive);
     };
-  }, [frameRef, scope, scopeKey, send, generation]);
+  }, [frameRef, scope, scopeKey, send, generation, packagePaths]);
   const navigate = useCallback((url: string, targetPath: string, waitForLoad = false) => {
     const frame = frameRef.current;
     if (!frame) return;

@@ -62,3 +62,30 @@ it("does not unlock the payload when checking a previous operation fails", async
   await expect(failed).rejects.not.toBeInstanceOf(VersionUploadRejected);
   expect(request).toHaveBeenCalledTimes(1);
 });
+
+it("resumes retryable background processing without sending the files again", async () => {
+  const request = vi.fn<typeof fetch>(async (url, init) => {
+    if (String(url).endsWith("/api/auth/me")) return Response.json({ uploadLimits: { archiveMaxBytes: 104857600, packageUploads: 1 } });
+    if (String(url).endsWith("/retry")) return Response.json({ status: "queued", versionId: "draft" }, { status: 202 });
+    if (request.mock.calls.filter(([u]) => String(u) === "/api/uploads/draft").length === 1) return Response.json({ status: "failed", retryable: true, versionId: "draft" });
+    expect(init?.method).not.toBe("PUT");
+    return Response.json({ status: "completed", versionId: "draft", result: { versionId: "draft", slug: "same" } });
+  });
+  const processing = vi.fn();
+  const result = await uploadVersion({slug:"same",expected:"old",key:"key123456",files:[{path:"report.zip",file:new File(["zip"],"report.zip")}],official:false,session:"draft",processing}, request);
+  expect(result.versionId).toBe("draft"); expect(processing).toHaveBeenCalledWith(expect.objectContaining({ status: "completed" }));
+  expect(request.mock.calls.some(([u]) => String(u).endsWith("/retry"))).toBe(true);
+  expect(request.mock.calls.some(([,init]) => init?.method === "PUT")).toBe(false);
+});
+
+it.each([
+  [409, { error: "Conflict", code: "version_conflict", currentVersionId: "new" }, VersionConflict],
+  [422, { error: "Invalid archive" }, VersionUploadRejected],
+  [403, { error: "Quota", code: "quota_exceeded", details: { kind: "bytes", limit: 10, used: 9, requested: 2 } }, ClientQuotaExceeded],
+])("preserves asynchronous terminal error %i for dialog recovery", async (status, body, expectedError) => {
+  const request = vi.fn<typeof fetch>(async url => String(url).endsWith("/api/auth/me")
+    ? Response.json({ uploadLimits: { archiveMaxBytes: 104857600, packageUploads: 1 } })
+    : Response.json({ status: "failed", retryable: false, failure: { status, body } }));
+  await expect(uploadVersion({slug:"same",expected:"old",key:"key123456",files:[{path:"report.zip",file:new File(["zip"],"report.zip")}],official:false,session:"draft"},request)).rejects.toBeInstanceOf(expectedError);
+  expect(request.mock.calls.some(([,init]) => init?.method === "PUT")).toBe(false);
+});

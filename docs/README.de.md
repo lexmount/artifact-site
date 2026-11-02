@@ -209,3 +209,9 @@ Lizenziert nach Ihrer Wahl unter
 Sofern Sie nicht ausdrücklich etwas anderes erklären, wird jeder Beitrag, den Sie absichtlich zur Aufnahme in dieses Projekt einreichen, wie oben doppelt lizenziert, ohne zusätzliche Bedingungen.
 
 © 2025–2026 LexMount. Komponenten von Drittanbietern sind in [NOTICE](../NOTICE) aufgeführt.
+
+### Dateipakete
+
+Ordner- und ZIP/RAR/7z/TAR/TAR.GZ/TGZ-Uploads öffnen ein Dateiverzeichnis. HTML/HTM-Dateien werden per Klick in der Sandbox dargestellt. Archive sind standardmäßig auf 50 MiB komprimierte Größe begrenzt; die Originalbytes bleiben für Benutzer mit Quellcode-Exportberechtigung zum Download erhalten. Reine Leser dürfen das Paket nicht herunterladen. Ordner werden als ZIP exportiert, einschließlich leerer Verzeichnisse, sofern der Upload-Client sie erfassen kann. Bestehende Website-Versionen und ältere API-Modi behalten ihr Verhalten.
+
+[Details zu Bereitstellung und Archivlaufzeit](../SELFHOST.md#file-packages-and-the-archive-reader).

@@ -192,6 +192,12 @@ Then upload an HTML file in the browser (logging in first, or carrying a token, 
 | `make restore FROM=backups/<timestamp>` | Restore (stops the app first; the existing file directory is renamed and kept) |
 | `make psql` | Open the database |
 | `make upgrade` | `git pull` + rebuild the image + stop then start (when the server can build) |
+| `make upgradecn` | The same upgrade using the USTC Debian package mirror |
+
+`make upgradecn` switches only Debian package downloads during the build; GitHub, Node image
+and npm downloads keep their existing configuration. It preserves APT signature verification
+and the `.env` subpath settings, including `/artifact-site`, without patching deployment files.
+Mirrored security updates may lag behind the official source. `make upgrade` keeps the default sources.
 
 If the server cannot build the image, upgrading is: `make image` on the dev machine → copy the bundle → `make load FILE=…` → `make up`. The image name for that version must match `ARTIFACT_IMAGE` in `.env`.
 
@@ -625,3 +631,157 @@ acceptance, run `test/sharing-defaults.e2e.test.ts` with `SHARING_E2E_URL`,
 server/database. Set `ARTIFACT_ADMIN_EMAILS=sharing-admin@example.test` on both server and runner;
 use `E2E_CHROME` to override the Chrome executable. Screenshots are written under
 `output/sharing-acceptance/`.
+
+
+## File packages and the archive reader
+
+New browser folder uploads and ZIP/RAR/7z/TAR/TAR.GZ/TGZ uploads open a generated file directory.
+HTML/HTM entries render in the existing preview sandbox. Existing website versions and
+legacy `folder`/`zip` API requests retain their original entry behavior.
+
+The image includes a small resource-limited libarchive reader (`scripts/archive/reader.c`).
+For local development install libarchive headers/libraries (Debian: `libarchive-dev` and
+`gcc`; macOS: `brew install libarchive`), then run `sh scripts/archive/build.sh`.
+`ARTIFACT_ARCHIVE_READER` optionally overrides the executable path. The runtime must be
+available on every app replica. Keep libarchive security updates current when rebuilding.
+
+`ARTIFACT_ARCHIVE_MAX_BYTES` defaults to 104,857,600 bytes (100 MiB), independently of the
+inline request-body limit. Originals stream into version storage and remain available for
+whole-package export by authorized collaborators. Expanded content remains limited to
+300 MiB, 2,000 files, and 250 MiB per file; originals also count toward owner storage quota.
+
+New clients opt into durable processing using `POST /api/uploads/<id>/commit?async=1`.
+The response is 202 with a queued task; `GET /api/uploads/<id>` reports progress and a
+completed publication result. Each app process runs one background job at a time. Database
+leases coordinate replicas, reclaim interrupted jobs, and fence final publication. Transient
+failures retry up to three attempts; an owner can retry a retryable failure using
+`POST /api/uploads/<id>/retry`. Recovery expires six hours after the upload session starts.
+Old clients without the opt-in keep the synchronous commit response.
+
+Extraction writes validated files to a private temporary directory before remote uploads;
+Object-storage latency no longer consumes the native reader's 120-second wall timeout. The reader
+retains its 90-second CPU and Linux 768 MiB address-space limits. Provision temporary disk
+for the original plus expanded bytes per active extraction (up to two per replica including
+legacy synchronous requests). `ARTIFACT_PACKAGE_UPLOAD_CONCURRENCY` defaults to 4 (1–16).
+`ARTIFACT_PACKAGE_JOB_TIMEOUT_MS` defaults to 900000; the worker checks its deadline between
+processing stages and writes. Failed attempts retain the original for retry; expired sessions
+reclaim partial output. Configure gateway body limits to admit 100 MiB archive PUTs and
+existing large-file PUTs. New async commits do not wait for extraction or object-storage publication.
+
+TAR supports ordinary files/directories, POSIX PAX and GNU long names; `.tgz` is an
+alias of `.tar.gz`, with the original filename and bytes retained. A `./` root directory
+record is ignored. Gzip streams must contain TAR, not a single compressed file or another
+archive format. Gzip CRC/truncation validation is a separate bounded streaming pass before
+native extraction; it uses no complete decompressed buffer. It adds decompression CPU/I/O
+for gzip packages. The validation pass has a 120-second deadline and caps the TAR container
+at the content limit plus `maxFiles * 2 * 4096 + 1 MiB` for headers/padding; native extraction
+then applies the file/count/content limits and its own timeout. Excessive metadata/padding
+is rejected even when payload files are small. `.tar.bz2`, `.tar.xz` and standalone `.gz`
+are not supported.
+
+File packages retain ordinary hidden paths, `.git` and `node_modules`, including CLI directory
+uploads to package-capable servers. These are stored bytes: the server does not execute Git
+hooks, install dependencies or load uploaded modules. An explicit package storage mode is
+selected from upload-session/version metadata for Local and S3 storage, previews, exports,
+source reads and version copies. Default website storage and legacy CLI behavior remain unchanged.
+`.artifact-package` is reserved for platform data. Traversal, absolute/control-character paths,
+links/special entries, file/directory collisions and resource-limit violations are still rejected.
+Package previews remain manifest-gated, resource-type restricted and sandboxed; preserving a
+file does not grant individual download permission. Large dependency trees can still exceed
+configured file-count or size limits; they are not silently filtered to evade those limits.
+
+Encrypted, ZIP64, split-volume and special-file archives are unsupported. The decoder may reject
+unsupported compression variants; the failed draft is never published. Original downloads
+require `site.source.export`; ordinary readers cannot download the package. Source ZIP exports
+remain compatible, exclude generated system files, and preserve empty directory entries.
+Browser folder uploads remove the selected wrapper directory and filter known OS metadata;
+archive-internal directories are retained. Browser folder pickers may omit empty directories; drag-directory enumeration or an archive
+is required to preserve those entries. Archived originals retain filtered OS metadata unchanged.
+
+Run native-format acceptance with:
+
+```bash
+sh scripts/archive/build.sh
+ARCHIVE_INTEGRATION=1 npx vitest run test/package-archive.integration.test.ts test/publish-client-recovery.test.ts
+```
+
+Package HTML and CSS references resolve within their version's preview namespace. Relative
+JavaScript module imports use the module URL as usual. Application code that constructs
+absolute platform-root URLs (for example `fetch("/data.json")` or dynamic imports) must
+use package-relative URLs; the uploader does not rewrite JavaScript programs.
+
+### Resumable archive transfers
+
+Servers advertise `archiveChunks: 1` and `archiveChunkBytes` in `/api/auth/me`.
+Current browsers and CLI send original archives through sequential binary PUTs to
+`/api/uploads/:versionId/chunks?index=N&final=0|1` (at most 4 MiB each).
+MCP retains its 256 KiB decoded-message limit. Identical retries are safe; status returns
+accepted chunk byte counts and SHA-256 receipts. A final chunk seals the archive;
+commit queues assembly and extraction on the existing durable package worker.
+
+No new environment variables or migrations are required. Keep the existing archive,
+expanded-size, file-count and worker limits. The reverse proxy must allow requests of
+at least 4 MiB. Older clients can still PUT a complete original through the existing
+file endpoint, and newer clients fall back when a server does not advertise chunks.
+Temporary parts expire with their upload session and are removed after publication or
+cancellation. Budget temporary storage for both parts and the assembled original.
+
+### Diagnosing slow archive chunks
+
+Each HTTP `PUT /api/uploads/:versionId/chunks` emits one `[upload-timing]` JSON
+record, including failures. No setting is required. Match its `requestId` to the
+response's `X-Upload-Request-Id`; `versionId`, `index`, UTC `startedAt`, and an
+optional validated `cfRay` associate it with the upload and gateway logs. Logs do
+not contain credentials, SQL parameters, object keys or file contents.
+
+The response also includes `Server-Timing`, visible in browser network timings:
+
+| Metric | Meaning |
+| --- | --- |
+| `app` / log `totalMs` | Application handler elapsed time, until the response is constructed |
+| `auth` | Initial session and ownership lookup |
+| `body` | Reading and assembling the bounded request body, including waiting for bytes |
+| `receive` | Remaining permission checks, upload lease, object write and durable receipt |
+| `db` | Cumulative metadata-store calls, including pool/lock waits; nested calls counted once |
+| `db_pool`, `db_query` | PostgreSQL RBAC-query pool wait and query durations, a subset of `db` |
+| `cos` | S3-compatible/COS PutObject duration, including SDK retries |
+| `cos_retry_delay` | SDK-reported retry delay; log `calls.cos_attempts` records attempts |
+
+Stages overlap: `db` and `cos` can occur inside `auth`/`receive`. Do not add all
+metrics to calculate total time. Concurrent operations can also make cumulative
+measurements exceed wall time. Missing metrics mean the stage was not reached
+(or no COS/PostgreSQL operation of that type occurred).
+
+Compare browser total time with `app`: a large difference warrants checking the
+client-to-gateway path, proxy buffering/queues and response delivery. A large
+`body` can indicate slow incoming transfer. A large `db` suggests metadata access
+or lock waits; a large `cos` suggests the app-to-bucket path or SDK retries.
+Application code cannot measure time spent before the request reaches it and
+cannot distinguish client network time from gateway time by subtraction alone.
+For Nginx, correlate access-log `$request_time`, `$upstream_response_time` and
+`$upstream_http_x_upload_request_id`; for Cloudflare, correlate the `CF-Ray` value.
+Do not disable authentication or expose storage credentials to run comparisons.
+
+### Direct downloads
+
+The web download dialog requests a five-minute S3/COS signed URL for whole-version downloads,
+after the same source-export permission and version checks. The browser downloads directly
+from the private bucket; no public bucket or CORS setting is needed. The configured S3 endpoint
+must be reachable by the user's browser. Links are not persisted or logged, and issuance is
+non-cacheable. Anyone holding an issued link can use it until expiry, even if access is revoked
+in the meantime; subsequent link requests always recheck permissions. Administrative issuance
+retains the source-export audit event (it does not prove transfer completion).
+
+Retained archives use their original object. HTML sites, folders, documents and other artifacts
+keep their existing ZIP format: the first download builds a ZIP in the private `downloads/`
+namespace; subsequent downloads reuse that immutable version cache and issue a fresh URL.
+This cache uses additional object storage and is removed with its version/site; orphan scans
+include it. Bucket credentials must allow read/write/delete and listing for `downloads/` as
+well as `sites/`; bucket-wide policies need no change. It is never part of preview, source
+listings or version copies. Local storage retains the existing file-response fallback. Existing
+API clients still receive bytes from `/download`; `?delivery=direct` opts into a JSON URL response
+when available, otherwise the usual file response. Signed downloads use an isolated, sandboxed
+download context: they never navigate the editor/preview or trigger its unsaved-change guard.
+Storage error documents are contained there and show a retry message in the dialog. Once the
+attachment starts, transfer progress/errors belong to the browser downloads UI; clicking
+Download again obtains a fresh URL.

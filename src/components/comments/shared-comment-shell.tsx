@@ -7,7 +7,7 @@ import type { CommentWorkspaceProps } from "./comment-workspace";
 
 /** Reader chrome preserves the server-rendered artifact and header; comments stay in the host. */
 export default function SharedCommentShell({ children, header, comments }: {
-  children: ReactNode; header: ReactNode; comments: CommentWorkspaceProps;
+  children: ReactNode; header: ReactNode; comments: CommentWorkspaceProps & { packagePaths?: boolean };
 }) {
   const [barOpen, setBarOpen] = useState(true);
   const t = useT();

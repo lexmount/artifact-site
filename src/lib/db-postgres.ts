@@ -1,3 +1,4 @@
+import { uploadMetric } from "@/lib/upload-timing";
 import { publicDiscoverySql } from "@/lib/sharing-sql";
 import { listSharesQuery } from "@/lib/share-queries";
 import { migrateNumbered } from "@/lib/migrations";
@@ -506,6 +507,8 @@ export class PostgresStore implements MetadataStore {
     catch (error) { failure = error; throw error; }
     finally {
       const elapsed=performance.now()-started;
+      uploadMetric("db_pool", acquired-started);
+      uploadMetric("db_query", performance.now()-acquired);
       client.release(failure instanceof Error ? failure : undefined);
       if(config.perfLogMs>0 && elapsed>=config.perfLogMs) console.info("[performance]",JSON.stringify({operation:"db.query",durationMs:Math.round(elapsed),poolWaitMs:Math.round(acquired-started),queryMs:Math.round(performance.now()-acquired),waiting:this.pool.waitingCount}));
     }
@@ -700,8 +703,8 @@ export class PostgresStore implements MetadataStore {
 
   async insertVersion(input: InsertVersionInput): Promise<void> {
     await this.pool.query(
-      "INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-      [input.id, input.siteId, input.entry, input.fileCount, input.byteSize, input.source, Date.now()],
+      "INSERT INTO versions (id, site_id, entry, file_count, byte_size, source, created_at, package_meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [input.id, input.siteId, input.entry, input.fileCount, input.byteSize, input.source, Date.now(), input.packageMeta ? JSON.stringify(input.packageMeta) : null],
     );
   }
 

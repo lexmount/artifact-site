@@ -746,3 +746,57 @@ within those limits and reports `x-artifact-image-resized: true` on the upload r
 This status is transient; stored attachment dimensions describe the resulting image.
 
 Access inspection: `artifact_site_get_visibility`. Main access: `artifact_site_set_visibility`. Independent revocation: `artifact_site_revoke_share`.
+
+## Directory-first packages (capability `uploadLimits.packageUploads`)
+
+For a folder, open `POST /api/uploads` with `{"package":{"source":"folder","directories":["empty"]}}`.
+PUT each file as usual, preserving its path, then commit. The directory list preserves empty folders.
+Servers advertise `uploadLimits.packagePaths: 1` when packages accept hidden, `.git`, and
+`node_modules` paths. `packageUploads: 1` alone does not imply this support; older servers
+require clients to retain their legacy directory filtering.
+A one-file folder remains a package. For ZIP/RAR/7z/TAR/TAR.GZ/TGZ, open with
+`{"package":{"source":"archive","name":"report.7z"}}`, PUT the unchanged archive bytes to
+`/api/uploads/<versionId>/files/original`, then commit. The default compressed limit is 100 MiB;
+read `uploadLimits.archiveMaxBytes` from `/api/auth/me`. Archive PUTs are streamed, not multipart.
+A processing 409/503 can be retried; use the existing idempotency protocol for commit recovery.
+
+MCP `upload_start` accepts the same `package` object. `upload_write` can transfer archive bytes
+in its existing 256 KiB chunks under path `original`; commit only after the final chunk.
+New inline multi-file MCP publishes use folder packages. Legacy API modes remain compatible.
+
+The root is always a generated directory. HTML/HTM files render inside the sandbox; other files
+are listed without individual download actions. Whole-package downloads require
+`site.source.export`: `/api/sites/<slug>/download?version=<id>` returns the retained original
+archive or a ZIP for folder uploads. `/export` continues to return a source ZIP, excluding system
+assets. Do not edit generated pages or package files through `/edit`; replace the complete version.
+Existing versions are unchanged. Original archives count toward storage quota and are removed
+with their version. OS metadata excluded from the rendered tree remains in original downloads.
+
+### Asynchronous package publication
+
+For archive/folder sessions, servers advertising `uploadLimits.asyncPackages: 1` accept
+`POST /api/uploads/<versionId>/commit?async=1`. A 202 response means accepted, not published.
+Poll `GET /api/uploads/<versionId>` every few seconds until `status: completed`; use its
+`result` for the URL. Queued/processing tasks survive disconnects and server restarts.
+For `failed` with `retryable: true`, POST to `/api/uploads/<versionId>/retry` and keep
+polling; do not upload the same bytes again. Recovery lasts six hours from upload start.
+The CLI waits and reports stages; rerun the same command after disconnecting to resume.
+MCP publish/update returns the task; use `artifact_site_upload_status` and, when allowed,
+`artifact_site_upload_retry`. Perform requested sharing only after publication completes.
+Old servers/clients retain synchronous commit behavior when async support is absent.
+
+
+### Resumable archive bytes
+
+When `/api/auth/me` advertises `uploadLimits.archiveChunks === 1`, archive packages
+can use `PUT /api/uploads/{versionId}/chunks?index=0&final=0` with binary bodies up to
+`archiveChunkBytes` (4 MiB). Send indices sequentially; set `final=1` on the last part.
+Use `GET /api/uploads/{versionId}` to recover accepted `partialFiles[].chunks` byte
+counts and SHA-256 receipts. Verify the selected file's matching prefix before skipping
+accepted bytes. Replaying an identical part is safe; changing accepted bytes is rejected.
+The final part only seals the archive. Submit with `commit?async=1`, then poll processing
+status; assembly happens in the background before extraction. Existing whole-file PUTs
+remain supported, but should not be mixed with chunks in the same archive session.
+MCP `upload_write` keeps its 256 KiB message limit and `final:true`; archive assembly is
+also deferred until publish/update. CLI automatically resumes its journal; rerun the same
+command and operation key after a transfer interruption.

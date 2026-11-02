@@ -1,3 +1,5 @@
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { timeUpload, uploadMetric, uploadCount } from "@/lib/upload-timing";
 // S3/COS backend for the Storage interface. Objects live at sites/<siteId>/<versionId>/<relpath>.
 // Version trees are immutable, so reads are cached in-process (keyed by the full object key).
 // Preview never redirects to S3 — the route reads bytes through here and adds the sandbox CSP itself.
@@ -19,7 +21,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { config, limits } from "@/lib/config";
 import { BadRequestError } from "@/lib/errors";
-import { assertWithinLimits, safeRelativePath, StorageError, storageKey, type PathKind, type RangeSlice, type Storage, type StoredVersion } from "@/lib/storage";
+import { assertWithinLimits, safeRelativePath, StorageError, storageKey, type PathKind, type RangeSlice, type Storage, type StoredVersion, type StoragePathMode } from "@/lib/storage";
 import type { UploadFile } from "@/lib/types";
 
 const CONCURRENCY = 16;
@@ -107,13 +109,14 @@ export class S3Storage implements Storage {
   private readonly client: S3Client;
   private readonly bucket: string;
 
-  constructor() {
+  constructor(private readonly pathMode: StoragePathMode = "website") {
     const c = config.s3;
     if (!c.endpoint || !c.bucket || !c.accessKeyId || !c.secretAccessKey) {
       throw new Error("s3 driver needs ARTIFACT_S3_ENDPOINT / _BUCKET / _ACCESS_KEY_ID / _SECRET_ACCESS_KEY");
     }
     this.bucket = c.bucket;
     this.client = new S3Client({
+      ...(pathMode === "package" ? { requestHandler: { connectionTimeout: 10_000, requestTimeout: 60_000, throwOnRequestTimeout: true } } : {}),
       endpoint: c.endpoint,
       region: c.region,
       forcePathStyle: c.forcePathStyle,
@@ -147,11 +150,11 @@ export class S3Storage implements Storage {
   }
 
   async writeVersionFiles(siteId: string, versionId: string, files: readonly UploadFile[]): Promise<{ fileCount: number; byteSize: number }> {
-    const safe = files.map((file) => ({ relpath: safeRelativePath(file.relpath), bytes: file.bytes }));
+    const safe = files.map((file) => ({ relpath: safeRelativePath(file.relpath, this.pathMode), bytes: file.bytes }));
     assertWithinLimits(safe);
     try {
       await mapLimit(safe, CONCURRENCY, async (file) => {
-        const key = storageKey(siteId, versionId, file.relpath);
+        const key = storageKey(siteId, versionId, file.relpath, this.pathMode);
         await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: file.bytes }));
         cachePut(key, file.bytes);
       });
@@ -179,7 +182,7 @@ export class S3Storage implements Storage {
    * invisible in the object store, and become a permanent bill unless actively cleaned up.
    */
   async writeStreamToVersion(siteId: string, versionId: string, relpath: string, body: ReadableStream<Uint8Array>): Promise<number> {
-    const key = `${this.versionPrefix(siteId, versionId)}${safeRelativePath(relpath)}`;
+    const key = `${this.versionPrefix(siteId, versionId)}${safeRelativePath(relpath, this.pathMode)}`;
     const created = await this.client.send(new CreateMultipartUploadCommand({ Bucket: this.bucket, Key: key }));
     const uploadId = created.UploadId!;
     const parts: { ETag: string; PartNumber: number }[] = [];
@@ -222,16 +225,19 @@ export class S3Storage implements Storage {
   }
 
   async sizeOf(siteId: string, versionId: string, relpath: string): Promise<number | null> {
-    const key = `${this.versionPrefix(siteId, versionId)}${safeRelativePath(relpath)}`;
+    const key = `${this.versionPrefix(siteId, versionId)}${safeRelativePath(relpath, this.pathMode)}`;
     try {
       const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       return head.ContentLength ?? null;
-    } catch { return null; }
+    } catch (error) {
+      if (isNotFound(error)) return null;
+      throw error;
+    }
   }
 
   /** Range reads are passed straight through to object storage — it supports them natively, so there is no need to pull the whole object down and slice it. */
   async readRange(siteId: string, versionId: string, relpath: string, start: number, end: number): Promise<RangeSlice> {
-    const key = `${this.versionPrefix(siteId, versionId)}${safeRelativePath(relpath)}`;
+    const key = `${this.versionPrefix(siteId, versionId)}${safeRelativePath(relpath, this.pathMode)}`;
     let res;
     try {
       res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key, Range: `bytes=${start}-${end}` }));
@@ -248,12 +254,43 @@ export class S3Storage implements Storage {
     return { bytes, total };
   }
 
+  async exportDownloadUrl(siteId: string, versionId: string, filename: string, build: () => Promise<Uint8Array>): Promise<string> {
+    const key = `downloads/${safeRelativePath(siteId)}/${safeRelativePath(versionId)}/source.zip`;
+    try { await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key })); }
+    catch (error) {
+      if (!isNotFound(error)) throw error;
+      await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: await build(), ContentType: "application/zip" }));
+    }
+    return this.signDownload(key, filename, "application/zip");
+  }
+
+  async downloadUrl(siteId: string, versionId: string, relpath: string, filename: string, contentType: string): Promise<string> {
+    return this.signDownload(storageKey(siteId, versionId, relpath, this.pathMode), filename, contentType);
+  }
+
+  private async signDownload(key: string, filename: string, contentType: string): Promise<string> {
+    return getSignedUrl(this.client, new GetObjectCommand({
+      Bucket: this.bucket, Key: key,
+      ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      ResponseContentType: contentType, ResponseCacheControl: "private, no-store",
+    }), { expiresIn: 300 });
+  }
+
   async writeFileToVersion(siteId: string, versionId: string, relpath: string, bytes: Uint8Array): Promise<void> {
     if (bytes.byteLength > limits.maxFileBytes) {
       throw new BadRequestError(`file too large: ${relpath} (${bytes.byteLength} bytes > ${limits.maxFileBytes})`);
     }
-    const key = storageKey(siteId, versionId, relpath);
-    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: bytes }));
+    const key = storageKey(siteId, versionId, relpath, this.pathMode);
+    await timeUpload("cos", async () => {
+      try {
+        const result = await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: bytes }));
+        uploadCount("cos_attempts", result.$metadata?.attempts ?? 1);
+        uploadMetric("cos_retry_delay", result.$metadata?.totalRetryDelay ?? 0);
+      } catch (error) {
+        const metadata = (error as { $metadata?: { attempts?: number; totalRetryDelay?: number } })?.$metadata;
+        uploadCount("cos_attempts", metadata?.attempts ?? 1); uploadMetric("cos_retry_delay", metadata?.totalRetryDelay ?? 0); throw error;
+      }
+    });
     cachePut(key, bytes);
   }
 
@@ -263,7 +300,7 @@ export class S3Storage implements Storage {
     try {
       await mapLimit(objects, CONCURRENCY, async ({ key }) => {
         const rel = key.slice(fromPrefix.length);
-        const destKey = storageKey(toSiteId, toVersionId, rel);
+        const destKey = storageKey(toSiteId, toVersionId, rel, this.pathMode);
         // CopySource must be URL-encoded but keep the slashes; server-side copy (no download/upload).
         const source = `${this.bucket}/${key}`.split("/").map(encodeURIComponent).join("/");
         await this.client.send(new CopyObjectCommand({ Bucket: this.bucket, Key: destKey, CopySource: source }));
@@ -291,10 +328,12 @@ export class S3Storage implements Storage {
 
   async removeVersion(siteId: string, versionId: string): Promise<void> {
     await this.deletePrefix(this.versionPrefix(siteId, versionId));
+    await this.deletePrefix(`downloads/${safeRelativePath(siteId)}/${safeRelativePath(versionId)}/`);
   }
 
   async removeSite(siteId: string): Promise<void> {
     await this.deletePrefix(this.sitePrefix(siteId));
+    await this.deletePrefix(`downloads/${safeRelativePath(siteId)}/`);
   }
 
   async list(siteId: string, versionId: string): Promise<string[]> {
@@ -304,7 +343,7 @@ export class S3Storage implements Storage {
   }
 
   async stat(siteId: string, versionId: string, relpath: string): Promise<PathKind> {
-    const key = storageKey(siteId, versionId, relpath); // validates relpath
+    const key = storageKey(siteId, versionId, relpath, this.pathMode); // validates relpath
     try {
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       return "file";
@@ -319,7 +358,7 @@ export class S3Storage implements Storage {
   }
 
   async read(siteId: string, versionId: string, relpath: string): Promise<Uint8Array> {
-    const key = storageKey(siteId, versionId, relpath); // validates relpath
+    const key = storageKey(siteId, versionId, relpath, this.pathMode); // validates relpath
     const cached = cacheGet(key);
     if (cached) return cached;
     const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
@@ -330,21 +369,23 @@ export class S3Storage implements Storage {
   }
 
   async listStoredVersions(): Promise<StoredVersion[]> {
-    // One full scan of sites/, grouped by <siteId>/<versionId>, tracking the newest object mtime.
+    // Scan source trees and detached download caches, grouped by <siteId>/<versionId>, tracking the newest object mtime.
     const newest = new Map<string, number>();
-    let token: string | undefined;
-    do {
-      const res = await this.client.send(new ListObjectsV2Command({ Bucket: this.bucket, Prefix: "sites/", ContinuationToken: token }));
-      for (const obj of res.Contents ?? []) {
-        if (!obj.Key) continue;
-        const parts = obj.Key.split("/"); // sites / <siteId> / <versionId> / <relpath...>
-        if (parts.length < 4 || parts[0] !== "sites" || !parts[1] || !parts[2]) continue;
-        const groupKey = `${parts[1]}/${parts[2]}`;
-        const mtime = obj.LastModified ? obj.LastModified.getTime() : 0;
-        if (mtime > (newest.get(groupKey) ?? 0)) newest.set(groupKey, mtime);
-      }
-      token = res.IsTruncated ? res.NextContinuationToken : undefined;
-    } while (token);
+    for (const prefix of ["sites/", "downloads/"]) {
+      let token: string | undefined;
+      do {
+        const res = await this.client.send(new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, ContinuationToken: token }));
+        for (const obj of res.Contents ?? []) {
+          if (!obj.Key) continue;
+          const parts = obj.Key.split("/"); // sites / <siteId> / <versionId> / <relpath...>
+          if (parts.length < 4 || !["sites", "downloads"].includes(parts[0]) || !parts[1] || !parts[2]) continue;
+          const groupKey = `${parts[1]}/${parts[2]}`;
+          const mtime = obj.LastModified ? obj.LastModified.getTime() : 0;
+          if (mtime > (newest.get(groupKey) ?? 0)) newest.set(groupKey, mtime);
+        }
+        token = res.IsTruncated ? res.NextContinuationToken : undefined;
+      } while (token);
+    }
     return [...newest].map(([groupKey, newestMtime]) => {
       const slash = groupKey.indexOf("/");
       return { siteId: groupKey.slice(0, slash), versionId: groupKey.slice(slash + 1), newestMtime };

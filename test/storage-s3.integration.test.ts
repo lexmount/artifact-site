@@ -20,6 +20,35 @@ describe.skipIf(!live)("S3Storage — live COS round-trip", () => {
     if (live) await storage.removeSite(S).catch(() => {});
   });
 
+  it("downloads a private object through a signed attachment URL", async () => {
+    const bytes = u8("signed original archive");
+    await storage.writeFileToVersion(S, "ver_signed", "original.zip", bytes);
+    const url = await storage.downloadUrl(S, "ver_signed", "original.zip", "资料.zip", "application/zip");
+    const response = await fetch(url);
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(Buffer.from(bytes));
+    expect(response.headers.get("content-disposition")).toContain(encodeURIComponent("资料.zip"));
+    const unsigned = new URL(url); unsigned.search = "";
+    expect((await fetch(unsigned)).ok).toBe(false);
+  });
+
+  it("caches a version ZIP outside source listings and removes it with the version/site", async () => {
+    let builds = 0;
+    const build = async () => { builds++; return u8("cached ZIP"); };
+    const url = await storage.exportDownloadUrl(S, "ver_export", "site.zip", build);
+    await storage.exportDownloadUrl(S, "ver_export", "renamed.zip", build);
+    expect(builds).toBe(1);
+    expect(await (await fetch(url)).text()).toBe("cached ZIP");
+    expect(await storage.list(S, "ver_export")).toEqual([]);
+    expect((await storage.listStoredVersions()).some(v => v.siteId === S && v.versionId === "ver_export")).toBe(true);
+    await storage.removeVersion(S, "ver_export");
+    expect((await fetch(url)).status).toBe(404);
+    const again = await storage.exportDownloadUrl(S, "ver_export", "site.zip", build);
+    expect(builds).toBe(2);
+    await storage.removeSite(S);
+    expect((await fetch(again)).status).toBe(404);
+  });
+
   it("private comment images round-trip outside the version namespace", async () => {
     const id = `attachment-s3it-${Date.now()}`;
     try {
@@ -90,4 +119,19 @@ describe.skipIf(!live)("S3Storage — live COS round-trip", () => {
     await storage.removeSite(S);
     expect(await storage.stat(S, V2, "index.html")).toBe("missing");
   });
+});
+
+it.skipIf(!live)("package-mode S3 preserves repository paths through copy without relaxing website mode", async () => {
+  const storage = new S3Storage("package"), site = "site_s3_package_paths";
+  try {
+    for (const file of [".git/config", "node_modules/lib/style.css"]) {
+      await storage.writeFileToVersion(site, "ver_a", file, u8("data"));
+      expect((await storage.readRange(site, "ver_a", file, 0, 1)).total).toBe(4);
+      await expect(new S3Storage().read(site, "ver_a", file)).rejects.toThrow();
+    }
+    await storage.copyVersionTree(site, "ver_a", "ver_b");
+    expect(await storage.list(site, "ver_b")).toEqual([".git/config", "node_modules/lib/style.css"]);
+    expect(Buffer.from(await storage.read(site, "ver_b", ".git/config")).toString()).toBe("data");
+    await expect(storage.writeFileToVersion(site, "ver_b", "../escape", u8("x"))).rejects.toThrow();
+  } finally { await storage.removeSite(site); }
 });

@@ -170,9 +170,9 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     await shot("historical-editor");
     const downloadSelected = async (expected: string) => {
       await page.click('.editor-bar-right button[aria-label="More"]');
-      await clickText("Download this version (ZIP)");
+      await clickText("Download this version");
       await page.waitForSelector("dialog[open] button[type=submit]");
-      const download = page.waitForResponse(res => res.url().includes(`/api/sites/${slug}/export`));
+      const download = page.waitForResponse(res => res.url().includes(`/api/sites/${slug}/download`));
       await page.click("dialog[open] button[type=submit]");
       const response = await download;
       expect(response.status()).toBe(200);

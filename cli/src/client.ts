@@ -5,9 +5,14 @@ import { createHash } from "node:crypto";
 // The contract is the one documented for agents at /for-agents.md; response shapes are mirrored
 // here as interfaces so both front ends type-check against the same thing.
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { stat, open } from "node:fs/promises";
 import { Readable } from "node:stream";
 
+export interface PackageJob {
+  versionId: string; status: "queued" | "processing" | "failed" | "completed";
+  stage: string; processedFiles: number; totalFiles: number | null; retryable: boolean;
+  error?: string; result?: VersionResult;
+}
 export type SiteKind = "single" | "folder" | "document";
 export type SharePolicy = "public" | "login" | "people" | "email" | "passcode";
 
@@ -118,6 +123,26 @@ export class ArtifactSiteClient {
     return createHash("sha256").update(JSON.stringify([this.baseUrl, principal, this.tenantId, this.shareToken])).digest("hex");
   }
   operationStatus(key: string): Promise<{ status: "completed" | "running" | "retryable"; result?: VersionResult; expiresAt: number }> { return this.json("GET", `/api/operations/${enc(key)}`); }
+  packageStatus(versionId: string): Promise<PackageJob | { status: "uploading" }> { return this.json("GET", `/api/uploads/${enc(versionId)}`); }
+  retryPackage(versionId: string): Promise<PackageJob> { return this.json("POST", `/api/uploads/${enc(versionId)}/retry`); }
+  async waitForPackage(versionId: string, say: (line: string) => void = () => {}): Promise<VersionResult> {
+    let previous = "";
+    for (;;) {
+      const job = await this.packageStatus(versionId);
+      if (job.status === "uploading") throw new Error("Package has not been submitted for processing");
+      const line = `${job.stage}${job.totalFiles == null ? "" : ` ${job.processedFiles}/${job.totalFiles}`}`;
+      if (line !== previous) { say(line); previous = line; }
+      if (job.status === "completed" && job.result) return job.result;
+      if (job.status === "failed") throw new Error(`${job.error || "Package processing failed"}. Upload ID: ${versionId}. ${job.retryable ? "Run the same publish/update command to retry without uploading again." : "Correct the package and upload again."}`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+  async commitPackage(versionId: string, title?: string, expectedVersion?: string, official?: boolean, say?: (line: string) => void): Promise<VersionResult> {
+    const job = await this.json<PackageJob>("POST", `/api/uploads/${enc(versionId)}/commit`, { body: { title, official }, query: { async: "1", expected_version: expectedVersion } });
+    say?.(`Package accepted for processing. Upload ID: ${versionId}; closing the CLI does not cancel it.`);
+    if (job.status === "completed" && job.result) return job.result;
+    return this.waitForPackage(versionId, say);
+  }
   uploadStatus(versionId: string): Promise<{ files: { relpath: string; bytes: number; sha256?: string }[]; expiresAt: number }> { return this.json("GET", `/api/uploads/${enc(versionId)}`); }
 
   private readonly token: string | null;
@@ -233,7 +258,7 @@ export class ArtifactSiteClient {
 
   // ---- chunked upload (large trees, large PDFs) ----------------------------------------------
 
-  openUpload(opts: { title?: string; slug?: string } = {}): Promise<{ versionId: string }> {
+  openUpload(opts: { title?: string; slug?: string; package?: { source: "folder" | "archive"; name?: string; directories?: string[] } } = {}): Promise<{ versionId: string }> {
     return this.json("POST", "/api/uploads", { body: opts });
   }
   /** Streams one file from disk; nothing is buffered on either side. */
@@ -247,6 +272,40 @@ export class ArtifactSiteClient {
       } as RequestInit & { duplex: "half" });
     }, true);
     return this.parse(res);
+  }
+  async uploadArchiveChunks(versionId: string, filePath: string, progress?: (bytes: number, total: number) => void) {
+    const caps = await this.uploadLimits();
+    const chunkBytes = Math.min(caps.archiveChunkBytes || 4 * 1024 * 1024, 4 * 1024 * 1024);
+    const status = await this.json<{ partialFiles?: { path: string; sealed?: boolean; nextIndex: number; chunks: { bytes: number; sha256?: string }[] }[] }>("GET", `/api/uploads/${enc(versionId)}`);
+    const partial = status.partialFiles?.find(p => p.path === "original");
+    const file = await open(filePath, "r"); const size = (await file.stat()).size;
+    let offset = 0, index = 0;
+    try {
+      for (const chunk of partial?.chunks ?? []) {
+        const bytes = Buffer.alloc(chunk.bytes); const read = await file.read(bytes, 0, bytes.length, offset);
+        if (read.bytesRead !== bytes.length || !chunk.sha256 || createHash("sha256").update(bytes).digest("hex") !== chunk.sha256) throw new Error("The selected file differs from the staged upload; start a new operation");
+        offset += bytes.length; index++;
+      }
+      progress?.(offset, size);
+      if (partial?.sealed) { if (offset !== size) throw new Error("The selected file differs from the sealed upload"); return; }
+      do {
+        const bytes = Buffer.alloc(Math.min(chunkBytes, size - offset));
+        const read = await file.read(bytes, 0, bytes.length, offset);
+        if (read.bytesRead !== bytes.length) throw new Error("The file changed during upload");
+        const final = offset + bytes.length === size;
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await this.json("PUT", `/api/uploads/${enc(versionId)}/chunks?index=${index}&final=${final ? 1 : 0}`, { raw: bytes });
+            break;
+          } catch (error) {
+            // A lost connection may leave the original PUT holding the server lease briefly.
+            if (!(error instanceof ApiError && error.status === 409) || attempt >= this.retries) throw error;
+            await this.sleep(Math.min(8000, 1000 * 2 ** attempt));
+          }
+        }
+        offset += bytes.length; index++; progress?.(offset, size);
+      } while (offset < size);
+    } finally { await file.close(); }
   }
   uploadBytes(versionId: string, relpath: string, bytes: Uint8Array): Promise<{ relpath: string; bytes: number }> {
     return this.json("PUT", `/api/uploads/${enc(versionId)}/files/${relpath.split("/").map(encodeURIComponent).join("/")}`, { raw: bytes });
@@ -340,7 +399,7 @@ export class ArtifactSiteClient {
     try { body = text ? JSON.parse(text) : null; } catch { body = null; }
     const message = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string"
       ? (body as { error: string }).error
-      : res.status === 413 && !body ? "The request body was refused (413); check the gateway limit or use file uploads. The response did not confirm whether the application ran" : `HTTP ${res.status}`;
+      : res.status === 413 && !body ? "The request body was refused (413); check the gateway limit or use file uploads. The response did not confirm whether the application ran" : [408, 502, 503, 504, 524].includes(res.status) ? `Upload service unavailable or timed out (HTTP ${res.status}); rerun the same command to resume` : `HTTP ${res.status}`;
     return new ApiError(res.status, message, body);
   }
 
@@ -348,7 +407,11 @@ export class ArtifactSiteClient {
   private async withRetry(run: () => Promise<Response>, safe = false): Promise<Response> {
     let attempt = 0;
     for (;;) {
-      const res = await run();
+      let res: Response;
+      try { res = await run(); } catch (error) {
+        if (!safe || attempt >= this.retries) throw error;
+        attempt++; await this.sleep(Math.min(8000, 500 * 2 ** attempt)); continue;
+      }
       // Operator-token and anonymous uploads are bound to the server-issued browser identity.
       // Keep only that cookie, in memory, for subsequent requests to this deployment.
       for (const cookie of res.headers.getSetCookie()) {

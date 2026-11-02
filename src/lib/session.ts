@@ -1,3 +1,4 @@
+import { backgroundSession } from "@/lib/background-session";
 import { requestBase } from "@/lib/public-base";
 // Browser sessions. Stateful on purpose: "remove a collaborator" has to take effect immediately,
 // and a self-contained JWT cannot be un-issued. The row lives in Postgres, so any replica can
@@ -102,6 +103,14 @@ export function clearSessionCookie(request: Request, automatic = false): string 
  * most once per TOUCH_INTERVAL_MS so an active user stays logged in without a write per request.
  */
 export async function resolveSession(request: Request): Promise<Session | null> {
+  const background = backgroundSession(request);
+  if (background) {
+    const { assertSessionCurrent } = await import("@/lib/authorized-commit");
+    const { rbacQuery } = await import("@/lib/db");
+    // The publication commit rechecks under its lock; reuse that connection when nested.
+    await assertSessionCurrent(rbacQuery, background.session);
+    return background.session;
+  }
   // An OAuth access token (lib/oauth) folds into a session the same way a publish token does, with
   // two differences: it expires, and it carries what the person granted (`scopes`). A grant that
   // lacks the write scope may only READ, and the HTTP method is the cleanest line to draw that

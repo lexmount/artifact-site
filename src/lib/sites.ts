@@ -1,3 +1,4 @@
+import { isPackageInternal } from "@/lib/package-contract";
 import { appPath } from "@/lib/app-path";
 import { creationTenant } from "@/lib/rbac-access";
 // Verbs — the product's four actions over sites: create (upload), edit (new version),
@@ -138,6 +139,7 @@ export async function commitUploadedVersion(
   input: {
     session: { tenantId?: string; siteId: string; versionId: string; targetSlug?: string | null };
     entry: string;
+    packageMeta?: import("@/lib/package-contract").PackageMeta;
     title?: string;
     official?: boolean;
     expectedVersionId?: string;
@@ -147,7 +149,7 @@ export async function commitUploadedVersion(
   },
 ): Promise<{ slug: string; url: string; title: string; kind: SiteKind; versionId: string; visibility?: Visibility; editToken?: string; expiresAt?: number | null; officialVersionId?: string | null; officialRevision?: number }> {
   const { session, entry } = input;
-  const storage = getStorage();
+  const storage = getStorage(input.packageMeta ? "package" : "website");
   // Single PDF: the original has already streamed to its relpath under session.versionId; only the
   // generated index.html wrapper (a few KB) is written here, and the original is never read or
   // copied — a 250MB PDF is published exactly this way.
@@ -162,13 +164,15 @@ export async function commitUploadedVersion(
       await storage.writeFileToVersion(session.siteId, session.versionId, f.relpath, f.bytes);
     }
   }
-  const { fileCount, byteSize } = await storage.measureVersion(session.siteId, session.versionId);
-  if (!fileCount) throw new Error("No files were written");
+  const measured = await storage.measureVersion(session.siteId, session.versionId);
+  const { byteSize } = measured;
+  const fileCount = input.packageMeta ? input.packageMeta.files.length : measured.fileCount;
+  if (!fileCount && !input.packageMeta?.directories.length) throw new Error("No files were written");
   // The total gets its final verdict **here**. The gate at PUT time only sees its own snapshot of the
   // ledger: two concurrent requests can both see "room left", both pass, and both end up in storage —
   // only what measureVersion counts at commit is the bytes actually sitting there. Once thrown, the
   // route's catch reclaims the session together with its bytes, leaving no oversized half-product.
-  if (byteSize > limits.maxBytes) {
+  if (!input.packageMeta && byteSize > limits.maxBytes) {
     throw new BadRequestError(`The project is ${Math.round(byteSize / 1048576)}MB, over the limit (${Math.round(limits.maxBytes / 1048576)}MB)`);
   }
 
@@ -182,7 +186,7 @@ export async function commitUploadedVersion(
     // files were written under the correct prefix from the start; nothing needs moving here — and
     // nothing **may** be moved: a move would copy 300MB within storage, exactly what this path avoids.
     if (view.site.id !== session.siteId) throw new BadRequestError("upload session does not belong to this site");
-    const version: InsertVersionInput = { id: session.versionId, siteId: view.site.id, entry, fileCount, byteSize, source: "upload", official: input.official };
+    const version: InsertVersionInput = { id: session.versionId, siteId: view.site.id, entry, packageMeta: input.packageMeta, fileCount, byteSize, source: "upload", official: input.official };
     if (input.ctx) {
       // Same path as editSite: version, current pointer and audit row land in one transaction. Written
       // separately, a failed audit insert would leave the version already live — the "who changed it"
@@ -212,9 +216,9 @@ export async function commitUploadedVersion(
   const session_ = await resolveSession(request);
   await assertQuotaRoom(session_ ? { userId: session_.userId } : anonId ? { anonId } : null, { sites: 1, bytes: byteSize });
   const title = (input.title ?? "").trim()
-    || (input.document ? documentTitleOf(input.document.name) : entry.replace(/\.html?$/i, ""))
+    || (input.packageMeta ? input.packageMeta.archive?.name || "Files" : input.document ? documentTitleOf(input.document.name) : entry.replace(/\.html?$/i, ""))
     || "Untitled site";
-  const version: InsertVersionInput = { id: session.versionId, siteId: session.siteId, entry, fileCount, byteSize, source: "upload", official: input.official };
+  const version: InsertVersionInput = { id: session.versionId, siteId: session.siteId, entry, packageMeta: input.packageMeta, fileCount, byteSize, source: "upload", official: input.official };
   // Same audit path as createSite: a site built by chunked upload looks identical in the audit table to one from a one-shot upload.
   const audit = input.ctx ? auditRow(input.ctx, session.siteId, session.versionId, "create") : undefined;
   await insertSiteRetryingSlug(
@@ -364,11 +368,13 @@ export async function exportSiteZip(slug: string, versionId?: string): Promise<{
   if (!site || site.deletedAt) return null;
   const version = await getVersion(versionId ?? site.currentVersionId);
   if (!version || version.siteId !== site.id) return null;
-  const storage = getStorage();
+  const storage = getStorage(version.packageMeta ? "package" : "website");
   const entries: Record<string, Uint8Array> = {};
-  for (const relpath of await storage.list(site.id, version.id)) {
+  for (const relpath of version.packageMeta ? version.packageMeta.files.map(file => file.path) : await storage.list(site.id, version.id)) {
+    if (version.packageMeta && isPackageInternal(relpath)) continue;
     entries[relpath] = await storage.read(site.id, version.id, relpath);
   }
+  for (const directory of version.packageMeta?.directories ?? []) entries[`${directory}/`] = new Uint8Array();
   // level 6: the default speed/size balance; these trees are ≤50MB by upload limits.
   const bytes = zipSync(entries, { level: 6 });
   return { site, versionId: version.id, filename: `${site.slug}-${version.id}.zip`, bytes };
@@ -394,6 +400,7 @@ export async function editSite(
   if (site.kind === "document") throw new BadRequestError("Document sites cannot be edited online; re-upload the whole file with POST /api/sites/<slug>/versions to publish a new version");
   const current = await getVersion(baseVersionId ?? site.currentVersionId);
   if (!current || current.siteId !== site.id) return null;
+  if (current.packageMeta) throw new BadRequestError("File packages must be updated by uploading a complete new version");
   const versionId = createId("ver");
   let version: InsertVersionInput;
 
@@ -537,7 +544,7 @@ export async function forkSite(
   // version is recorded with — the pre-check used the source's stored size.
   await assertQuotaRoom(quotaOwnerFor(owner), { sites: 1, bytes: current.byteSize });
   // Copy the source's current snapshot into the fork's own site dir (cross-site copy).
-  await copyVersionTree(source.id, current.id, versionId, siteId);
+  await getStorage(current.packageMeta ? "package" : "website").copyVersionTree(source.id, current.id, versionId, siteId);
   const { fileCount, byteSize } = await measureVersion(siteId, versionId);
   try {
     await assertQuotaRoom(quotaOwnerFor(owner), { sites: 1, bytes: byteSize });
@@ -545,7 +552,7 @@ export async function forkSite(
     await removeVersion(siteId, versionId).catch(() => {});
     throw error;
   }
-  const version: InsertVersionInput = { id: versionId, siteId, entry: current.entry, fileCount, byteSize, source: "fork" };
+  const version: InsertVersionInput = { id: versionId, siteId, entry: current.entry, packageMeta: current.packageMeta, fileCount: current.packageMeta ? current.fileCount : fileCount, byteSize, source: "fork" };
   const audit = ctx ? { ...auditRow(ctx, siteId, versionId, "fork"), sourceSiteId: source.id } : undefined;
   // Take the stricter of the source's effective main access and the deployment default, and fix it
   // at INSERT time. Two reasons:
@@ -601,7 +608,7 @@ export async function rollbackTo(slug: string, versionId: string, ctx?: AuditCon
   // pre-checked on the stored size, settled on the measured copy.
   await assertQuotaRoom(quotaOwnerOf(site), { bytes: target.byteSize });
   const newVersionId = createId("ver");
-  await copyVersionTree(site.id, target.id, newVersionId);
+  await getStorage(target.packageMeta ? "package" : "website").copyVersionTree(site.id, target.id, newVersionId);
   const { fileCount, byteSize } = await measureVersion(site.id, newVersionId);
   try {
     await assertQuotaRoom(quotaOwnerOf(site), { bytes: byteSize });
@@ -610,7 +617,7 @@ export async function rollbackTo(slug: string, versionId: string, ctx?: AuditCon
     throw error;
   }
   const audit = ctx ? auditRow(ctx, site.id, newVersionId, "rollback") : undefined;
-  const ok = await addVersionAsCurrent(site.id, { id: newVersionId, siteId: site.id, entry: target.entry, fileCount, byteSize, source: "rollback" }, audit);
+  const ok = await addVersionAsCurrent(site.id, { id: newVersionId, siteId: site.id, entry: target.entry, packageMeta: target.packageMeta, fileCount: target.packageMeta ? target.fileCount : fileCount, byteSize, source: "rollback" }, audit);
   if (!ok) return null;
   scheduleTextIndex(site.id, newVersionId);
   return { site: (await getSite(site.id))!, version: (await getVersion(newVersionId))! };

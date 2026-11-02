@@ -25,6 +25,7 @@ export const mcpTools = [
   ["artifact_site_comment_result", "Link a comment result"],
   ["artifact_site_comment_context", "Read comment context"],
   ["artifact_site_operation_status", "Publication status"],
+  ["artifact_site_upload_retry", "Retry package processing"],
   ["artifact_site_upload_status", "Upload progress"],
   ["artifact_site_upload_start", "Start an upload"],
   ["artifact_site_upload_write", "Write upload content"],

@@ -1,3 +1,4 @@
+import { runNextPackageJob } from "@/lib/package-jobs";
 import { putUserSiteRole } from "@/lib/role-bindings";
 import { mcpTools } from "@/lib/mcp-tools";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -108,10 +109,14 @@ it("enforces streamed request bounds, token ownership and cancellation", async (
 it("rejects a stale chunked update at commit and preserves the newer contents", async () => {
   const a = await identity("alice"), ca = await connect(a.token);
   const published = await call(ca, "publish", { files: [{ path: "index.html", content: "<html>before</html>" }, { path: "a.txt", content: "a" }], share: false });
+  expect(published.data.status).toBe("queued");
+  await runNextPackageJob();
+  published.data = (await call(ca, "upload_status", { upload_id: published.data.versionId })).data.result;
   const slug = published.data.slug; const original = (await call(ca, "export", { slug })).data.versionId;
   const version_id = (await call(ca, "upload_start", { slug })).data.versionId;
   await call(ca, "upload_write", { upload_id: version_id, path: "index.html", final: true, index: 0, base64: Buffer.from("<html>stale</html>").toString("base64") });
-  expect((await call(ca, "edit", { slug, path: "index.html", content: "<html>newer</html>", expected_version: original })).error).toBe(false);
+  expect((await call(ca, "update", { slug, files: [{ path: "index.html", content: "<html>newer</html>" }, { path: "a.txt", content: "a" }], expected_version: original })).error).toBe(false);
+  await runNextPackageJob();
   const result = await call(ca, "update", { slug, upload_id: version_id, expected_version: original });
   expect(result.error).toBe(true); expect(result.data.error).toContain("Version conflict"); expect(result.data.code).toBe("version_conflict"); expect(result.data.currentVersionId).toBeTruthy();
   expect((await call(ca, "read", { slug, file: "index.html" })).data.text).toContain("newer");
@@ -630,11 +635,21 @@ it.each(["html", "multipart"])("recovers %s fallback publication and update thro
   try {
     const args = { ...content("a"), share: false, operation_key: `fallback-create-${format}` };
     const created = await call(c, "publish", args); expect(created.error).toBe(false);
+    if (format === "multipart") {
+      expect(created.data.status).toBe("queued");
+      expect((await call(c, "publish", args)).data.versionId).toBe(created.data.versionId);
+      await runNextPackageJob();
+      created.data = (await call(c, "upload_status", { upload_id: created.data.versionId })).data.result;
+    }
     const { slug, versionId } = created.data;
     expect((await call(c, "operation_status", { key: args.operation_key })).data.result).toEqual(created.data);
     expect((await call(c, "publish", args)).data).toEqual(created.data);
     const update = { slug, ...content("b"), expected_version: versionId, operation_key: `fallback-update-${format}` };
     const updated = await call(c, "update", update); expect(updated.error).toBe(false);
+    if (format === "multipart") {
+      expect(updated.data.status).toBe("queued"); await runNextPackageJob();
+      updated.data = (await call(c, "upload_status", { upload_id: updated.data.versionId })).data.result;
+    }
     expect(updated.data.slug).toBe(slug); expect(updated.data.versionId).not.toBe(versionId);
     expect((await call(c, "operation_status", { key: update.operation_key })).data.result.versionId).toBe(updated.data.versionId);
     expect((await call(c, "update", update)).data.versionId).toBe(updated.data.versionId);
@@ -980,4 +995,36 @@ it("HTTP and MCP preserve read results, mutation errors, and CAS conflicts", asy
   const conflict = await POST(request(owner.token, "POST", { content: "stale" }, `/edit?expected_version=${created.versionId}`), context);
   expect(conflict.status).toBe(409);
   await expect(callApi(source(owner.token), "edit", { slug: created.slug, body: { content: "stale" }, query: { expected_version: created.versionId } })).rejects.toMatchObject({ statusCode: 409, data: await conflict.json() });
+});
+
+it("does not publish a queued package after its personal token is revoked", async () => {
+  const person = await identity("async-revoked"), c = await connect(person.token);
+  const queued = await call(c, "publish", { files: [{ path: "notes.txt", content: "private" }], share: false });
+  expect(queued.data.status).toBe("queued");
+  expect((await revoke(new Request(`${origin}/api/me/tokens/${person.id}`, { method: "DELETE", headers: person.headers }), { params: Promise.resolve({ id: person.id }) })).status).toBe(200);
+  await runNextPackageJob();
+  const { rbacQuery } = await import("@/lib/db");
+  expect((await rbacQuery("SELECT state,retryable FROM package_jobs WHERE version_id=$1", [queued.data.versionId]))[0]).toMatchObject({ state: "failed", retryable: 0 });
+  expect(await rbacQuery("SELECT id FROM versions WHERE id=$1", [queued.data.versionId])).toHaveLength(0);
+});
+it("revalidates an edit share for queued package updates", async () => {
+  const a = await identity("async-share-owner"), b = await identity("async-share-editor");
+  const owner = await connect(a.token), editor = await connect(b.token);
+  const created = await call(owner, "publish", { files: [{ path: "index.html", content: "<h1>Original</h1>" }, { path: "notes.txt", content: "original" }], share: false });
+  await runNextPackageJob();
+  created.data = (await call(owner, "upload_status", { upload_id: created.data.versionId })).data.result;
+  const slug = created.data.slug;
+  const shared = await call(owner, "share", { slug, policy: "login", mode: "edit" });
+  const args = { slug, share_token: shared.data.token, files: [{ path: "notes.txt", content: "updated" }], expected_version: created.data.versionId };
+  const queued = await call(editor, "update", args); expect(queued.data.status).toBe("queued");
+  await runNextPackageJob();
+  const finished = await call(editor, "upload_status", { upload_id: queued.data.versionId, share_token: shared.data.token });
+  expect(finished.data.status).toBe("completed");
+  const next = await call(editor, "update", { ...args, expected_version: finished.data.result.versionId });
+  expect(next.data.status).toBe("queued");
+  const { rbacQuery, getSiteBySlug } = await import("@/lib/db");
+  expect((await call(owner, "revoke_share", { slug, share_id: shared.data.share.id })).error).toBe(false);
+  await runNextPackageJob();
+  expect((await rbacQuery("SELECT state,retryable FROM package_jobs WHERE version_id=$1", [next.data.versionId]))[0]).toMatchObject({ state: "failed", retryable: 0 });
+  expect((await getSiteBySlug(slug))!.currentVersionId).toBe(finished.data.result.versionId);
 });

@@ -1,3 +1,4 @@
+import { packageJobContext, recordPackageJobResult } from "@/lib/package-job-context";
 import { appPath, localPath } from "@/lib/app-path";
 import { requirePermission } from "@/lib/authz";
 import { checkRateLimit, withRateLimitChecked } from "@/lib/ratelimit";
@@ -16,11 +17,21 @@ import type { NextResponse } from "next/server";
 
 export const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const LEASE_MS = 5 * 60 * 1000;
-type Active = { id: string; lease: string; status: number; edit: boolean };
-const active = new AsyncLocalStorage<Active>();
+export type ActiveOperation = { id: string; lease: string; status: number; edit: boolean };
+const active = new AsyncLocalStorage<ActiveOperation>();
+export const currentPublishOperation = () => active.getStore();
+export const withBackgroundOperation = <T>(operation: ActiveOperation | undefined, work: () => Promise<T>) => operation ? active.run(operation, work) : work();
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 export class OperationError extends Error {
   constructor(message: string, readonly code: string, readonly statusCode = 409) { super(message); }
+}
+/** An accepted durable job retains its operation lease even if the response is lost. */
+async function releaseUnqueuedOperation(owner: string, id: string, lease: string) {
+  await rbacTransaction(async q => {
+    const jobs = await q("SELECT payload FROM package_jobs WHERE owner_key=$1 AND expires_at>$2", [owner, Date.now()]);
+    if (jobs.some(job => { const operation = JSON.parse(String(job.payload)).operation; return operation?.id === id && operation.lease === lease; })) return;
+    await q("UPDATE publish_operations SET lease_until=0 WHERE id=$1 AND lease=$2 AND state='running'", [id, lease]);
+  });
 }
 function failure(message: string, code: string, statusCode = 409) { return new OperationError(message, code, statusCode); }
 
@@ -41,16 +52,18 @@ export async function recordOperationResult(q: RbacQuery, body: unknown): Promis
   // Do not expose this before COMMIT: the outer wrapper reads the durable row again.
 }
 export async function recordPublishedVersion(q: RbacQuery, siteId: string, versionId: string, created = false): Promise<void> {
-  if (!active.getStore()) return;
+  if (!active.getStore() && !packageJobContext.getStore()) return;
   const [row] = await q("SELECT * FROM sites WHERE id=$1", [siteId]);
   const site = toSite(row);
   const version = active.getStore()?.edit ? toVersion((await q("SELECT * FROM versions WHERE id=$1", [versionId]))[0]) : undefined;
-  await recordOperationResult(q, {
+  const result = {
     slug: site.slug, url: `/s/${site.slug}`, title: site.title, kind: site.kind, versionId,
     ...(created ? { visibility: site.visibility } : {}),
     ...(version ? { version } : { officialVersionId: site.officialVersionId, officialRevision: site.officialRevision }),
     ...(created && !site.ownerId && site.editToken ? { editToken: site.editToken } : {}), ...(!version ? { expiresAt: anonymousExpiresAt(site) } : {}),
-  });
+  };
+  await recordPackageJobResult(q, result);
+  await recordOperationResult(q, result);
 }
 
 async function fingerprint(request: Request, bytes: Uint8Array): Promise<string> {
@@ -111,12 +124,12 @@ export async function withPublishOperation(request: Request, run: (request: Requ
     try {
       const response = await active.run({ id, lease, status, edit: url.pathname.endsWith("/edit") }, () => withRateLimitChecked(() => run(replayable)));
       const [row] = await rbacQuery("SELECT * FROM publish_operations WHERE id=$1", [id]);
-      if (row?.state === "completed") return response;
+      if (row?.state === "completed" || response.status === 202) return response;
       // A rejected transaction has no published result. Retain the fingerprint but allow recovery.
-      await rbacQuery("UPDATE publish_operations SET lease_until=0 WHERE id=$1 AND lease=$2 AND state='running'", [id, lease]);
+      await releaseUnqueuedOperation(owner, id, lease);
       return response;
     } catch (error) {
-      await rbacQuery("UPDATE publish_operations SET lease_until=0 WHERE id=$1 AND lease=$2 AND state='running'", [id, lease]);
+      await releaseUnqueuedOperation(owner, id, lease);
       throw error;
     }
   } catch (error) {

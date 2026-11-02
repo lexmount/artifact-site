@@ -13,7 +13,6 @@ export const versionUpload = {
   "New version published": "新版本已发布",
   "Choose the complete new version": "选择完整的新版本内容",
   "{count} files selected": "已选择 {count} 个文件",
-  "Choose file / ZIP": "选择文件 / ZIP",
   "Choose folder": "选择文件夹",
   "This replaces the complete content. Old files missing from this upload will not be included.": "本次上传将替换完整内容，缺少的旧文件不会带入新版本。",
   "A newer version was published while you were choosing files. Review it before continuing.": "选择文件期间已有新版本发布，请查看后再继续。",

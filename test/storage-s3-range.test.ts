@@ -43,3 +43,14 @@ it("writes normalized PNG and JPEG attachment MIME metadata",async()=>{
     expect(input).toMatchObject({Key:"comment-attachments/cat_image",ContentType:mime,Body:bytes});
   }
 });
+
+it("signs a private attachment URL for five minutes without fetching the object", async () => {
+  const storage = new S3Storage("package");
+  const url = new URL(await storage.downloadUrl("s", "v", ".artifact-package/original", "资料.zip", "application/zip"));
+  expect(url.searchParams.get("X-Amz-Expires")).toBe("300");
+  expect(url.searchParams.get("X-Amz-Signature")).toBeTruthy();
+  expect(url.searchParams.get("response-content-disposition")).toBe(`attachment; filename*=UTF-8''${encodeURIComponent("资料.zip")}`);
+  expect(url.searchParams.get("response-cache-control")).toBe("private, no-store");
+  expect(url.pathname).toContain("sites/s/v/.artifact-package/original");
+  await expect(storage.downloadUrl("s", "v", "../escape", "x", "application/zip")).rejects.toThrow();
+});

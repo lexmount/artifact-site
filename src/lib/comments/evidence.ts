@@ -16,8 +16,8 @@ export function commentHtmlText(html: string): string {
 /** Derived from immutable stored bytes, not a client context object. Call after read authorization. */
 export async function prepareCommentEvidence(site: Site, version: Version, anchor: CommentAnchor): Promise<CommentContext> {
   if (version.siteId !== site.id) throw new CommentEvidenceError("Version does not belong to site");
-  const filePath = safeRelativePath(anchor.filePath);
-  const storage = getStorage();
+  const filePath = safeRelativePath(anchor.filePath, version.packageMeta ? "package" : "website");
+  const storage = getStorage(version.packageMeta ? "package" : "website");
   const size = await storage.sizeOf(site.id, version.id, filePath);
   if (size === null) throw new CommentEvidenceError("Comment file does not exist");
   const ext = path.extname(filePath).toLowerCase();

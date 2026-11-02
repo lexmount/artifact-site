@@ -5,6 +5,11 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Browse uploaded folders and ZIP/RAR/7z/TAR packages as file directories, with sandboxed previews and authorized original downloads.
+- Process packages in recoverable background jobs; resume archive chunks across browser, CLI and MCP uploads and inspect progress in Upload tasks.
+- Trace upload timings and support authorized S3 downloads with consistent range handling.
+- Add `make upgradecn` for upgrades using the USTC Debian package mirror.
+
 - Browse shared collections by folder, with permission-filtered counts, search and links that preserve the selected folder through sign-in.
 - Add automatic OIDC sign-in and explicit account switching. Respect local sign-out, preserve return destinations, and protect the selected account from delayed login responses.
 - Distinguish access denial, missing sites and missing versions, with sign-in, retry and account-switch actions that preserve the original URL.

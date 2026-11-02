@@ -1,3 +1,6 @@
+import { packageLocationBootstrap } from "@/lib/package-navigation";
+import { packageHtml, packageCss } from "@/lib/package-preview";
+import { PACKAGE_ENTRY } from "@/lib/package-contract";
 import { appPath } from "@/lib/app-path";
 // Serve — the read path for GET /api/preview/:slug/:path*, the vetted security core.
 // Guards (all preserved from the legacy audit): safeRelativePath, resolveInside, dotfile-segment
@@ -103,9 +106,9 @@ function injectAfterHead(html: string, fragment: string): string {
   return `${fragment}${html}`;
 }
 
-export function injectPreviewBootstrap(html: string, baseHref: string, filePath = "index.html", documentMode = false, targetOrigin = config.publicUrl ? new URL(config.publicUrl).origin : "*"): string {
+export function injectPreviewBootstrap(html: string, baseHref: string, filePath = "index.html", documentMode = false, targetOrigin = config.publicUrl ? new URL(config.publicUrl).origin : "*", previewRoot = baseHref, packagePaths = false): string {
   const base = `<base href="${escapeAttribute(appPath(baseHref))}">`;
-  return injectAfterHead(html, `${base}${storageShim}${previewNavigationBootstrap()}${selectionBootstrap(targetOrigin)}${commentPreviewBootstrap(filePath, targetOrigin, documentMode)}`);
+  return injectAfterHead(html, `${base}${storageShim}${previewNavigationBootstrap()}${selectionBootstrap(targetOrigin)}${commentPreviewBootstrap(filePath, targetOrigin, documentMode, appPath(previewRoot), packagePaths)}`);
 }
 
 /**
@@ -163,6 +166,7 @@ export function withConnectSrcMeta(html: string, connectSrc: readonly string[]):
 
 const contentTypes: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
@@ -322,33 +326,42 @@ export async function servePreviewFile(
     version = pinned;
   }
   if (!version) return jsonResponse(404, { error: "site has no current version" });
-  const storage = getStorage();
+  const resourceCsp = version.packageMeta ? PREVIEW_SANDBOX_CSP.replace(" allow-downloads", "") : PREVIEW_SANDBOX_CSP;
+  const htmlCsp = version.packageMeta ? composePreviewCsp(config.cspConnectSrc).replace(" allow-downloads", "") : composePreviewCsp(config.cspConnectSrc);
+  const storage = getStorage(version.packageMeta ? "package" : "website");
   try {
     let relative = subpath?.length ? subpath.join("/") : version.entry;
-    relative = safeRelativePath(relative);
-    if (relative.split("/").some((part) => part.startsWith("."))) throw new Error("dotfiles are not served");
+    relative = safeRelativePath(relative, version.packageMeta ? "package" : "website");
+    // Packages admit hidden resources only through the manifest and extension checks below.
+    if (!version.packageMeta && relative.split("/").some((part) => part.startsWith("."))) throw new Error("dotfiles are not served");
     let target = relative;
     if ((await storage.stat(site.id, version.id, target)) === "directory") target = `${relative}/index.html`;
     let kind = await storage.stat(site.id, version.id, target);
     // Extensionless unknown path → serve the entry (client-routed apps). Missing asset → 404.
-    if (kind !== "file" && !path.extname(relative)) {
+    if (!version.packageMeta && kind !== "file" && !path.extname(relative)) {
       target = version.entry;
       kind = await storage.stat(site.id, version.id, target);
     }
     if (kind !== "file") return jsonResponse(404, { error: "file not found" });
     const extension = path.extname(target).toLowerCase();
+    if (version.packageMeta) {
+      if (download) return jsonResponse(403, { error: "Individual package downloads are not supported" });
+      if (target !== PACKAGE_ENTRY && !version.packageMeta.files.some(file => file.path === target)) return jsonResponse(404, { error: "file not found" });
+      if (pdfNavigation && !/\.html?$/i.test(target) && !(imageViewer && /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(target))) return jsonResponse(415, { error: "This file cannot be previewed" });
+      if (target !== PACKAGE_ENTRY && !/\.(html?|css|m?js|json|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|mp[34]|mov|m4a|webm|ogg|wav|wasm)$/i.test(target)) return jsonResponse(415, { error: "This package file is not a preview resource" });
+    }
     if (pdfNavigation && extension === ".pdf" && !download && !(site.kind === "document" && target.startsWith("original/"))) {
       return { status: 200, body: injectPreviewBootstrap(bundledPdfViewer(target, thumbnail), baseHref, target, true, targetOrigin), headers: {
         "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store",
-        "content-security-policy": composePreviewCsp(config.cspConnectSrc), "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...PREVIEW_CORS_HEADER,
+        "content-security-policy": htmlCsp, "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...PREVIEW_CORS_HEADER,
       } };
     }
     if (imageViewer && /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(extension)) {
       const imagePath = target.split("/").map(encodeURIComponent).join("/");
       const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f5f1}img{max-width:100%;max-height:100vh;object-fit:contain}</style></head><body><img src="${escapeAttribute(imagePath)}" alt=""></body></html>`;
-      return { status: 200, body: injectPreviewBootstrap(html, baseHref, target, false, targetOrigin), headers: {
+      return { status: 200, body: injectPreviewBootstrap(version.packageMeta ? injectAfterHead(html, packageLocationBootstrap(false, targetOrigin)) : html, baseHref, target, false, targetOrigin, baseHref, Boolean(version.packageMeta)), headers: {
         "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store",
-        "content-security-policy": composePreviewCsp(config.cspConnectSrc), "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...PREVIEW_CORS_HEADER,
+        "content-security-policy": htmlCsp, "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...PREVIEW_CORS_HEADER,
       } };
     }
 
@@ -376,7 +389,7 @@ export async function servePreviewFile(
         const mediaHeaders: Record<string, string> = {
           "content-type": contentTypes[extension] || "application/octet-stream",
           "cache-control": "public, max-age=60",
-          "content-security-policy": PREVIEW_SANDBOX_CSP,
+          "content-security-policy": resourceCsp,
           "referrer-policy": "no-referrer",
           "x-content-type-options": "nosniff",
           // Without this the browser never sends a Range at all -- it first needs to hear us say "supported".
@@ -408,19 +421,28 @@ export async function servePreviewFile(
 
     // storage.read re-applies the guards and (for local) the symlink/realpath containment.
     const raw = await storage.read(site.id, version.id, target);
-    const isHtml = extension === ".html";
+    const isHtml = extension === ".html" || (Boolean(version.packageMeta) && extension === ".htm");
     let html = isHtml ? Buffer.from(raw).toString("utf8") : "";
+    // Apply the current default to platform-generated directories from older immutable uploads.
+    if (isHtml && version.packageMeta && target === PACKAGE_ENTRY) html = html.replace(/<details open>/g, "<details>");
     // Document viewer wrappers are regenerated with the CURRENT template on every serve: the
     // wrapper is platform chrome frozen into an immutable version, and without this a document
     // uploaded before a viewer improvement would never receive it. See refreshDocumentWrapper.
     if (isHtml && site.kind === "document" && target === version.entry) {
       html = refreshDocumentWrapper(html, thumbnail) ?? html;
     }
-    const body = isHtml ? injectPreviewBootstrap(html, baseHref, target, site.kind === "document" && target === version.entry, targetOrigin) : raw;
+    let contentBase = version.packageMeta && target !== PACKAGE_ENTRY ? baseHref + target.split("/").slice(0, -1).map(encodeURIComponent).join("/") + (target.includes("/") ? "/" : "") : baseHref;
+    if (version.packageMeta && target !== PACKAGE_ENTRY && isHtml) {
+      const prepared = packageHtml(html, target, appPath(baseHref)); html = prepared.html;
+      // injectPreviewBootstrap applies appPath itself.
+      contentBase = prepared.base;
+    }
+    if (isHtml && version.packageMeta) html = injectAfterHead(html, packageLocationBootstrap(target === PACKAGE_ENTRY, targetOrigin));
+    const body = isHtml ? injectPreviewBootstrap(html, contentBase, target, site.kind === "document" && target === version.entry, targetOrigin, baseHref, Boolean(version.packageMeta)) : version.packageMeta && extension === ".css" ? packageCss(Buffer.from(raw).toString("utf8"), appPath(contentBase), appPath(baseHref)) : raw;
     const headers: Record<string, string> = {
       "content-type": contentTypes[extension] || "application/octet-stream",
       "cache-control": isHtml ? "no-store" : "public, max-age=60",
-      "content-security-policy": isHtml ? composePreviewCsp(config.cspConnectSrc) : PREVIEW_SANDBOX_CSP,
+      "content-security-policy": isHtml ? htmlCsp : resourceCsp,
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
       // Even when returning the whole file, tell the client "you may ask by range later": pdf.js looks at exactly this header to decide whether to switch to range mode.

@@ -31,7 +31,8 @@ export async function writeCommitAudit(q: RbacQuery, audit: InsertAuditInput, no
 }
 
 async function insertVersion(q: RbacQuery, siteId: string, version: InsertVersionInput, now: number): Promise<void> {
-  await q("INSERT INTO versions(id,site_id,entry,file_count,byte_size,source,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [version.id, siteId, version.entry, version.fileCount, version.byteSize, version.source, now]);
+  if (version.packageMeta) await (await import("@/lib/package-processing")).assertPackageLease(q);
+  await q("INSERT INTO versions(id,site_id,entry,file_count,byte_size,source,created_at,package_meta) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [version.id, siteId, version.entry, version.fileCount, version.byteSize, version.source, now, version.packageMeta ? JSON.stringify(version.packageMeta) : null]);
 }
 
 async function finishPublication(q: RbacQuery, site: Site, version: InsertVersionInput, context: PublicationContext, now: number, creating: boolean): Promise<void> {
