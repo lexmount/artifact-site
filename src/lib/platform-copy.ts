@@ -8,6 +8,6 @@
 /** The platform's own copy (English source; translated at render time). Exported so the pages a
  *  READER lands on can assert they never inherit it. */
 export const platformCopy = {
-  title: "artifact-site — turn your work into a link to share and collaborate",
-  description: "Upload it and it is online. Pages, reports, dashboards — all become links you can share and edit in place.",
+  title: "artifact-site — manage your agent’s work and collaborate",
+  description: "Manage your agent’s pages, reports and documents. Share a link, discuss with your collaborators, and let an agent keep improving the work.",
 } as const;

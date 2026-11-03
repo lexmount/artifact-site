@@ -1,19 +1,28 @@
 import { z } from "zod";
 export const sharingPolicySchema = z
   .object({
-    audience: z.enum(["private", "tenant", "login", "anyone", "public"]),
+    audience: z.enum(["private", "tenant", "login", "anyone", "public", "passcode"]),
     comments: z.boolean(),
   })
   .strict();
+export const inheritedSharingPolicySchema = sharingPolicySchema.refine(p => p.audience !== "passcode", "Passcodes are configured per artifact");
 export type SharingPolicy = z.infer<typeof sharingPolicySchema>;
 export type SharingSource = "default" | "manual" | "folder" | "all";
 export const AUDIENCE_LABELS: Record<SharingPolicy["audience"], string> = {
-  private: "Only me",
-  tenant: "Members of each document's tenant",
-  login: "All signed-in users",
+  private: "Private",
+  passcode: "People with the passcode",
+  tenant: "Members of this organization",
+  login: "Users who are signed in",
   anyone: "Anyone",
   public: "Public (listed in Home — Discover sites)",
 };
+export function canSelectOrganization(userTenantId: string | null | undefined, siteTenantId?: string): boolean {
+  const real = (id: string | null | undefined) => Boolean(id && !["init", "anonymous"].includes(id));
+  return real(userTenantId) && (siteTenantId === undefined || real(siteTenantId));
+}
+export function accessAudiences(organization: boolean, passcode = false): Exclude<SharingPolicy["audience"], "public">[] {
+  return ["private", ...(organization ? ["tenant" as const] : []), "login", ...(passcode ? ["passcode" as const] : []), "anyone"];
+}
 export interface SharingState {
   policy: SharingPolicy;
   source: SharingSource;
@@ -40,8 +49,14 @@ export interface SharingPreview {
   applied?: boolean;
   pending?: number;
 }
+export interface ScopePreview extends SharingPreview {
+  scope: { enabled: boolean; revision: number };
+  requiresConfirmation: boolean;
+}
 export interface ScopeSettings {
+  canSelectOrganization: boolean;
   enabled: boolean;
+  revision: number;
   policy: SharingPolicy;
   url: string | null;
   name: string;

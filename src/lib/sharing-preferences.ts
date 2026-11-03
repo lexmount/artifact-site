@@ -1,7 +1,7 @@
 // Account and tenant defaults apply to future documents; existing documents keep their snapshot.
 import "server-only";
 import { rbacQuery, rbacTransaction } from "@/lib/db";
-import { sharingPolicySchema, type SharingPolicy } from "@/lib/sharing-policy";
+import { inheritedSharingPolicySchema, type SharingPolicy } from "@/lib/sharing-policy";
 import { assertSessionCurrent } from "@/lib/authorized-commit";
 import { memberRole, requireTenantManager, recordRbacAudit } from "@/lib/rbac-access";
 import { fail, sharingSession } from "@/lib/sharing-common";
@@ -28,7 +28,7 @@ export async function setSharingPreference(
   tenant = false,
 ) {
   const session = await sharingSession(request, true);
-  const parsed = input === null ? null : sharingPolicySchema.parse(input);
+  const parsed = input === null ? null : inheritedSharingPolicySchema.parse(input);
   return rbacTransaction(async (q) => {
     await assertSessionCurrent(q, session);
     if (tenant) await requireTenantManager(request, tenantId);

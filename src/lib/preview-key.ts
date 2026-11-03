@@ -89,6 +89,7 @@ export interface PreviewGrant {
   editTokenHash?: string;
   operator?: string;
   receiptShareId?: string;
+  mainPasscodeId?: string;
 }
 export async function mintScopedPreviewKey(
   site: Site,

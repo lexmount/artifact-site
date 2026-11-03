@@ -1,3 +1,4 @@
+import type { HTTPRequest, Page } from "puppeteer-core";
 import { putTenantAdmin } from "@/lib/role-bindings";
 // Final-image acceptance against a disposable Postgres shared with the server.
 // scripts/test-image.sh supplies both RBAC_E2E_URL and ARTIFACT_DATABASE_URL.
@@ -6,6 +7,12 @@ import type { Browser } from "puppeteer-core";
 import { closeDbForTests, createId, rbacQuery, upsertUser } from "@/lib/db";
 import { mintSession } from "@/lib/session";
 
+
+async function chooseAudience(page: Page, value: string) {
+  const selector = `.sharing-audiences input[type=radio][value="${value}"]:not(:disabled)`;
+  await page.waitForSelector(selector);
+  await page.locator(selector).click();
+}
 const base = process.env.RBAC_E2E_URL;
 let browser: Browser;
 async function actor() {
@@ -217,12 +224,14 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         expect(await page.content()).not.toContain(initial.secret);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       }
-      await page.locator("#set-auditRetentionDays").fill("90");
+      const previousRetention = await page.$eval("#set-auditRetentionDays", el => (el as HTMLInputElement).value);
+      const nextRetention = previousRetention === "90" ? "91" : "90";
+      await page.locator("#set-auditRetentionDays").fill(nextRetention);
       const savedRetention = page.waitForResponse(r => r.url().endsWith("/api/admin/settings") && r.request().method() === "PUT");
       await page.locator('button::-p-text(Save changes)').click();
       expect((await savedRetention).status()).toBe(200);
       await page.reload({ waitUntil: "networkidle0" });
-      expect(await page.$eval("#set-auditRetentionDays", el => (el as HTMLInputElement).value)).toBe("90");
+      expect(await page.$eval("#set-auditRetentionDays", el => (el as HTMLInputElement).value)).toBe(nextRetention);
       await page.locator('button::-p-text(Rotate preview key)').click();
       const response = page.waitForResponse(r => r.url().endsWith("/api/admin/preview-key") && r.request().method() === "POST");
       await page.locator('button::-p-text(Confirm rotation)').click();
@@ -276,31 +285,93 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         await context.close();
       }
     });
-    it("exchanges a stored anonymous receipt only when opening the artifact", async () => {
+    it.each(["list", "grid"])("exchanges a stored anonymous receipt when opening Share from the %s view and the artifact", async (view) => {
       const created = await (await api("/api/sites", "", "POST", {mode:"paste",html:"<html><title>Anonymous navigation</title></html>"})).json();
       const context = await browser.createBrowserContext();
-      const page = await context.newPage();
-      await page.setViewport({width:1440,height:900});
-      await page.setExtraHTTPHeaders({"accept-language":"en-US"});
-      await page.goto(base!, {waitUntil:"domcontentloaded"});
-      await page.evaluate(({slug,editToken}) => localStorage.setItem(`sites:editToken:${slug}`,editToken),created);
-      await page.goto(`${base}/me`, {waitUntil:"networkidle0"});
-      const selector = `a[href="/s/${created.slug}"]:not([aria-hidden])`;
-      await page.waitForSelector(selector);
-      expect((await context.cookies()).some(c => c.name.endsWith("ah_edit"))).toBe(false);
-      // No creator cookie exists in this browser. The link must exchange the receipt before SSR.
-      const sharing = await fetch(`${base}/api/sites/${created.slug}/sharing`, {method:"PUT",headers:{"x-edit-token":created.editToken,"content-type":"application/json"},body:JSON.stringify({visibility:"private"})});
-      expect(sharing.status).toBe(200);
-      const exchanged = page.waitForResponse(r => r.url().endsWith(`/api/sites/${created.slug}/permissions`) && r.request().method() === "POST");
-      await page.locator(selector).click();
-      expect((await exchanged).status()).toBe(200);
-      await page.waitForSelector('button[title="Click to rename"]').catch(async error => {
-        await page.screenshot({path:"test-results/anonymous-navigation-failure.png"});
-        throw new Error(`${String(error)}; url=${page.url()}; body=${(await page.$eval("body",el=>el.textContent))?.slice(0,500)}`);
-      });
-      expect(page.url()).toBe(`${base}/s/${created.slug}`);
-      expect((await context.cookies()).filter(c => c.name.endsWith("ah_edit"))).toHaveLength(1);
-      await context.close();
+      try {
+        const page = await context.newPage();
+        await page.setViewport({width:1440,height:900});
+        await page.setExtraHTTPHeaders({"accept-language":"en-US"});
+        await page.goto(base!, {waitUntil:"domcontentloaded"});
+        await page.evaluate(({slug,editToken}) => localStorage.setItem(`sites:editToken:${slug}`,editToken),created);
+        await page.goto(`${base}/me`, {waitUntil:"networkidle0"});
+        const selector = `a[href="/s/${created.slug}"]:not([aria-hidden])`;
+        await page.waitForSelector(selector);
+        if (view === "grid") await page.click('button[aria-label="Grid view"]');
+        expect((await context.cookies()).some(c => c.name.endsWith("ah_edit"))).toBe(false);
+        // No matching creator or receipt cookie exists. Listing must not mint one for every artifact.
+        let attempts = 0;
+        let heldExchange: HTTPRequest | undefined;
+        const sharingResponses: number[] = [];
+        await page.setRequestInterception(true);
+        page.on("request", request => {
+          if (request.url().endsWith(`/api/sites/${created.slug}/permissions`) && request.method() === "POST") {
+            attempts++;
+            if (attempts === 1) { heldExchange = request; return; }
+            if (attempts === 2) { void request.abort("failed"); return; }
+          }
+          void request.continue();
+        });
+        page.on("response", response => {
+          if (response.request().method() === "GET" && ["sharing", "main-sharing"].some(path => new URL(response.url()).pathname.endsWith(`/api/sites/${created.slug}/${path}`))) sharingResponses.push(response.status());
+        });
+        const trigger = view === "list" ? `.site-row[data-slug="${created.slug}"] .row-more` : '.artifact-card button[aria-haspopup="menu"]';
+        await page.waitForSelector(trigger);
+        await page.click(trigger);
+        await page.waitForFunction(() => [...document.querySelectorAll('[role="menu"]:not([hidden]) [role="menuitem"]')].some(el => el.textContent?.trim() === "Share"));
+        const exchangeStarted = page.waitForRequest(request => request.url().endsWith(`/api/sites/${created.slug}/permissions`) && request.method() === "POST", { timeout: 5000 });
+        await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"]:not([hidden]) button')].find(el => el.textContent?.trim() === "Share")!.click());
+        await exchangeStarted;
+        await page.waitForSelector('.directory-sharing-opening', { timeout: 5000 });
+        expect(attempts).toBe(1);
+        expect(await page.$('.sharing-dialog')).toBeNull();
+        expect(sharingResponses).toEqual([]);
+        // Repeated clicks cannot start a second exchange while the first is pending.
+        await page.click(trigger);
+        expect(await page.$eval('[role="menu"]:not([hidden]) button[aria-haspopup="dialog"]', el => (el as HTMLButtonElement).disabled)).toBe(true);
+        await page.keyboard.press("Escape");
+        await heldExchange!.respond({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary exchange failure" }) });
+        await page.waitForSelector('.directory-sharing-error');
+        expect(await page.$('.directory-sharing-opening')).toBeNull();
+        expect(await page.$('.sharing-dialog')).toBeNull();
+        expect((await context.cookies()).some(c => c.name.endsWith("ah_edit"))).toBe(false);
+        // Both HTTP and network failures are recoverable from the directory.
+        await page.click('.directory-sharing-error button');
+        await page.waitForFunction(() => document.querySelector('.directory-sharing-error') && !document.querySelector('.directory-sharing-opening'));
+        expect(attempts).toBe(2);
+        expect(await page.$('.sharing-dialog')).toBeNull();
+        await page.click('.directory-sharing-error button');
+        await page.waitForSelector('.sharing-dialog:modal .sharing-copy-button:not([disabled])');
+        expect(attempts).toBe(3);
+        expect(sharingResponses.length).toBeGreaterThanOrEqual(2);
+        expect(sharingResponses.every(status => status === 200)).toBe(true);
+        expect(page.url()).toBe(`${base}/me`);
+        expect((await context.cookies()).filter(c => c.name.endsWith("ah_edit"))).toHaveLength(1);
+        const comments = await page.$eval('input[id$="-comments"]', el => (el as HTMLInputElement).checked);
+        await page.click('input[id$="-comments"]');
+        await page.waitForFunction(() => document.querySelector('.sharing-status')?.textContent === 'Sharing settings updated');
+        const saved = await fetch(`${base}/api/sites/${created.slug}/main-sharing`, { headers: { "x-edit-token": created.editToken } });
+        expect(saved.status).toBe(200);
+        expect((await saved.json()).policy.comments).toBe(!comments);
+        await page.waitForSelector('.sharing-dialog-head button[aria-label="Close"]:not([disabled])');
+        await page.click('.sharing-dialog-head button[aria-label="Close"]');
+        await page.waitForSelector('.sharing-dialog', { hidden: true });
+        expect(await page.$eval(trigger, el => document.activeElement === el)).toBe(true);
+        // Cookie eviction still leaves the existing artifact-opening path recoverable.
+        await context.deleteCookie(...(await context.cookies()).filter(c => c.name.endsWith("ah_edit")));
+        if (view === "grid") await page.click('button[aria-label="List view"]');
+        const sharing = await fetch(`${base}/api/sites/${created.slug}/sharing`, {method:"PUT",headers:{"x-edit-token":created.editToken,"content-type":"application/json"},body:JSON.stringify({visibility:"private"})});
+        expect(sharing.status).toBe(200);
+        const exchanged = page.waitForResponse(r => r.url().endsWith(`/api/sites/${created.slug}/permissions`) && r.request().method() === "POST");
+        await page.locator(selector).click();
+        expect((await exchanged).status()).toBe(200);
+        await page.waitForSelector('button[title="Click to rename"]').catch(async error => {
+          await page.screenshot({path:"test-results/anonymous-navigation-failure.png"});
+          throw new Error(`${String(error)}; url=${page.url()}; body=${(await page.$eval("body",el=>el.textContent))?.slice(0,500)}`);
+        });
+        expect(page.url()).toBe(`${base}/s/${created.slug}`);
+        expect((await context.cookies()).filter(c => c.name.endsWith("ah_edit"))).toHaveLength(1);
+      } finally { await context.close(); }
     });
     it("manages global and individual grants in the authorization console", async () => {
       const owner=await actor(), member=await actor();
@@ -375,10 +446,11 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
           const page = await context.newPage();
           await page.setViewport({width:1440,height:1000});
           await page.goto(`${base}/s/${created.slug}`, {waitUntil:"domcontentloaded"});
+          await page.waitForFunction(()=>performance.getEntriesByType('resource').some(entry=>entry.name.includes('/sharing?summary=1')));
           await page.waitForSelector('button[data-analytics-button="share"]');
           await page.click('button[data-analytics-button="share"]');
-          await page.waitForSelector('.sharing-advanced-entry .sharing-navigation:not([disabled])');
-          await page.click('.sharing-advanced-entry .sharing-navigation');
+          await page.waitForSelector('.sharing-links-entry:not([disabled])');
+          await page.click('.sharing-links-entry');
           await page.waitForSelector(`${selector} a`);
           await page.waitForFunction(() => document.getAnimations().every(animation => animation.playState !== "running"));
           expect(await page.$eval(`${selector} a`, e => ({href:(e as HTMLAnchorElement).href,title:e.getAttribute("title"),target:e.getAttribute("target"),text:e.textContent}))).toEqual({href:share.url,title:share.url,target:"_blank",text:share.url});
@@ -421,6 +493,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
     it("saves visibility without retired edit-policy controls or fields", async () => {
       const owner = await actor();
       const created = await (await api("/api/sites",owner.cookie,"POST",{mode:"paste",html:"<html><title>Clean sharing</title></html>"})).json();
+      expect((await api(`/api/sites/${created.slug}/main-sharing`,owner.cookie,"PUT",{action:"custom",policy:{audience:"anyone",comments:true}})).status).toBe(200);
       const context = await browser.createBrowserContext();
       const [name,value] = owner.cookie.split("=");
       await context.setCookie({name,value,domain:new URL(base!).hostname,path:"/"});
@@ -428,13 +501,14 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.setViewport({width:1280,height:900});
       await page.setExtraHTTPHeaders({"accept-language":"en-US"});
       await page.goto(`${base}/s/${created.slug}`,{waitUntil:"domcontentloaded"});
+      await page.waitForFunction(()=>performance.getEntriesByType('resource').some(entry=>entry.name.includes('/sharing?summary=1')));
       await page.waitForSelector('button[data-analytics-button="share"]');
       await page.click('button[data-analytics-button="share"]');
-      await page.waitForSelector('.sharing-main-policy select:not([disabled])');
+      await page.waitForSelector('.sharing-audiences input[type=radio]:not(:disabled)');
       expect(await page.$('#share-policy')).toBeNull();
-      await page.select('.sharing-main-policy select','private');
-      await page.click('.scope-form-actions .solid');
-      await page.waitForFunction(()=>document.querySelector('.sharing-dialog')?.textContent?.includes('Access updated'));
+      await chooseAudience(page, 'private');
+      if (await page.$('.sharing-confirmation:modal')) await page.click('.sharing-confirmation footer button[type="submit"]');
+      await page.waitForFunction(()=>document.querySelector('.sharing-status')?.textContent === 'Sharing settings updated');
       const saved = await (await api(`/api/sites/${created.slug}/sharing`,owner.cookie)).json();
       expect(saved.visibility).toBe('private');
       expect(saved).not.toHaveProperty('editPolicy');

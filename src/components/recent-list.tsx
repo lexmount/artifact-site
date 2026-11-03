@@ -9,6 +9,7 @@ import ProgressivePreview from "@/components/progressive-preview";
 import Link from "next/link";
 import SiteLink from "@/components/site-link";
 import MoreMenu from "@/components/more-menu";
+import { ArrowUpRight, Link2, Trash2 } from "lucide-react";
 import { kindLabel } from "@/components/artifact-card";
 import { VisibilityCell } from "@/components/my-sites";
 import type { RecentShelf } from "@/components/recent-sites";
@@ -61,9 +62,9 @@ export default function RecentList({ shelf }: { shelf: RecentShelf }) {
             <span className="row-date" data-label={t("Viewed")}>{relTime(visitedAt, t, locale)}</span>
             <span className="row-menu-wrap">
               <MoreMenu label={t("Actions for {title}", { title: s.title })} iconOnly buttonClassName="row-more" buttonContent="⋯">
-                <SiteLink slug={s.slug} role="menuitem" className="menu-item" href={href}>{t("Open")}</SiteLink>
-                <button type="button" role="menuitem" className="menu-item" onClick={() => void copyRecentLink(href)}>{t("Copy link")}</button>
-                <button type="button" role="menuitem" className="menu-item" onClick={() => shelf.remove(s.slug)}>{t("Remove from history")}</button>
+                <SiteLink slug={s.slug} role="menuitem" className="menu-item" href={href}><ArrowUpRight size={14} aria-hidden="true" />{t("Open")}</SiteLink>
+                <button type="button" role="menuitem" className="menu-item" onClick={() => void copyRecentLink(href)}><Link2 size={14} aria-hidden="true" />{t("Copy link")}</button>
+                <button type="button" role="menuitem" className="menu-item" onClick={() => shelf.remove(s.slug)}><Trash2 size={14} aria-hidden="true" />{t("Remove from history")}</button>
               </MoreMenu>
             </span>
           </div>

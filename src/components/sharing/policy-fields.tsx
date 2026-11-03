@@ -1,83 +1,48 @@
 "use client";
 import { useId } from "react";
+import { Building2, ChevronDown, Globe, LockKeyhole, Users } from "lucide-react";
 import { useT } from "@/components/locale-provider";
-import { AUDIENCE_LABELS, type SharingPolicy } from "@/lib/sharing-policy";
+import { accessAudiences, AUDIENCE_LABELS, type SharingPolicy } from "@/lib/sharing-policy";
+import SharingHelp from "./sharing-help";
+import { MAIN_ACCESS_HINTS } from "./main-sharing-model";
+
 export function PolicySummary({ policy }: { policy: SharingPolicy }) {
   const t = useT();
-  return (
-    <>
-      {t(AUDIENCE_LABELS[policy.audience])}
-      {policy.audience !== "private" && <> · {t(policy.comments ? "Can comment" : "Can view")}</>}
-    </>
-  );
+  return <>{t(AUDIENCE_LABELS[policy.audience])}{policy.audience !== "private" && <> · {t(policy.comments ? "Can comment" : "Can view")}</>}</>;
 }
-export default function PolicyFields({
-  value,
-  onChange,
-  disabled = false,
-  includePublic = false,
-}: {
+
+export default function PolicyFields({ value, onChange, disabled = false, includePublic = false, includeOrganization = true }: {
   value: SharingPolicy;
   onChange: (p: SharingPolicy) => void;
   disabled?: boolean;
   includePublic?: boolean;
+  includeOrganization?: boolean;
 }) {
-  const t = useT(),
-    id = useId();
-  return (
-    <div className="scope-policy-fields">
-      <label htmlFor={id}>{t("Who can access")}</label>
-      <select
-        id={id}
-        value={value.audience}
-        disabled={disabled}
-        onChange={(e) =>
-          onChange({
-            ...value,
-            audience: e.target.value as SharingPolicy["audience"],
-          })
-        }
-      >
-        {(
-          [
-            "private",
-            "tenant",
-            "login",
-            "anyone",
-            ...(includePublic || value.audience === "public" ? ["public"] : []),
-          ] as SharingPolicy["audience"][]
-        ).map((a) => (
-          <option key={a} value={a}>
-            {t(AUDIENCE_LABELS[a])}
-          </option>
-        ))}
+  const t = useT(), id = useId();
+  const unavailable = value.audience === "tenant" && !includeOrganization;
+  const Icon = value.audience === "private" ? LockKeyhole : value.audience === "tenant" ? Building2 : value.audience === "login" ? Users : Globe;
+  const hint = value.audience === "tenant" ? "Access is checked against each artifact's organization."
+    : value.audience === "public" ? "Anyone can open this artifact directly with the link, and also see it in Discover."
+    : MAIN_ACCESS_HINTS[value.audience];
+  return <div className="scope-policy-fields">
+    <label htmlFor={id}>{t("Who can access through this link")}</label>
+    <div className="scope-audience-select">
+      <Icon size={18} aria-hidden="true"/>
+      <select id={id} value={unavailable ? "" : value.audience} disabled={disabled} aria-describedby={`${id}-hint`}
+        onChange={e => onChange({ ...value, audience: e.target.value as SharingPolicy["audience"] })}>
+        {unavailable && <option value="" disabled>{t("Choose access")}</option>}
+        {[...accessAudiences(includeOrganization), ...(includePublic || value.audience === "public" ? ["public" as const] : [])].map(audience =>
+          <option key={audience} value={audience}>{t(AUDIENCE_LABELS[audience])}</option>)}
       </select>
-      {value.audience === "tenant" && (
-        <p>
-          {t("Each document is visible only to members of its own tenant.")}
-        </p>
-      )}
-      {value.audience === "login" && (
-        <p>{t("Includes signed-in accounts from other tenants.")}</p>
-      )}
-      <div className="scope-toggle">
-        <label htmlFor={id + "comments"}>{t("Allow comments")}</label>
-        <input
-          id={id + "comments"}
-          role="switch"
-          type="checkbox"
-          checked={value.comments}
-          disabled={disabled || value.audience === "private"}
-          onChange={(e) => onChange({ ...value, comments: e.target.checked })}
-        />
-      </div>
-      <p>
-        {t(
-          value.comments
-            ? "Readers can see comments. Sign in to post."
-            : "New comments and replies are paused. Existing discussions remain readable.",
-        )}
-      </p>
+      <ChevronDown size={15} aria-hidden="true"/>
     </div>
-  );
+    <p id={`${id}-hint`}>{unavailable && <>{t("Current access")}: {t(AUDIENCE_LABELS.tenant)}. </>}{t(hint)}</p>
+    <div className="scope-toggle">
+      <span><label htmlFor={`${id}-comments`}>{t("Allow comments")}</label><SharingHelp label={t("Allow comments")}>
+        {t(value.comments ? "Readers can see comments. Sign in to post." : "New comments and replies are paused. Existing discussions remain readable.")}
+      </SharingHelp></span>
+      <input id={`${id}-comments`} role="switch" type="checkbox" checked={value.comments} disabled={disabled}
+        onChange={e => onChange({ ...value, comments: e.target.checked })}/>
+    </div>
+  </div>;
 }

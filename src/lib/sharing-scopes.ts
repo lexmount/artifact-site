@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { createId, rbacTransaction, toSite, type Row } from "@/lib/db";
 import type { Site } from "@/lib/types";
-import { sharingPolicySchema, type SharingPolicy, type SharingSource, type SharingPreview, type SharingImpact } from "@/lib/sharing-policy";
+import { inheritedSharingPolicySchema, type SharingPolicy, type SharingSource, type SharingPreview, type ScopePreview, type SharingImpact } from "@/lib/sharing-policy";
 import { assertSessionCurrent } from "@/lib/authorized-commit";
 import { requirePermission } from "@/lib/authz";
 import { fail, fingerprint, rowPolicy, sharingSession } from "@/lib/sharing-common";
@@ -13,7 +13,7 @@ import { putState } from "@/lib/sharing-mutations";
 const scopeInput = z
   .object({
     enabled: z.boolean(),
-    policy: sharingPolicySchema.optional(),
+    policy: inheritedSharingPolicySchema.optional(),
     confirmation: z.string().optional(),
     deleteFolder: z.boolean().optional(),
   })
@@ -22,7 +22,7 @@ export async function scopeChange(
   request: Request,
   folderId: string | null,
   raw: unknown,
-): Promise<SharingPreview> {
+): Promise<ScopePreview> {
   const input = scopeInput.parse(raw),
     session = await sharingSession(request, true);
   return rbacTransaction(async (q) => {
@@ -41,6 +41,9 @@ export async function scopeChange(
         sourceId: string | null;
       }[] = [];
     const starting = input.enabled && Number(old?.enabled) !== 1;
+    // Decide against the state read in this transaction, never the dialog's opening snapshot.
+    let requiresConfirmation = starting || !input.enabled || Boolean(input.deleteFolder)
+      || Boolean(old && rowPolicy(old).audience !== policy.audience);
     for (const row of rows) {
       const site = toSite(row),
         before = await getSiteSharing(site, q);
@@ -66,6 +69,8 @@ export async function scopeChange(
               : null,
           }
         : await activeSource(q, site, undefined, scopeId);
+      if (before.source !== target.source || before.sourceId !== target.sourceId || before.policy.audience !== target.policy.audience)
+        requiresConfirmation = true;
       items.push({
         slug: site.slug,
         title: site.title,
@@ -102,6 +107,8 @@ export async function scopeChange(
       : [{ n: rows.length }];
     const preview = {
       confirmation,
+      scope: { enabled: Number(old?.enabled) === 1, revision: Number(old?.revision ?? 0) },
+      requiresConfirmation,
       items,
       excluded: Number(total.n) - rows.length,
       unchanged: rows.length - items.length,

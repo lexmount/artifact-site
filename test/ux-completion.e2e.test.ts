@@ -120,9 +120,10 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)("UX completion brow
     await page.goto(`${base}/s/${site.slug}?lang=en`, {waitUntil:"networkidle2"});
     expect(await page.$(".private-share-education")).toBeNull();
     await page.setViewport({width:390,height:844});
+    await page.waitForFunction(()=>performance.getEntriesByType('resource').some(entry=>entry.name.includes('/sharing?summary=1')));
     await page.click('[data-analytics-button="share"]');
-    await page.waitForSelector("#main-link");
-    expect(await page.$eval('.sharing-dialog-head button[aria-label="Close"]', el => el === document.activeElement)).toBe(true);
+    await page.waitForSelector(".sharing-copy-button:not([disabled])");
+    expect(await page.$eval('.sharing-dialog-head h2', el => el === document.activeElement)).toBe(true);
     expect(await page.$eval(".sharing-dialog", el => el.matches(":modal"))).toBe(true);
     await page.$eval('[data-analytics-button="share"]', el => (el as HTMLElement).focus());
     expect(await page.$eval(".sharing-dialog", el => el.contains(document.activeElement))).toBe(true);

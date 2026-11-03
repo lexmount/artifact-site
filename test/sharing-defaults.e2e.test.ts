@@ -4,6 +4,12 @@ import { mkdirSync } from "node:fs";
 import type { Browser, Page, HTTPRequest } from "puppeteer-core";
 import { closeDbForTests, createId, upsertUser, rbacQuery } from "@/lib/db";
 import { mintSession } from "@/lib/session";
+
+async function chooseAudience(page: Page, value: string) {
+  const selector = `.sharing-audiences input[type=radio][value="${value}"]:not(:disabled)`;
+  await page.waitForSelector(selector);
+  await page.locator(selector).click();
+}
 const base = process.env.SHARING_E2E_URL;
 let browser: Browser;
 async function button(page: Page, label: string, scope = "") {
@@ -92,6 +98,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         args: process.env.CI ? ["--no-sandbox"] : [],
       });
       mkdirSync("output/sharing-acceptance", { recursive: true });
+      mkdirSync(".impeccable/review", { recursive: true });
     });
     afterAll(async () => {
       await browser?.close();
@@ -189,7 +196,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         await page.goto(`${base}/s/${sites[0].slug}`, { waitUntil: "networkidle2" });
         await page.waitForSelector('[data-analytics-button="share"]', { visible: true });
         await page.click('[data-analytics-button="share"]');
-        await page.waitForSelector(".sharing-main-policy select");
+        await page.waitForSelector(".sharing-audiences input[type=radio]:checked");
         expect(await page.$(".sharing-main-policy .scope-notice")).toBeNull();
         expect(await page.$(".sharing-main-policy .scope-source")).toBeNull();
         await shot(page, `ux-document-default-${locale}`);
@@ -207,12 +214,12 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
             expect(await page.$('.scope-all-entry')).toBeNull();
             expect(await page.$('.folder-rail nav .folder:first-child .lucide-panels-top-left')).not.toBeNull();
             expect(await page.$('.folder-rail nav .folder:first-child .folder-share-badge')).toBeNull();
-            await page.click(`.folder-heading-actions [aria-label="${zh ? "分享所有的站点" : "Share all sites"}"]`);
+            await page.click(`.folder-heading-actions [aria-label="${zh ? "分享全部站点" : "Share all sites"}"]`);
           } else {
             await page.click(`.folder-heading-actions [aria-label="${zh ? "分享文件夹" : "Share folder"}"]`);
           }
           await page.waitForSelector("dialog select");
-          await button(page, zh ? "预览权限变化" : "Review changes", "dialog ");
+          await button(page, zh ? "保存" : "Save", "dialog ");
           await page.waitForSelector(".scope-impact details");
           await page.$eval(".scope-impact details", el => { (el as HTMLDetailsElement).open = true; });
           const bounds = await page.evaluate(() => {
@@ -226,7 +233,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
           expect(bounds.scrollable).toBe(true);
           await shot(page, `ux-${kind}-preview-${locale}`);
           await button(page, zh ? "开启分享" : "Enable sharing", "dialog ");
-          await page.waitForSelector("dialog .scope-link input");
+          await page.waitForSelector("dialog .scope-link");
           await page.click(`dialog [aria-label="${zh ? "关闭" : "Close"}"]`);
         }
         await page.goto(`${base}/me?folder=${folder.id}`, { waitUntil: "networkidle2" });
@@ -236,7 +243,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         expect(await page.$('.folder[aria-current="true"] .lucide-folder')).not.toBeNull();
         expect(await page.$('.folder[aria-current="true"] .folder-share-badge')).not.toBeNull();
         expect(await page.$('.folder-rail nav .folder:first-child .folder-share-badge')).not.toBeNull();
-        if (zh) await text(page, '.folder-hint', '文件夹用于整理文档，文件夹粒度的分享会同步改变内部文档的可见性。');
+        if (zh) await text(page, '.folder-hint', '拖动作品到文件夹进行整理。');
         if (width < 600) await page.click('.mobile-folders');
         const rename = `.folder-heading-actions [aria-label="${zh ? "重命名" : "Rename"}"]`;
         await page.click(rename);
@@ -271,6 +278,105 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         expect(errors).toEqual([]);
       } finally { await context.close(); }
     });
+    it("shares from My sites and keeps the card open when its filtered row disappears", async () => {
+      const owner = await upsertUser({ authProvider: "directory-share", providerSubject: createId("owner") });
+      const context = await browser.createBrowserContext();
+      const pair = (await mintSession(new Request(base!), owner.id)).cookie.split(";")[0];
+      await context.setCookie({ name: pair.slice(0, pair.indexOf("=")), value: pair.slice(pair.indexOf("=") + 1), domain: new URL(base!).hostname, path: "/" });
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", error => errors.push(String(error)));
+      try {
+        await page.setViewport({ width: 1280, height: 900 });
+        await page.goto(`${base}/me?lang=en`, { waitUntil: "networkidle2" });
+        const site = await api(page, "/api/sites", "POST", { mode: "paste", title: "Directory sharing", html: "<h1>Directory sharing</h1>" });
+        await api(page, `/api/sites/${site.slug}/main-sharing`, "PUT", { action: "custom", policy: { audience: "private", comments: true } });
+        await page.goto(`${base}/me?lang=en&sharing=private`, { waitUntil: "networkidle2" });
+        const row = `.site-row[data-slug="${site.slug}"]`;
+        await page.locator(`${row} .row-more`).click();
+        await button(page, "Share", '.more-menu:not([hidden]) ');
+        await page.waitForSelector('.sharing-audiences input:not(:disabled)');
+        expect(new URL(page.url()).pathname).toBe('/me');
+        expect(await page.$eval('.sharing-dialog', el => {
+          const r = el.getBoundingClientRect();
+          return r.top >= 0 && r.bottom <= innerHeight && r.height > 300;
+        })).toBe(true);
+        await shot(page, 'directory-sharing-desktop');
+        await chooseAudience(page, 'anyone');
+        await page.waitForSelector('.sharing-confirmation:modal');
+        await page.click('.sharing-confirmation button[type="submit"]');
+        await page.waitForSelector(row, { hidden: true });
+        expect(await page.$$eval('.sharing-filter-group button span', els => els.map(el => el.textContent))).toEqual(['1', '0', '1']);
+        expect(await page.$('.sharing-dialog:modal')).not.toBeNull();
+        await page.waitForSelector('.sharing-copy-button:not(:disabled)');
+        expect(await page.$eval('.sharing-audiences input:checked', el => (el as HTMLInputElement).value)).toBe('anyone');
+        await text(page, '.sharing-status', 'Sharing settings updated');
+        await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { document.body.dataset.copiedLink = value; } } }));
+        await page.click('.sharing-copy-button');
+        expect(await page.evaluate(() => document.body.dataset.copiedLink)).toBe(`${base}/s/${site.slug}`);
+        await page.click('.sharing-dialog-head button[aria-label="Close"]');
+        await page.waitForSelector('.sharing-dialog', { hidden: true });
+        await page.waitForFunction(() => document.activeElement?.matches('.folder-heading h2'));
+        await page.goto(`${base}/me?lang=en&view=grid`, { waitUntil: "networkidle2" });
+        await page.locator('.artifact-card-actions button[aria-haspopup="menu"]').click();
+        const items = await page.$$eval('.more-menu:not([hidden]) [role="menuitem"]', els => els.map(el => el.textContent?.trim()));
+        expect(items.indexOf('Share')).toBeLessThan(items.indexOf('Copy link'));
+        await button(page, "Share", '.more-menu:not([hidden]) ');
+        await page.waitForSelector('.sharing-audiences input:not(:disabled)');
+        await chooseAudience(page, 'private');
+        await page.waitForFunction(() => document.querySelector('.sharing-status')?.textContent === 'Sharing settings updated');
+        await text(page, '.artifact-card .directory-sharing-status', 'Private');
+        await page.click('.sharing-dialog-head button[aria-label="Close"]');
+        await page.setViewport({ width: 320, height: 568 });
+        await page.goto(`${base}/me?lang=zh-CN`, { waitUntil: "networkidle2" });
+        await page.locator(`${row} .row-more`).click();
+        await button(page, "分享", '.more-menu:not([hidden]) ');
+        await page.waitForSelector('.sharing-audiences input:not(:disabled)');
+        expect(await page.$eval('.sharing-dialog', el => {
+          const r = el.getBoundingClientRect(), copy = el.querySelector('.sharing-copy-button')!.getBoundingClientRect();
+          return r.left >= 0 && r.right <= innerWidth && copy.bottom <= innerHeight;
+        })).toBe(true);
+        await shot(page, 'directory-sharing-mobile');
+        await page.click('.sharing-dialog-head button[aria-label="关闭"]');
+        await page.waitForSelector('.sharing-dialog', { hidden: true });
+        expect(await page.$eval(`${row} .row-more`, el => el === document.activeElement)).toBe(true);
+        expect(errors).toEqual([]);
+      } finally { await context.close(); }
+    }, 90000);
+
+    it("offers directory sharing only to collaborators who can manage it", async () => {
+      const owner = await upsertUser({ authProvider: 'directory-share', providerSubject: createId('owner') });
+      const context = await browser.createBrowserContext();
+      const pair = (await mintSession(new Request(base!), owner.id)).cookie.split(';')[0];
+      await context.setCookie({ name: pair.slice(0, pair.indexOf('=')), value: pair.slice(pair.indexOf('=') + 1), domain: new URL(base!).hostname, path: '/' });
+      const page = await context.newPage();
+      try {
+        await page.goto(`${base}/me?lang=en`, { waitUntil: 'networkidle2' });
+        const site = await api(page, '/api/sites', 'POST', { mode: 'paste', html: '<h1>Collaborator sharing</h1>' });
+        const { siteId } = await api(page, `/api/sites/${site.slug}/sharing`);
+        for (const roleId of ['editor', 'site-admin']) {
+          const member = await upsertUser({ authProvider: 'directory-share', providerSubject: createId(roleId) });
+          await api(page, '/api/authorization/bindings', 'POST', { resource: { type: 'site', id: siteId }, subject: { type: 'user', id: member.id }, roleId });
+          const memberContext = await browser.createBrowserContext();
+          const memberPair = (await mintSession(new Request(base!), member.id)).cookie.split(';')[0];
+          await memberContext.setCookie({ name: memberPair.slice(0, memberPair.indexOf('=')), value: memberPair.slice(memberPair.indexOf('=') + 1), domain: new URL(base!).hostname, path: '/' });
+          try {
+            const memberPage = await memberContext.newPage();
+            for (const view of ['list', 'grid']) {
+              await memberPage.goto(`${base}/me?lang=en&tab=collab&view=${view}`, { waitUntil: 'networkidle2' });
+              await memberPage.locator(view === 'list' ? '.row-more' : '.artifact-card-actions button[aria-haspopup="menu"]').click();
+              const labels = await memberPage.$$eval('.more-menu:not([hidden]) [role="menuitem"]', els => els.map(el => el.textContent?.trim()));
+              expect(labels.includes('Share')).toBe(roleId === 'site-admin');
+              if (roleId === 'site-admin') {
+                await button(memberPage, 'Share', '.more-menu:not([hidden]) ');
+                await memberPage.waitForSelector('.sharing-audiences input:not(:disabled)');
+              }
+            }
+          } finally { await memberContext.close(); }
+        }
+      } finally { await context.close(); }
+    }, 60000);
+
     it("saves defaults, applies folder/all scopes, previews moves, restores defaults and checks both locales", async () => {
       const owner = await upsertUser({
         authProvider: "sharing-e2e",
@@ -285,6 +391,10 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         email: createId("reader") + "@example.test",
         emailVerified: true,
       });
+      const ownerTenant = createId("tenant");
+      await rbacQuery("INSERT INTO tenants(id,name) VALUES($1,'Product team')", [ownerTenant]);
+      await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id) VALUES($1,$2)", [ownerTenant, owner.id]);
+      await rbacQuery("UPDATE users SET tenant_id=$1 WHERE id=$2", [ownerTenant, owner.id]);
       const other = createId("tenant");
       await rbacQuery(
         "INSERT INTO tenants(id,name) VALUES($1,'Partner team')",
@@ -319,7 +429,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       const errors: string[] = [];
       page.on("pageerror", (e) => errors.push(String(e)));
       await page.setViewport({ width: 1440, height: 1050 });
-      await page.goto(`${base}/admin/tenants/init`, {
+      await page.goto(`${base}/admin/tenants/${ownerTenant}`, {
         waitUntil: "networkidle2",
       });
       await button(page, "设置");
@@ -358,11 +468,11 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.click('.folder-heading-actions [aria-label="分享文件夹"]');
       await text(page, "dialog", "项目资料");
       await shot(page, "04-folder-config-zh");
-      await button(page, "预览权限变化", "dialog ");
-      await text(page, "dialog", "篇文档将更新");
+      await button(page, "保存", "dialog ");
+      await text(page, "dialog", "个作品将采用以下设置");
       await shot(page, "05-folder-preview-zh");
       await button(page, "开启分享", "dialog ");
-      await page.waitForSelector("dialog .scope-link input");
+      await page.waitForSelector("dialog .scope-link");
       const collection = await api(
         page,
         "/api/me/sharing/scopes?folderId=" + folder.id,
@@ -371,13 +481,20 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.click('dialog [aria-label="关闭"]');
       await page.goto(`${base}/s/${first.slug}`, { waitUntil: "networkidle2" });
       await button(page, "分享设置");
-      await text(page, ".sharing-main-policy", "正在跟随");
+      await page.locator('.sharing-dialog-head [aria-label="关于分享作品"]').click();
+      await text(page, ".sharing-help-popover:popover-open", "当前使用文件夹「项目资料」的分享设置");
+      await page.keyboard.press("Escape");
       await shot(page, "07-document-follow-zh");
-      await page.select(".sharing-main-policy select", "private");
-      await button(page, "保存并单独设置");
-      await text(page, ".sharing-main-policy", "恢复跟随");
+      await chooseAudience(page, "private");
+      await text(page, ".sharing-status", "分享配置已经更新");
+      expect(await page.$('.sharing-confirmation')).toBeNull();
+      expect(await page.$('.sharing-dialog-head .sharing-help')).toBeNull();
+      expect(await api(page, `/api/sites/${first.slug}/main-sharing`)).toMatchObject({ source: "manual", policy: { audience: "private" } });
       await shot(page, "08-document-custom-zh");
-      await button(page, "恢复跟随");
+      // A saved policy is visible before its post-save revalidation finishes.
+      // Wait for the menu to become writable instead of clicking a disabled trigger.
+      await page.locator('button[aria-label="更多分享选项"]:not([disabled])').click();
+      await button(page, "恢复使用统一设置", ".sharing-more-menu ");
       await text(page, "dialog", "变更后权限");
       await shot(page, "09-resume-preview-zh");
       await button(page, "确认恢复", "dialog ");
@@ -389,20 +506,20 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.click(`[data-slug='${second.slug}'] input[type=checkbox]`);
       await button(page, "批量移动文档");
       await page.select("dialog select", folder.id);
-      await text(page, "dialog", "1 篇将跟随所属文件夹");
+      await text(page, "dialog", "1 个作品将采用以下设置");
       await shot(page, "10-move-preview-zh");
-      await button(page, "确认移动", "dialog ");
+      await button(page, "移动并更新", "dialog ");
       await page.waitForSelector("dialog", { hidden: true });
       expect(
         (await api(page, `/api/sites/${second.slug}/main-sharing`)).source,
       ).toBe("folder");
       await page.goto(`${base}/me`, { waitUntil: "networkidle2" });
-      await page.click('.folder-heading-actions [aria-label="分享所有的站点"]');
-      await text(page, "dialog", "跨租户");
+      await page.click('.folder-heading-actions [aria-label="分享全部站点"]');
+      await text(page, "dialog", "2 个作品");
       await page.select("dialog select", "login");
-      await button(page, "预览权限变化", "dialog ");
+      await button(page, "保存", "dialog ");
       await button(page, "开启分享", "dialog ");
-      await page.waitForSelector("dialog .scope-link input");
+      await page.waitForSelector("dialog .scope-link");
       await shot(page, "11-all-sites-enabled-zh");
       await page.click('dialog [aria-label="关闭"]');
       const readerContext = await browser.createBrowserContext();
@@ -442,9 +559,10 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       });
       await page.click('.folder-heading-actions [aria-label="分享文件夹"]');
       await page.waitForSelector("dialog .scope-link");
+      await page.click("dialog .scope-more > summary");
       await button(page, "停止统一分享", "dialog ");
-      await button(page, "预览权限变化", "dialog ");
-      await text(page, "dialog", "2 篇将跟随全部站点分享");
+      await button(page, "保存", "dialog ");
+      await text(page, "dialog", "2 个作品将采用以下设置");
       await shot(page, "15-stop-folder-zh");
       await button(page, "停止并恢复", "dialog ");
       await page.waitForSelector("dialog", { hidden: true });
@@ -466,11 +584,12 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.goto(`${base}/me`, { waitUntil: "networkidle2" });
       await page.goto(`${base}/me`, { waitUntil: "networkidle2" });
       await page.click('.folder-heading-actions [aria-label="Share all sites"]');
-      await text(page, "dialog", "Across tenants");
+      await text(page, "dialog", "2 artifacts");
       await shot(page, "18-mobile-scope-en");
+      await page.click("dialog .scope-more > summary");
       await button(page, "Stop unified sharing", "dialog ");
-      await button(page, "Review changes", "dialog ");
-      await text(page, "dialog", "2 documents will restore current defaults");
+      await button(page, "Save", "dialog ");
+      await text(page, "dialog", "2 artifacts will follow these settings");
       await shot(page, "19-mobile-stop-all-sites-en");
       await button(page, "Stop and restore", "dialog ");
       await page.waitForSelector("dialog", { hidden: true });
@@ -484,7 +603,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       });
       await page.click('.folder-heading-actions [aria-label="Delete folder"]');
       await text(page, "dialog", "Documents will not be deleted");
-      await button(page, "Review changes", "dialog ");
+      await button(page, "Save", "dialog ");
       await shot(page, "20-delete-folder-en");
       await button(page, "Delete folder", "dialog ");
       await page.waitForSelector("dialog", { hidden: true });
@@ -496,15 +615,16 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       );
       await page.goto(`${base}/s/${first.slug}`, { waitUntil: "networkidle2" });
       await button(page, "Sharing");
-      await text(page, ".sharing-main-policy", "Other access: 1");
-      await button(page, "Stop all sharing for this document");
+      await text(page, ".sharing-links-entry", "(1)");
+      await page.locator('button[aria-label="More sharing options"]:not([disabled])').click();
+      await button(page, "Close all sharing…", ".sharing-more-menu ");
       await text(
         page,
         "dialog.scope-dialog",
-        "Independent links and direct grants are revoked",
+        "Revoke 1 independent sharing links.",
       );
       await shot(page, "21-stop-document-en");
-      await button(page, "Stop all sharing", "dialog.scope-dialog ");
+      await button(page, "Close all sharing", "dialog.scope-dialog ");
       await page.waitForSelector("dialog.scope-dialog", { hidden: true });
       expect(
         (await api(page, `/api/sites/${first.slug}/main-sharing`)).links,

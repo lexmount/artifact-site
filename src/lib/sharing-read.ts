@@ -3,7 +3,7 @@ import "server-only";
 import { rbacQuery, toSite, listFolders, listFolderAssignments } from "@/lib/db";
 import type { RbacQuery } from "@/lib/rbac-store";
 import type { Site, Visibility } from "@/lib/types";
-import type { SharingPolicy, SharingSource, SharingState } from "@/lib/sharing-policy";
+import { canSelectOrganization, type SharingPolicy, type SharingSource, type SharingState } from "@/lib/sharing-policy";
 import { policy as deploymentPolicy } from "@/lib/settings";
 import { resolveSession } from "@/lib/session";
 import { mainSharingActiveSql } from "@/lib/sharing-sql";
@@ -149,6 +149,8 @@ export async function scopeRow(q: RbacQuery, userId: string, folderId: string | 
 }
 export async function getScope(request: Request, folderId: string | null) {
   const session = await sharingSession(request);
+  const [user] = await rbacQuery("SELECT tenant_id FROM users WHERE id=$1", [session.userId]);
+  const organizationAvailable = canSelectOrganization(user?.tenant_id as string | undefined);
   const scope = await scopeRow(rbacQuery, session.userId, folderId),
     rows = await ownedRows(rbacQuery, session.userId, folderId);
   const [folder] = folderId
@@ -161,8 +163,10 @@ export async function getScope(request: Request, folderId: string | null) {
       )
     : [{ n: rows.length }];
   return {
+    canSelectOrganization: organizationAvailable,
     enabled: Number(scope?.enabled) === 1,
-    policy: scope ? rowPolicy(scope) : { audience: "tenant", comments: true },
+    revision: Number(scope?.revision ?? 0),
+    policy: scope ? rowPolicy(scope) : { audience: organizationAvailable ? "tenant" : "private", comments: true },
     url: Number(scope?.enabled) === 1 ? `/c/${scope.token}` : null,
     name: (folder?.name as string) ?? "My entire collection",
     folderId,

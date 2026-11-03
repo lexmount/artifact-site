@@ -45,7 +45,7 @@ export default function HomeRecent({ allSites, ownedSites = [] }: { allSites: Si
         {!ready ? <div className="home-sites-loading" role="status">{t("Loading…")}</div>
           : items.length === 0 ? <div className="empty">
             <h3>{t(updated ? "No sites of your own yet" : "Nothing published yet")}</h3>
-            <p>{t("Upload something above; the link is yours within seconds.")}</p>
+            <p>{t("Ask your agent to host something, or upload an artifact above.")}</p>
           </div> : <>
             {!updated && !showRecent && <p className="drawer-note">{t("No view history yet. Explore public sites below.")}</p>}
             <div className="recent-grid">{items.map((s, i) => <ArtifactCard key={s.slug} site={s}

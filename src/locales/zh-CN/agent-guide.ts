@@ -1,6 +1,8 @@
 import type { Messages } from "@/lib/i18n";
 
 export const agentGuide: Messages = {
+  "Read {url} and help me host and share artifacts with artifact-site. First use this conversation to identify what I want to host; if it is not clear, ask me what I have or would like to create. If authorization is needed, show me the authorization link and continue the requested task after I approve.": "请阅读 {url} 并帮助我通过 artifact-site 托管和分享产物。先结合当前对话确认要处理的内容；如果尚未明确，请友好询问我已有的产物或想创作的内容。需要登录授权时，请提供授权链接，并在我授权后继续完成当前任务。",
+
   "Revoke an independent share": "撤销独立分享",
   "Get access settings": "查看访问设置",
   "Set main-link access": "设置主链接访问范围",

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDbForTests, updateSiteVisibility, upsertUser } from "@/lib/db";
+import { closeDbForTests, rbacQuery, updateSiteVisibility, upsertUser } from "@/lib/db";
 import { createSite, deleteSite } from "@/lib/sites";
 import { mintSession } from "@/lib/session";
 import * as sharing from "@/lib/share";
@@ -12,6 +12,9 @@ import NotFound from "@/app/not-found";
 import { LocaleProvider } from "@/components/locale-provider";
 import Page, { generateMetadata } from "@/app/s/[slug]/page";
 import EditorPage from "@/app/s/[slug]/edit/page";
+import MainPasscodeEntry from "@/components/main-passcode-entry";
+import { putUserSiteRole } from "@/lib/role-bindings";
+import { PUT as saveMainSharing } from "@/app/api/sites/[slug]/main-sharing/route";
 
 const context = vi.hoisted(() => ({ headers: new Headers({ host: "x" }) }));
 vi.mock("next/headers", () => ({ headers: async () => context.headers, cookies: async () => ({ get: () => undefined }) }));
@@ -77,6 +80,68 @@ it("does not offer unavailable login when OIDC is disabled", async () => {
   const html = renderToStaticMarkup(await Page(args(site.slug)));
   expect(html).toContain("Access denied"); expect(html).not.toContain("Sign in and retry");
   expect(html).toContain("person who sent you the link");
+});
+
+async function passcodeFixture() {
+  const owner = await upsertUser({ authProvider: "oidc", providerSubject: "passcode-owner" });
+  const member = await upsertUser({ authProvider: "oidc", providerSubject: "passcode-member" });
+  const original = await createSite({ mode: "paste", html: "<title>Confidential title</title><p>Secret bytes</p>" }, { ownerId: owner.id });
+  await putUserSiteRole(rbacQuery, original.site.id, member.id, "editor", owner.id);
+  const ownerSession = await mintSession(new Request("https://x"), owner.id);
+  const memberSession = await mintSession(new Request("https://x"), member.id);
+  const saved = await saveMainSharing(new Request("https://x/api/test", {
+    method: "PUT", headers: { origin: "https://x", cookie: ownerSession.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ action: "custom", policy: { audience: "passcode", comments: true } }),
+  }), { params: Promise.resolve({ slug: original.site.slug }) });
+  expect(saved.status).toBe(200);
+  return { ...original, ownerSession, memberSession };
+}
+
+async function passcodeMarkup(slug: string, version: string) {
+  const page = await Page(args(slug, { version }));
+  expect(page.type).toBe(MainPasscodeEntry);
+  // Resolve the nested async server component before rendering its client actions.
+  return renderToStaticMarkup(await MainPasscodeEntry(page.props));
+}
+
+it.each(["ownerSession", "memberSession"] as const)("lets a logged-out %s sign in without knowing the main passcode", async account => {
+  const f = await passcodeFixture();
+  const html = await passcodeMarkup(f.site.slug, f.version.id);
+  expect(html).toContain("Sign in and retry");
+  expect(html).toContain("Back to home");
+  expect(html).not.toContain("Switch account");
+  expect(html).not.toContain("Confidential title");
+  expect(html).not.toContain("Secret bytes");
+  expect(html.indexOf("Sign in and retry")).toBeGreaterThan(html.indexOf("</form>"));
+  expect((await generateMetadata(args(f.site.slug))).title).toBe("Access denied — artifact-site");
+  context.headers.set("cookie", f[account].cookie.split(";")[0]);
+  expect((await Page(args(f.site.slug, { version: f.version.id }))).type).not.toBe(MainPasscodeEntry);
+  expect((await generateMetadata(args(f.site.slug))).title).toContain("Confidential title");
+});
+
+it("lets a member using the wrong account switch accounts on the passcode screen", async () => {
+  const f = await passcodeFixture();
+  const stranger = await upsertUser({ authProvider: "oidc", providerSubject: "wrong-account", email: "wrong@example.test", emailVerified: true });
+  context.headers.set("cookie", (await mintSession(new Request("https://x"), stranger.id)).cookie.split(";")[0]);
+  const html = await passcodeMarkup(f.site.slug, f.version.id);
+  expect(html).toContain("Current account: wrong@example.test");
+  expect(html).toContain("Switch account");
+  expect(html).toContain("Retry access");
+  expect(html).not.toContain("Sign in and retry");
+  expect(html.indexOf("Switch account")).toBeGreaterThan(html.indexOf("</form>"));
+  context.headers.set("cookie", f.memberSession.cookie.split(";")[0]);
+  expect((await Page(args(f.site.slug, { version: f.version.id }))).type).not.toBe(MainPasscodeEntry);
+  expect((await generateMetadata(args(f.site.slug))).title).toContain("Confidential title");
+});
+
+it("keeps passcode retry and home available without advertising disabled sign-in", async () => {
+  const f = await passcodeFixture();
+  vi.stubEnv("ARTIFACT_OIDC_ISSUER", "");
+  const html = await passcodeMarkup(f.site.slug, f.version.id);
+  expect(html).toContain("Retry access");
+  expect(html).toContain("Back to home");
+  expect(html).not.toContain("Sign in");
+  expect(html).not.toContain("Switch account");
 });
 
 it("does not claim a restricted version or an upstream failure is a missing site", async () => {

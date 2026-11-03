@@ -1,3 +1,4 @@
+import { syncMainPasscode } from "@/lib/main-passcode";
 // Per-site transitions preserve authorization transactions before applying main access.
 import "server-only";
 import { toSite } from "@/lib/db";
@@ -16,17 +17,20 @@ export async function applyMainSharing(
   site: Site,
   p: SharingPolicy,
 ) {
-  await q("UPDATE sites SET visibility=$1,updated_at=$2 WHERE id=$3", [
+  await syncMainPasscode(q, site.id, p.audience === "passcode");
+  // Sharing has its own timestamp and revision; keep the artifact's update time unchanged.
+  await q("UPDATE sites SET visibility=$1 WHERE id=$2", [
     visibility(p),
-    Date.now(),
     site.id,
   ]);
   await q(
     "UPDATE site_sharing_state SET audience=$1,comments=$2,pending=0 WHERE site_id=$3",
     [p.audience, +p.comments, site.id],
   );
+  // Link changes must not opt legacy discussions into reader access or expand members-only comments.
+  // New publications explicitly initialize reader_access=1; missing historical rows retain 0.
   await q(
-    "INSERT INTO site_comment_settings(site_id,main_policy,reader_access,updated_at) VALUES($1,$2,1,$3) ON CONFLICT(site_id) DO UPDATE SET main_policy=excluded.main_policy,reader_access=1,updated_at=excluded.updated_at",
+    "INSERT INTO site_comment_settings(site_id,main_policy,reader_access,updated_at) VALUES($1,$2,0,$3) ON CONFLICT(site_id) DO UPDATE SET main_policy=CASE WHEN (site_comment_settings.main_policy='off')=(excluded.main_policy='off') THEN site_comment_settings.main_policy ELSE excluded.main_policy END,updated_at=excluded.updated_at",
     [site.id, p.comments ? "login" : "off", Date.now()],
   );
 }
@@ -125,12 +129,13 @@ export async function markSharingManual(
     "INSERT INTO site_sharing_state(site_id,owner_id,audience,comments,source,revision,updated_at) VALUES($1,$2,$3,$4,'manual',1,$5) ON CONFLICT(site_id) DO UPDATE SET owner_id=excluded.owner_id,audience=excluded.audience,comments=excluded.comments,source='manual',source_id=NULL,revision=site_sharing_state.revision+1,pending=0,updated_at=excluded.updated_at",
     [site.id, site.ownerId, merged.audience, +merged.comments, Date.now()],
   );
+  await syncMainPasscode(q, site.id, merged.audience === "passcode");
   return site;
 }
 export async function siteSharingChange(
   request: Request,
   siteId: string,
-  input: { action: "custom" | "follow" | "stop"; policy?: SharingPolicy },
+  input: { action: "custom" | "follow" | "stop" | "reset-passcode"; policy?: SharingPolicy; expectedRevision?: number },
 ) {
   return withPermissionCommit(
     request,
@@ -138,7 +143,14 @@ export async function siteSharingChange(
     input.action === "stop" ? "site.admins.manage" : "site.sharing.manage",
     async (q, site) => {
       await assertMutationOrigin(request, site);
-      if (input.action === "stop") {
+      if (input.expectedRevision !== undefined && input.expectedRevision !== (await getSiteSharing(site, q)).revision)
+        fail("Sharing settings changed; refresh before trying again.", 409);
+      if (input.action === "reset-passcode") {
+        if ((await getSiteSharing(site, q)).policy.audience !== "passcode") fail("This link does not need a passcode", 409);
+        await syncMainPasscode(q, site.id, true, true);
+        await q("UPDATE site_sharing_state SET revision=revision+1,updated_at=$1 WHERE site_id=$2", [Date.now(), site.id]);
+        await recordRbacAudit(q, site.tenantId, (await resolveSession(request))?.userId ?? null, "sharing.passcode.reset", site.id, "Reset main link passcode");
+      } else if (input.action === "stop") {
         await q("DELETE FROM role_bindings WHERE resource_site_id=$1", [
           site.id,
         ]);

@@ -48,7 +48,7 @@ function ShellContent({ children, section }: { children: ReactNode; section?: "a
   const nav: { href: string; label: string; active: boolean }[] = [
     { href: "/", label: t("Home"), active: path === "/" },
     { href: "/explore", label: t("Explore"), active: path.startsWith("/explore") },
-    { href: "/me", label: t("My sites"), active: path.startsWith("/me") },
+    { href: "/me", label: t("My artifacts"), active: path.startsWith("/me") },
     { href: "/for-agents", label: t("Agent guide"), active: path.startsWith("/for-agents") },
   ];
   if (isAdmin && section !== "admin") nav.push({ href: "/admin", label: t("Admin"), active: false });

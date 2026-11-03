@@ -1,13 +1,32 @@
 ---
 name: publish-to-artifact-site
-description: Publish finished HTML, multi-file websites, ZIPs, PDFs, and Office documents to artifact-site; find previous remote work, list personal folders, and move artifacts into them. Use for requests to publish or share a link, show my sites, find a report, organize hosted work, update an existing artifact, or transfer ownership. Read the identity, permission, and sandbox contract before calling the API.
+description: Help users identify, create when requested, host and share HTML, multi-file websites, ZIPs, PDFs, and Office documents to artifact-site; find previous remote work, list personal folders, and move artifacts into them. Use for requests to publish or share a link, show my sites, find a report, organize hosted work, update an existing artifact, or transfer ownership. Read the identity, permission, and sandbox contract before calling the API.
 ---
 
 # Publishing artifacts to artifact-site
 
-Hand a finished front-end artifact to the platform to host, and get back a `/s/<slug>` share link. **There is no build step** — the artifact is uploaded as is and served as is; the platform does not rewrite your code.
+Help the user host an artifact and collaborate around it through a `/s/<slug>` link. The user may have existing work, an idea, or only this copied prompt. **There is no build step** — the artifact is uploaded as is and served as is; the platform does not rewrite your code.
 
 **Base URL**: written as `$BASE` below. The default is `https://artifact-site.example.com` (the platform rewrites it to its own address when it serves this file; if you still see example.com, this file did not come from the platform — ask the user for the address). If the user explicitly gives another address, use the user's. Strip the trailing `/` before calling the API or building share links, to avoid double slashes.
+
+## Start with the user's intent
+
+Follow this order: **identify the work → authorize when needed → continue the requested task → return the link and its actual access state**. Respond in the user's language, including when API messages are English.
+
+| Conversation context | Next action |
+| --- | --- |
+| One clearly identified artifact | Use it; do not ask the user to identify it again. Inspect only relevant files when needed. |
+| Several plausible artifacts | Ask one short question naming the candidates. |
+| Only the copied prompt, with no artifact or request | Ask what the user wants to host, with examples; wait for the answer. |
+| An idea, without existing files | Offer to create it first. Create only when the user's request authorizes that work. |
+| An explicitly selected file is missing | Explain which selected file is unavailable and ask for the correct file or location. |
+| An existing hosted artifact needs changes | Update that artifact and retain its main URL; do not create a duplicate. |
+
+For a new, empty conversation, say the equivalent of:
+
+> What would you like me to host? It could be a web page, report, presentation or another document. You can share an existing file, or tell me what you want to make so we can create it first, then host and share it.
+
+Do not treat the current directory as the user's chosen artifact. Do not scan unrelated directories, announce "no artifact found in /some/path", invent a demo, or initiate authorization just because the generic prompt was pasted. If both intent and identity are missing, clarify intent first. Once the work is identified and ready to host, check the current Agent connection and authorize only if needed.
 
 ### Creation, sharing and discovery
 
@@ -166,7 +185,7 @@ curl -sS -X PUT "$BASE/api/me/folders/assignments" \
 
 `POST $BASE/api/sites`; success always returns **200** (not 201).
 
-### Step one: confirm the identity token (once per machine, per server)
+### Step one: reuse or authorize the current Agent connection
 
 Tokens are issued **per server**: one obtained on `https://a.example` is meaningless on `https://b.example`. Look for this server's token, in this order — the environment first (sandboxes and CI inject it there, and a fresh HOME every session would otherwise mean a sign-in every session), then the per-host file, then the old single-file location:
 
@@ -193,7 +212,9 @@ curl -sS -i "$BASE/api/auth/me" -H "authorization: Bearer $TOKEN"
 
 **Present and verified** → every request from here on carries `-H "authorization: Bearer $TOKEN"`. The published site **belongs to the user directly** (visible and manageable in their account page); no cookie is needed and no claiming afterwards.
 
-**Absent, or refused** → walk the user through a one-time device authorisation (half a minute, and every session on this machine is spared afterwards):
+**Missing or invalid credentials** → authorize the current Agent connection. Browser sign-in alone does not authenticate CLI/MCP. Reuse an already valid connection; for a native MCP connector, use its native OAuth connection flow instead of creating a separate device credential. A 403 or network/server error is not proof of missing identity: diagnose it before asking the user to sign in again.
+
+For CLI/direct HTTP without a valid personal credential, use device authorization below. If `/api/auth/me` reports `oidcEnabled:false`, browser sign-in cannot complete: explain that this deployment needs an operator-configured sign-in or credential, or offer browser upload where policy permits. Never invent a login link or ask for a token in chat.
 
 ```bash
 curl -sS -i -X POST "$BASE/api/device/start"
@@ -201,11 +222,13 @@ curl -sS -i -X POST "$BASE/api/device/start"
 #    "verification_url_manual":"…","user_message":"…","interval":5,"expires_in":600}
 ```
 
-**Paste the `user_message` from the response verbatim into the body of your reply to the user, on its own line, at the very top.** This is the only place in this step where the user can get stuck — if the authorisation link stays buried in command output for the user to dig out, the publish usually dies right here. Do not paraphrase it, do not just say "I need you to authorise this", and do not bury the link in the middle of a sentence.
+**Show the returned authorization link in your user-facing reply before polling.** Localize `user_message` into the user's language; preserve the exact `verification_url`, `verification_url_manual`, `user_code`, and expiry. Render a clickable link, never leave it only in tool output. Explain what happens next, for example:
 
-When the user is running you on their own computer (macOS / Linux / desktop Windows), **open the authorisation page for them while you are at it**: `open <verification_url>` (`xdg-open` on Linux, `start` on Windows). Even if that succeeds, still paste `user_message` — in a sandbox, a headless environment or a remote session that command silently does nothing, and you cannot tell the difference.
+> Please [sign in and authorize this connection](<verification_url>). Once you approve, I'll continue hosting and sharing the work you requested. While this connection remains authorized, later requested hosting and sharing operations can use it without signing in again.
 
-Then poll with the `device_code` every 5 seconds (for up to 10 minutes), and tell the user you are waiting for them to click "Allow":
+Also include the returned manual URL, code and expiry as a fallback. Do not promise permanent authorization, access on other devices, or automatic public sharing. On the user's computer, you may open the returned URL through the available browser tool; the visible link is still required in headless or remote environments.
+
+Retain the pending artifact, requested operation and sharing scope while waiting. Poll using the response's `interval` and `expires_in` (fallback: 5 seconds and 600 seconds if omitted), respecting rate-limit or slower-poll responses. Tell the user that approval will let you continue without them pasting the prompt again:
 
 ```bash
 curl -sS -X POST "$BASE/api/device/poll" -H 'content-type: application/json' \
@@ -213,15 +236,17 @@ curl -sS -X POST "$BASE/api/device/poll" -H 'content-type: application/json' \
 # not clicked yet → {"status":"pending"}; allowed → {"status":"approved","token":"ahp_…","user":{"email":"…"}}
 ```
 
-Once you have the `token`, **store it immediately — the plaintext is shown only this once** — under this server's host, and report `user.email` to the user so they can confirm which identity is bound:
+Once you have the `token`, **store it immediately — the plaintext is shown only this once** — under this server's host, report `user.email` so the user can confirm the bound identity, and automatically resume the exact pending task within the user's request. Do not ask the user to repeat the prompt or approve the same task again:
 
 ```bash
 mkdir -p "$HOME/.config/artifact-site/tokens" && printf %s '<token>' > "$HOME/.config/artifact-site/tokens/$HOST" && chmod 600 "$HOME/.config/artifact-site/tokens/$HOST"
 ```
 
-If `$HOME` does not survive between your sessions (a sandbox rebuilt each time), say so to the user: the platform can set `ARTIFACT_SITE_TOKEN` for them once, and this step never comes back.
+If the authorization expires, stop polling and retain the pending task. Offer a fresh authorization link; on retry, start a new grant without asking the user to restate the work. Revoked credentials require reconnection. A denied authorization must not trigger repeated sign-in requests.
 
-Only fall back to anonymous publishing when the user **explicitly declines to bind** (or the authorisation times out and the user does not want to retry): modifications rely on a cookie, and ownership can be transferred by its authorized owner or administrator (see below). A deployment may also give anonymous sites an expiry: the create response then carries `expiresAt` (epoch ms; null = no clock) — say so when delivering the link, and explain original-browser sign-in or authorized ownership transfer.
+Credentials can be reused only while valid in the current client/environment. If `$HOME` does not survive between sessions, explain that limitation; never promise that approval covers future sandboxes or devices. Authentication does not grant consent to broaden artifact access: default to private and, if the requested audience is unclear, ask once before changing sharing.
+
+Offer anonymous publishing only where deployment policy permits and the user **explicitly chooses it**. Declining authorization or letting it expire is not consent to publish anonymously: modifications rely on a cookie, and ownership can be transferred by its authorized owner or administrator (see below). A deployment may also give anonymous sites an expiry: the create response then carries `expiresAt` (epoch ms; null = no clock) — say so when delivering the link, and explain original-browser sign-in or authorized ownership transfer.
 
 ### Which mode to pick
 

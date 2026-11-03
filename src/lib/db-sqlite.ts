@@ -670,8 +670,8 @@ export class SqliteStore implements MetadataStore {
   }
 
   async updateSiteVisibility(siteId: string, visibility: Visibility): Promise<void> {
-    this.db.prepare("UPDATE sites SET visibility=?, updated_at=? WHERE id=? AND deleted_at IS NULL")
-      .run(visibility, Date.now(), siteId);
+    this.db.prepare("UPDATE sites SET visibility=? WHERE id=? AND deleted_at IS NULL")
+      .run(visibility, siteId);
   }
 
   async listAudienceExcludedUserIds(siteId: string): Promise<string[]> {

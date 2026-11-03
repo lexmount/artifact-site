@@ -117,6 +117,11 @@ function postgresSchema(): Map<string, Set<string>> {
   )) {
     out.get(m[1])?.add(m[2]);
   }
+  // SQLite rebuild migrations rename their temporary table back to its shared name.
+  for (const m of source.matchAll(/ALTER TABLE\s+(\w+)\s+RENAME TO\s+(\w+)/g)) {
+    const columns = out.get(m[1]);
+    if (columns) { out.delete(m[1]); out.set(m[2], columns); }
+  }
   // Cleanup migrations remove retired declarations from the effective schema.
   for (const m of source.matchAll(/DROP TABLE IF EXISTS\s+(\w+)/g)) out.delete(m[1]);
   for (const m of source.matchAll(/ALTER TABLE\s+(\w+)\s+DROP COLUMN\s+(\w+)/g)) out.get(m[1])?.delete(m[2]);

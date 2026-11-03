@@ -10,18 +10,21 @@ export default function MoveSharingDialog({
   initialFolderId,
   onClose,
   onSaved,
+  initialPreview,
 }: {
   slugs: string[];
   folders: { id: string; name: string }[];
   initialFolderId: string | null;
   onClose: () => void;
   onSaved: () => void;
+  initialPreview?: SharingPreview;
 }) {
   const t = useT(),
     [folderId, setFolderId] = useState(initialFolderId),
-    [preview, setPreview] = useState<SharingPreview | null>(null),
+    [preview, setPreview] = useState<SharingPreview | null>(initialPreview ?? null),
     [error, setError] = useState("");
   useEffect(() => {
+    if (initialPreview) return;
     let alive = true;
     adminFetch<SharingPreview>("/api/me/sharing/move", {
       method: "POST",
@@ -36,13 +39,14 @@ export default function MoveSharingDialog({
     return () => {
       alive = false;
     };
-  }, [slugs, folderId]);
+  }, [slugs, folderId, initialPreview]);
   return (
     <SharingDialog
-      title={t(slugs.length > 1 ? "Move documents" : "Move document")}
+      title={t(initialPreview ? "Move and update sharing?" : slugs.length > 1 ? "Move documents" : "Move document")}
+      className="scope-sharing-compact"
       onClose={onClose}
       disabled={!preview}
-      confirmLabel={t("Confirm move")}
+      confirmLabel={t(preview?.items.length ? "Move and update" : "Confirm move")}
       onSubmit={async () => {
         try {
           await adminFetch("/api/me/sharing/move", {
@@ -61,7 +65,7 @@ export default function MoveSharingDialog({
         }
       }}
     >
-      <label>
+      {initialPreview ? <p className="scope-object">{t("Move {n} artifacts to {name}", { n: slugs.length, name: folders.find(f => f.id === folderId)?.name ?? t("Unfiled") })}</p> : <label>
         {t("Move to folder")}
         <select
           value={folderId ?? ""}
@@ -77,7 +81,7 @@ export default function MoveSharingDialog({
             </option>
           ))}
         </select>
-      </label>
+      </label>}
       {error && (
         <p className="drawer-error" role="alert">
           {t(error)}
@@ -89,7 +93,7 @@ export default function MoveSharingDialog({
           {preview.items.some((i) => i.source === "folder") && (
             <p className="scope-notice">
               {t(
-                "Moving into a shared folder replaces custom settings and starts following that folder.",
+                "These artifacts will follow the folder's sharing settings.",
               )}
             </p>
           )}

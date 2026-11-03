@@ -50,7 +50,14 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     await writeFile(path.join(dir, "report.html"), "<!doctype html><html><head><title>Official acceptance</title></head><body><h1>First report</h1><p>The first immutable snapshot.</p></body></html>");
     await mkdir("test-results/official", { recursive: true });
   });
-  afterAll(async () => { await browser?.close(); if (dir) await rm(dir, { recursive: true, force: true }); });
+  afterAll(async () => {
+    if (browser) {
+      // Bound shutdown of the isolated test browser if Chromium's graceful exit stalls.
+      const shutdown = setTimeout(() => browser.process()?.kill("SIGKILL"), 5000);
+      try { await browser.close(); } finally { clearTimeout(shutdown); }
+    }
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
   async function shot(name: string) { await page.screenshot({ path: `test-results/official/${name}.png`, fullPage: true }); }
   async function clickText(text: string) {
     await page.waitForFunction(value => [...document.querySelectorAll("button")].some(b => b.textContent?.trim() === value && !b.disabled), {}, text);
@@ -65,12 +72,12 @@ describe.skipIf(!base)("official version browser acceptance", () => {
   it("keeps upload geometry, cancels without a write, and preserves formal history while latest advances", async () => {
     await page.goto(base!, { waitUntil: "networkidle2" });
     await page.waitForSelector("input[type=file]");
-    const box = await page.$(".hero-upload, .dropzone");
+    const box = await page.$(".home-action-row");
     const before = await box!.boundingBox();
     let writes = 0;
     page.on("request", req => { if (req.method() === "POST" && new URL(req.url()).pathname === "/api/sites") writes++; });
-    const input = await page.$("input[type=file]:not([webkitdirectory])");
-    await input!.uploadFile(path.join(dir, "report.html"));
+    const [chooser] = await Promise.all([page.waitForFileChooser(), page.click("button:has(.home-upload-label)")]);
+    await chooser.accept([path.join(dir, "report.html")]);
     await page.waitForSelector("dialog[open]");
     const during = await box!.boundingBox();
     expect(during!.width).toBe(before!.width);
@@ -79,7 +86,8 @@ describe.skipIf(!base)("official version browser acceptance", () => {
     await page.keyboard.press("Escape");
     await page.waitForSelector("dialog[open]", { hidden: true });
     expect(writes).toBe(0);
-    await input!.uploadFile(path.join(dir, "report.html"));
+    const [retryChooser] = await Promise.all([page.waitForFileChooser(), page.click("button:has(.home-upload-label)")]);
+    await retryChooser.accept([path.join(dir, "report.html")]);
     await page.waitForSelector("dialog[open]");
     await page.click("dialog input[type=checkbox]");
     await Promise.all([page.waitForFunction(() => location.pathname.startsWith("/s/")), page.click("dialog .solid")]);
