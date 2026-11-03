@@ -1,3 +1,4 @@
+import { admittedMainPasscode, activeMainPasscode } from "@/lib/main-passcode";
 import { sharePeopleAdmit } from "@/lib/share-admission";
 import { mainSharingActive, mainSharingRole } from "@/lib/sharing-read";
 import { publicationPolicy } from "@/lib/publication-policy";
@@ -87,6 +88,8 @@ export async function authorizePreview(
       if (!readerVersionAllowed(site, grant.versionId, share.versionId)) return null;
       if (share.policy === "login" && !grant.userId) return null;
       if (share.policy === "people" && (!grant.userId || !await sharePeopleAdmit(share.id, grant.userId))) return null;
+    } else if (grant.mainPasscodeId) {
+      if ((await activeMainPasscode(site))?.id !== grant.mainPasscodeId || !readerVersionAllowed(site, grant.versionId)) return null;
     } else if (
       site.visibility === "private" || !(await mainSharingActive(site)) ||
       site.takenDownAt ||
@@ -155,7 +158,9 @@ export async function authorizePreview(
   // Attribute a key only to a share that actually admits this version. A direct
   // viewer grant can independently admit current/official alongside a pinned link.
   const previewShare = share && readerVersionAllowed(site,versionId,share.versionId) ? share : receipt;
+  const mainPasscode = authority.source === "main" ? await admittedMainPasscode(request, site) : null;
   const grant: PreviewGrant = {
+    ...(mainPasscode ? { mainPasscodeId: mainPasscode.id } : {}),
     versionId,
     ...(receipt ? {receiptShareId:receipt.id} : {}),
     shareId: previewShare?.id ?? null,

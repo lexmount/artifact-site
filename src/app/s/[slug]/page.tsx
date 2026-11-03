@@ -1,3 +1,5 @@
+import MainPasscodeEntry from "@/components/main-passcode-entry";
+import { activeMainPasscode } from "@/lib/main-passcode";
 import { siteAuthorName } from "@/lib/site-author";
 import SiteAccessDenied from "@/components/site-access-denied";
 import SiteVersionMissing from "@/components/site-version-missing";
@@ -56,7 +58,8 @@ const pageContext = cache(async (slug: string, requestedVersion?: string) => {
     : !readable && original.site.takenDownAt ? "removed"
     : !readable ? "denied" : !selectedView ? "version-missing"
     : !(await canReadVersion(request, selectedView.site, selectedView.version.id, session)) ? "denied" : "ready";
-  return { bag, request, view: selectedView, session, state };
+  const needsPasscode = state === "denied" && !readable && view && await activeMainPasscode(view.site) && await publicationPolicy.allowsVersion(view.site, view.version.id);
+  return { bag, request, view: selectedView, session, state, needsPasscode: Boolean(needsPasscode) };
 });
 
 /** How much of the entry document to scan for a description. `<head>` lives at the top, and a large
@@ -124,17 +127,18 @@ export default async function ViewerPage({
   params, searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ published?: string; version?: string; presentation?: string; collection?: string }>;
+  searchParams: Promise<{ published?: string; version?: string; presentation?: string; collection?: string; e?: string }>;
 }) {
   const { slug } = await params;
-  const { published, version: requestedVersion, presentation, collection } = await searchParams;
+  const { published, version: requestedVersion, presentation, collection, e } = await searchParams;
   // One rebuilt Request and one session resolution for the whole request — generateMetadata, the
   // gate, the permission flags and the view log all see the same reader (see pageContext). The
   // viewer Request variant carries the address / agent / prefetch headers logSiteOpen reads; the
   // authorization path ignores them.
-  const { request, view, session, state } = await pageContext(slug, requestedVersion);
+  const { request, view, session, state, needsPasscode } = await pageContext(slug, requestedVersion);
   if (state === "missing") notFound();
   if (state === "removed") return removedNotice(await getT());
+  if (state === "denied" && needsPasscode) return <MainPasscodeEntry slug={slug} version={requestedVersion} error={e} session={session}/>;
   if (state === "denied") return SiteAccessDenied({ session });
   if (state === "version-missing" || !view) return SiteVersionMissing({ slug });
   // Independent lookups, one round-trip's worth of waiting. `session` is threaded into

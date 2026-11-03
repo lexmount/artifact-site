@@ -13,7 +13,7 @@ import { Bookmark } from "lucide-react";
 import { bookmarkletSource, BOOKMARKLET_TARGET_PATH } from "@/lib/bookmarklet";
 import { useT } from "@/components/locale-provider";
 
-export default function BookmarkletLink() {
+export default function BookmarkletLink({ menuItem = false }: { menuItem?: boolean } = {}) {
   const t = useT();
   // Lazy initialization rather than setState in an effect: origin is already known on the first
   // client frame. There is no window during SSR, so fall back to "" and fill it in on hydration.
@@ -26,6 +26,10 @@ export default function BookmarkletLink() {
   useEffect(() => {
     if (origin && link.current) link.current.href = bookmarkletSource(origin);
   }, [origin]);
+
+  if (menuItem) return <a ref={link} role="menuitem" className="menu-item" href={appPath(BOOKMARKLET_TARGET_PATH)} draggable title={t("Drag it to your bookmarks bar")}>
+    <Bookmark size={14} aria-hidden="true" /> {t("Publish this page")}
+  </a>;
 
   return (
     <p className="bookmarklet-strip">

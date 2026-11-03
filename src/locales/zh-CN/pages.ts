@@ -3,6 +3,18 @@ import type { Messages } from "@/lib/i18n";
 /** Pages under src/app (home, not-found, /activate, /me, /for-agents, /publish-from-page, /s/[slug],
  *  /s/[slug]/edit, /v/[token]). Keys are the English source strings exactly as written in code. */
 export const pages: Messages = {
+  // Agent-first homepage and shared entry prompt.
+  "Manage your agent’s work,": "管理 Agent 的作品，",
+  "build a bridge to collaboration.": "让它成为协作的桥梁。",
+  "Share pages, reports and documents with one link.": "网页、报告和文档，一个链接就能分享。",
+  "Discuss together, then let an agent keep improving it.": "和小伙伴一起讨论，让 Agent 接着完善。",
+  "Copy prompt for agent": "复制提示词给 Agent",
+  "Or": "或",
+  "upload an artifact": "上传作品",
+  "Copy, then paste into the agent you already use.": "复制后，粘贴给你正在使用的 Agent",
+  "Could not copy automatically. Select the prompt below and copy it manually.": "未能自动复制，请选中下方提示词并手动复制。",
+  "Ask your agent to host something, or upload an artifact above.": "让 Agent 帮你托管产物，或从上方上传作品。",
+
   // /oauth/authorize — the consent page (titles and messages come from lib/oauth)
   "Connect an application": "连接应用",
   "your account": "你的账号",
@@ -40,9 +52,6 @@ export const pages: Messages = {
 
   // Home
   "link": "链接",
-  "HTML, folders, PDFs and Office documents all become shareable links.": "HTML、文件夹、PDF 或 Office 文档，都能变成可分享的链接。",
-  "Publish this project's output (a web page or a PDF/Office document) to artifact-site. Publishing guide: {url}":
-    "请把当前项目的产物（网页或 PDF/Office 文档）发布到 artifact-site，发布手册：{url}",
 
   // Not found
   "Site not found — artifact-site": "站点不存在 — artifact-site",

@@ -2,9 +2,10 @@ import type { Messages } from "@/lib/i18n";
 
 /** Shared chrome: app title, navigation, generic buttons. Feature areas keep their own files. */
 export const common: Messages = {
-  "artifact-site — turn your work into a link to share and collaborate": "artifact-site — 把作品，变成可分享、可协作的链接",
-  "Upload it and it is online. Pages, reports, dashboards — all become links you can share and edit in place.":
-    "上传即上线。页面、报告、看板，都能变成可分享、可在线修改的链接。",
+  "My artifacts": "我的作品",
+  "artifact-site — manage your agent’s work and collaborate": "artifact-site — 管理 Agent 的作品，让它成为协作的桥梁",
+  "Manage your agent’s pages, reports and documents. Share a link, discuss with your collaborators, and let an agent keep improving the work.": "管理 Agent 生成的网页、报告和文档。用一个链接分享，和小伙伴一起讨论，让 Agent 接着完善。",
+
   // Counts (countText): Chinese has no plural, so both keys share one value.
   "{n} version": "{n} 个版本",
   "{n} versions": "{n} 个版本",

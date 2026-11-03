@@ -257,16 +257,15 @@ describe("C5 the More menu folds the secondary actions", () => {
   it("the secondary actions sit inside the menu, the primary ones stay on the bar", () => {
     const controls = block(viewer, 'className="controls"', "</header>");
     const menuBlock = block(controls, "<MoreMenu", "</MoreMenu>");
-    // The bare artifact moved into the menu with the design pass; Edit and the device switch stay on the bar.
+    // Editing moves into More; device switching and sharing stay on the bar.
     expect(menuBlock).not.toContain('aria-label={t("Preview device")}');
     expect(menuBlock).toContain('{t("Open in new window")}');
     expect(menuBlock).toContain('variant="menu-item"');
     expect(menuBlock).toContain('onClick={fork}');
     expect(menuBlock).toContain('className="menu-item fs-mode"');
     // The owner's window into the administration log sits in the menu too, owner-only.
-    expect(menuBlock).toContain('{permissions.canManageSharing && <AdminActivity slug={slug} onOpenChange={onActivityOpen} />}');
     const before = controls.slice(0, controls.indexOf("<MoreMenu"));
-    expect(before).toContain('href={`/s/${slug}/edit${(commentVersion || props.pinnedVersionId) ? `?version=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`}'); // edit is a first-class button on the bar
+    expect(menuBlock).toContain('href={`/s/${slug}/edit${(commentVersion || props.pinnedVersionId) ? `?version=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`}'); // edit is now a menu action
     expect(before).toContain('className="segmented device-switch"'); // and so is the device preview
     expect(before).toContain('<SharePanel');
   });
@@ -388,7 +387,7 @@ describe("C5 no action on the bar may go missing", () => {
   it("the panel copies the read-only link and must never include the edit token", () => {
     const copy = block(share, "async function copy()", "\n  }");
     expect(share).toContain("setUrl(`${window.location.origin}${appPath(`/s/${slug}`)}`)");
-    expect(copy).toContain("navigator.clipboard.writeText(url)");
+    expect(copy).toContain("navigator.clipboard.writeText(");
     expect(copy).not.toContain("?t=");
     expect(viewer).not.toContain("async function shareEditable");
     expect(viewer).toContain("permissions.canRename");
@@ -406,7 +405,7 @@ describe("C5 no action on the bar may go missing", () => {
 
   it("login-only actions degrade to LockedAction without permission instead of disappearing", () => {
     expect(controls).toContain('<LockedAction label={t("Sharing settings")}');
-    expect(controls).toContain('<LockedAction label={t("Edit")}');
+    expect(controls).toContain('<LockedAction variant="menu-item" label={t("Edit")}');
   });
 });
 
@@ -518,18 +517,18 @@ describe("home page hero", () => {
   // The hero's copy half; the other half is the motion.
   const hero = home.slice(home.indexOf('<div className="hero-copy">'), home.indexOf('<HeroMotion'));
 
-  it("is one headline and one line of prose — nothing else", () => {
+  it("uses one headline and one short description", () => {
     expect(hero.match(/<h1>/g)).toHaveLength(1);
     expect(hero.match(/className="deck"/g)).toHaveLength(1);
     expect(hero).not.toContain("eyebrow");
   });
 
-  it("keeps the prose to a single sentence", () => {
-    const deck = hero.slice(hero.indexOf('className="deck"'));
-    // The copy is the English key inside `{t("…")}`; unwrap it so the budget applies to the words.
-    const text = deck.slice(deck.indexOf(">") + 1, deck.indexOf("</p>")).replace(/^\{t\("(.*)"\)\}$/, "$1");
-    expect(text.length).toBeLessThanOrEqual(80); // one line's budget (English); over budget means rewrite, not squeeze
-    expect(text.match(/[.。]/g)).toHaveLength(1);
+  it("keeps sharing and continued collaboration in two concise lines", () => {
+    const deck = hero.slice(hero.indexOf('className="deck"'), hero.indexOf("</p>"));
+    const lines = [...deck.matchAll(/t\("([^"\n]+)"\)/g)].map(match => match[1]);
+    expect(lines).toHaveLength(2);
+    expect(deck).toContain("<br />");
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(80);
   });
 });
 

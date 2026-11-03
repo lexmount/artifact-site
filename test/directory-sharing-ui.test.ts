@@ -22,7 +22,7 @@ const directory:DirectoryPage = {sites,permissions:{},total:2,ownedTotal:2,query
 const render=(value=directory)=>renderToStaticMarkup(createElement(MySites,{sites:value.sites,directory:value,userId:"owner"}));
 it("keeps existing list fields and exposes owner sharing filters, labels and collection tooltip",()=>{
   const html=render();
-  for(const label of ["Total opens","Who can open","Versions","Updated","Sharing status","Active independent links","Only me"]) expect(html).toContain(label);
+  for(const label of ["Total opens","Who can open","Versions","Updated","Sharing status","Active independent links","Private"]) expect(html).toContain(label);
   expect(html).toContain('title="Share all sites"');
   expect(html).toContain('aria-pressed="true"');
   expect(html).toContain("Shared means others currently have access");

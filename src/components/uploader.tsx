@@ -25,7 +25,7 @@ import { ClientQuotaExceeded, quotaDetailsFrom, type QuotaDetails } from "@/lib/
 
 import { collectFromDrop, type Picked } from "@/lib/upload-pick";
 
-export default function Uploader({ compact = false, footerAction }: { compact?: boolean; footerAction?: ReactNode } = {}) {
+export default function Uploader({ compact = false, inline = false, footerAction }: { compact?: boolean; inline?: boolean; footerAction?: ReactNode } = {}) {
   const t = useT();
   const router = useRouter();
   const { confirmUpload, uploadConfirmation } = useUploadConfirmation();
@@ -65,10 +65,10 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
     setError(uploadFailureMessage(error, fallback, t));
   }
 
-  // Compact mode: the whole window is the drop target. A drag entering the document raises the
+  // Compact and inline modes: the whole window is the drop target. A drag entering the document raises the
   // overlay; leaving it (or dropping) lowers it. Counted, because dragenter/leave fire per element.
   useEffect(() => {
-    if (!compact) return;
+    if (!compact && !inline) return;
     let depth = 0;
     const enter = (e: DragEvent) => { if (!e.dataTransfer?.types.includes("Files")) return; depth++; setPageDrag(true); };
     const leave = () => { depth = Math.max(0, depth - 1); if (depth === 0) setPageDrag(false); };
@@ -80,7 +80,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
     document.addEventListener("dragenter", enter); document.addEventListener("dragleave", leave);
     document.addEventListener("dragover", over); document.addEventListener("drop", drop);
     return () => { document.removeEventListener("dragenter", enter); document.removeEventListener("dragleave", leave); document.removeEventListener("dragover", over); document.removeEventListener("drop", drop); };
-  }, [compact]);
+  }, [compact, inline]);
 
   /**
    * Large projects take the chunked route: stream one file at a time, then commit at the end.
@@ -301,12 +301,83 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
     </>
   );
 
+  const pastePanel = (
+    <div className="paste-panel">
+      <div className="field">
+        <label htmlFor="paste-title">{t("Title (optional)")}</label>
+        <input id="paste-title" value={pasteTitle} placeholder={t("My site")} onChange={(e) => setPasteTitle(e.target.value)} />
+      </div>
+      <div className="field">
+        <label htmlFor="paste-html">HTML</label>
+        <textarea id="paste-html" value={pasteHtml} placeholder="<!doctype html> …" onChange={(e) => setPasteHtml(e.target.value)} spellCheck={false} />
+      </div>
+      <div className="row">
+        <button type="button" className="btn ghost" onClick={() => { setPaste(false); setError(null); setQuota(null); }} disabled={busy}>{t(inline ? "Cancel" : "Back to drop zone")}</button>
+        <button data-analytics-button="upload" type="button" className="btn solid" onClick={submitPaste} disabled={busy}>
+          {busy ? <><Loader2 size={15} className="spin" /> {t("Publishing")}</> : t("Publish and get a link")}
+        </button>
+      </div>
+    </div>
+  );
+
+  const uploadOptions = <>
+    <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => fileInput.current?.click()}><FileCode2 size={14} /> {t("A file (HTML, PDF, Office, zip)")}</button>
+    <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => folderInput.current?.click()}><FolderUp size={14} /> {t("A folder")}</button>
+    <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => zipInput.current?.click()}><FileArchive size={14} /> {t("An archive (ZIP, RAR, 7z, TAR, TAR.GZ, TGZ)")}</button>
+    <button type="button" role="menuitem" className="menu-item" onClick={() => { setPaste(true); setError(null); setQuota(null); }}><ClipboardPaste size={14} /> {t("Paste HTML")}</button>
+  </>;
+  const feedback = <>
+    {progress && progress.total > 0 && (
+      <div className="upload-progress" role="status" aria-live="polite">
+        <div className="upload-progress-bar"><span style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} /></div>
+        <p>{t("Uploaded {done} / {total} MB", { done: (progress.done / 1048576).toFixed(1), total: (progress.total / 1048576).toFixed(1) })}</p>
+      </div>
+    )}
+    {leave.hint}
+    {error && <p className="upload-error" role="alert">{error}</p>}
+    {quota && <QuotaNotice details={quota} />}
+  </>;
+  const dropOverlay = <>
+    {pageDrag && (
+      <div
+        className={`page-drop${drag ? " is-drag" : ""}`}
+        onDragOver={(e) => { e.preventDefault(); if (!busy) setDrag(true); }}
+        onDragLeave={(e) => { e.preventDefault(); setDrag(false); }}
+        onDrop={onDrop}
+      >
+        <div className="page-drop-inner"><UploadCloud size={28} aria-hidden="true" /><b>{t("Drop to publish")}</b><span>{t("HTML · PDF · PPTX · DOCX · folder · ZIP / RAR / 7z / TAR / TAR.GZ / TGZ")}</span></div>
+      </div>
+    )}
+  </>;
+
+  if (inline) {
+    return <div className="hero-upload inline-upload">
+      <span className="inline-upload-actions">
+        <button data-analytics-button="upload" type="button" className="home-upload-trigger" onClick={() => fileInput.current?.click()} disabled={busy}>
+          {t("Or")} <span className="home-upload-label">{t("upload an artifact")}</span>
+        </button>
+        <MoreMenu label={t("More upload options")} iconOnly buttonClassName="home-upload-more" buttonContent={<ChevronDown size={14} aria-hidden="true" />} disabled={busy}>
+          {uploadOptions}
+          {footerAction}
+        </MoreMenu>
+      </span>
+      {(paste || busy || submittedJob || error || quota) && <div className="inline-upload-feedback">
+        {paste && pastePanel}
+        {busy && <p className="inline-upload-status" role="status"><Loader2 size={15} className="spin" aria-hidden="true" />{t("Publishing…")}</p>}
+        {submittedJob && <PackageUploadHint versionId={submittedJob} />}
+        {feedback}
+      </div>}
+      {inputs}
+      {dropOverlay}
+    </div>;
+  }
+
   if (compact) {
     return (
       <div className="hero-upload">
         {/* The zone itself takes a drop (the page-wide overlay below takes the rest of the page);
             the button sits at its right edge, so "drag it here, or click" reads left to right. */}
-        <div
+        {paste ? pastePanel : <div
           className={`hero-drop${drag ? " is-drag" : ""}`}
           onDragOver={(e) => { e.preventDefault(); if (!busy) setDrag(true); }}
           onDragLeave={(e) => { e.preventDefault(); setDrag(false); }}
@@ -324,37 +395,18 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
               {busy ? <Loader2 size={16} className="spin" aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />} {busy ? t("Publishing…") : t("Upload")}
             </button>
             <MoreMenu label={t("More upload options")} iconOnly buttonClassName="primary upload-more" buttonContent={<ChevronDown size={14} aria-hidden="true" />} disabled={busy}>
-              <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => fileInput.current?.click()}><FileCode2 size={14} /> {t("A file (HTML, PDF, Office, zip)")}</button>
-              <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => folderInput.current?.click()}><FolderUp size={14} /> {t("A folder")}</button>
-              <button data-analytics-button="upload" type="button" role="menuitem" className="menu-item" onClick={() => zipInput.current?.click()}><FileArchive size={14} /> {t("An archive (ZIP, RAR, 7z, TAR, TAR.GZ, TGZ)")}</button>
+              {uploadOptions}
             </MoreMenu>
           </span>
-        </div>
+        </div>}
         {submittedJob && <PackageUploadHint versionId={submittedJob} />}
         <div className="hero-upload-footer">
           <div className="formats">{t("No build, no configuration — upload and share.")}</div>
           {footerAction}
         </div>
-        {progress && progress.total > 0 && (
-          <div className="upload-progress" role="status" aria-live="polite">
-            <div className="upload-progress-bar"><span style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} /></div>
-            <p>{t("Uploaded {done} / {total} MB", { done: (progress.done / 1048576).toFixed(1), total: (progress.total / 1048576).toFixed(1) })}</p>
-          </div>
-        )}
-        {leave.hint}
-        {error && <p className="upload-error" role="alert">{error}</p>}
-        {quota && <QuotaNotice details={quota} />}
+        {feedback}
         {inputs}
-        {pageDrag && (
-          <div
-            className={`page-drop${drag ? " is-drag" : ""}`}
-            onDragOver={(e) => { e.preventDefault(); if (!busy) setDrag(true); }}
-            onDragLeave={(e) => { e.preventDefault(); setDrag(false); }}
-            onDrop={onDrop}
-          >
-            <div className="page-drop-inner"><UploadCloud size={28} aria-hidden="true" /><b>{t("Drop to publish")}</b><span>{t("HTML · PDF · PPTX · DOCX · folder · ZIP / RAR / 7z / TAR / TAR.GZ / TGZ")}</span></div>
-          </div>
-        )}
+        {dropOverlay}
       </div>
     );
   }
@@ -425,22 +477,7 @@ export default function Uploader({ compact = false, footerAction }: { compact?: 
           <input ref={zipInput} type="file" accept=".zip,.rar,.7z,.tar,.tar.gz,.tgz" hidden onChange={(e) => onPickFiles(e.target.files, "zip")} />
         </div>
       ) : (
-        <div className="paste-panel">
-          <div className="field">
-            <label htmlFor="paste-title">{t("Title (optional)")}</label>
-            <input id="paste-title" value={pasteTitle} placeholder={t("My site")} onChange={(e) => setPasteTitle(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="paste-html">HTML</label>
-            <textarea id="paste-html" value={pasteHtml} placeholder="<!doctype html> …" onChange={(e) => setPasteHtml(e.target.value)} spellCheck={false} />
-          </div>
-          <div className="row">
-            <button type="button" className="btn ghost" onClick={() => { setPaste(false); setError(null); setQuota(null); }} disabled={busy}>{t("Back to drop zone")}</button>
-            <button data-analytics-button="upload" type="button" className="btn solid" onClick={submitPaste} disabled={busy}>
-              {busy ? <><Loader2 size={15} className="spin" /> {t("Publishing")}</> : t("Publish and get a link")}
-            </button>
-          </div>
-        </div>
+        pastePanel
       )}
       {submittedJob && !compact && <PackageUploadHint versionId={submittedJob} />}
       {error && <p className="upload-error" role="alert">{error}</p>}

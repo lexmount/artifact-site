@@ -16,6 +16,13 @@ async function api<T>(page: Page, path: string, body: object, method = "POST"): 
 }
 const content = (title: string) => ({ mode: "paste", title, html: `<html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>` });
 
+// Reader fixtures opt into link access separately; real creation defaults to private.
+async function publishReadable(page: Page, title: string): Promise<Published> {
+  const artifact = await api<Published>(page, "/api/sites", content(title));
+  await api(page, `/api/sites/${artifact.slug}/sharing`, { visibility: "unlisted" }, "PUT");
+  return artifact;
+}
+
 describe.skipIf(!base)("home shelves and shared history", () => {
   let browser: Browser;
   let owner: Page;
@@ -37,9 +44,9 @@ describe.skipIf(!base)("home shelves and shared history", () => {
       page.on("pageerror", error => errors.push(String(error)));
       await page.goto(base, { waitUntil: "networkidle0" });
     }
-    first = await api<Published>(owner, "/api/sites", content("History older"));
-    second = await api<Published>(owner, "/api/sites", content("History newer"));
-    shared = await api<Published>(owner, "/api/sites", content("History private snapshot"));
+    first = await publishReadable(owner, "History older");
+    second = await publishReadable(owner, "History newer");
+    shared = await publishReadable(owner, "History private snapshot");
     await api(owner, `/api/sites/${shared.slug}/sharing`, { visibility: "private" }, "PUT");
     const share = await api<{ token: string }>(owner, `/api/sites/${shared.slug}/shares`, { policy: "public", versionId: shared.versionId });
     token = share.token;
@@ -127,7 +134,7 @@ describe.skipIf(!base)("home shelves and shared history", () => {
   });
 
   it("forgets a deleted direct site after visiting its not-found page", async () => {
-    const doomed = await api<Published>(owner, "/api/sites", content("Deleted recent site"));
+    const doomed = await publishReadable(owner, "Deleted recent site");
     await reader.goto(`${base}/s/${doomed.slug}`, { waitUntil: "domcontentloaded" });
     await reader.waitForFunction(slug => JSON.parse(localStorage.getItem("sites:recent:v1")!).items.some((item: { slug: string }) => item.slug === slug), { polling: 100 }, doomed.slug);
     await api(owner, `/api/sites/${doomed.slug}`, {}, "DELETE");
@@ -137,7 +144,7 @@ describe.skipIf(!base)("home shelves and shared history", () => {
   });
 
   it("preserves history at login/passcode gates, then forgets a revoked share", async () => {
-    const artifact = await api<Published>(owner, "/api/sites", content("Revoked recent share"));
+    const artifact = await publishReadable(owner, "Revoked recent share");
     const link = await api<{ token: string; share: { id: string } }>(owner, `/api/sites/${artifact.slug}/shares`, { policy: "public", versionId: artifact.versionId });
     await reader.goto(`${base}/v/${link.token}`, { waitUntil: "networkidle0" });
     const hasEntry = () => reader.evaluate(slug => JSON.parse(localStorage.getItem("sites:recent:v1")!).items.some((item: { slug: string }) => item.slug === slug), artifact.slug);
@@ -158,7 +165,7 @@ describe.skipIf(!base)("home shelves and shared history", () => {
   });
 
   it("forgets an access-denied direct entrance without exposing its content", async () => {
-    const artifact = await api<Published>(owner, "/api/sites", content("Permission-masked history"));
+    const artifact = await publishReadable(owner, "Permission-masked history");
     await reader.goto(`${base}/s/${artifact.slug}`, { waitUntil: "domcontentloaded" });
     await reader.waitForFunction(slug => JSON.parse(localStorage.getItem("sites:recent:v1")!).items.some((item: { slug: string }) => item.slug === slug), { polling: 100 }, artifact.slug);
     await api(owner, `/api/sites/${artifact.slug}/sharing`, { visibility: "private" }, "PUT");

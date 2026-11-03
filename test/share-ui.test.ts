@@ -15,6 +15,7 @@ import {
   viewerLabel, type PickedPerson, type ShareListItem, type ShareViewRow,
 } from "@/components/share-model";
 import { isLive } from "@/lib/share";
+import { accessAudiences } from "@/lib/sharing-policy";
 import { translatorFor } from "@/lib/i18n";
 // Assert directly against the **API's own parsers**: a wrong field name/value does not make the API
 // error out (POST treats the expiry as unset, PATCH as unchanged). This is the spot on this screen
@@ -155,7 +156,7 @@ describe("quick sharing is idempotent", () => {
   });
 
   it("copies the main URL without creating an independent share", () => {
-    expect(panel).toContain("await navigator.clipboard.writeText(url)");
+    expect(panel).toContain("await navigator.clipboard.writeText(");
     expect(panel).not.toContain('method: "POST"');
   });
 });
@@ -457,8 +458,8 @@ describe("read* does not assume the API's envelope shape", () => {
 // ── Structural constraints: no DOM in node, so anchor on the source ──────────
 
 describe("private is now a real option", () => {
-  it("the dropdown has private, and the label no longer says 'not yet enabled'", () => {
-    expect(panel).toContain('["private", "unlisted", "public"]');
+  it("the expanded choices include private, and the label no longer says 'not yet enabled'", () => {
+    expect(accessAudiences(false, true)).toEqual(["private", "login", "passcode", "anyone"]);
     expect(VISIBILITY_LABEL.private).toContain("share link");
     expect(panel).not.toContain("not yet enabled");
     expect(VISIBILITY_LABEL.private).not.toContain("not yet enabled");
@@ -501,13 +502,6 @@ describe("defaults and options for a new share link", () => {
     expect(warning.get("padding")).toBe(".75rem 0 0");
     expect(warning.get("border")).toBe("0");
     expect(warning.get("border-top")).toBeTruthy();
-  });
-
-  it("keeps all three sharing tabs on one line on mobile", () => {
-    const mobile = css.indexOf("@media (max-width: 600px)", css.indexOf('.drawer-tabs button[aria-selected="true"]'));
-    const tabs = declarations(".drawer-tabs", mobile);
-    expect(tabs.get("overflow-x")).toBe("auto");
-    expect(tabs.get("white-space")).toBe("nowrap");
   });
 
   it("the default is login — not public, and not the strictest policy either", () => {

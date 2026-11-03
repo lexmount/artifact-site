@@ -49,7 +49,7 @@ export async function PUT(request: Request, context: { params: Promise<{ slug: s
     await withPermissionCommit(request,view.site.id,"site.sharing.manage", async (q, site) => {
       const { markSharingManual } = await import("@/lib/sharing-defaults");
       site = await markSharingManual(q, site);
-      await q("UPDATE sites SET visibility=$1,updated_at=$2 WHERE id=$3", [visibility, Date.now(), site.id]);
+      await q("UPDATE sites SET visibility=$1 WHERE id=$2", [visibility, site.id]);
       await markSharingManual(q, site, { audience: visibility === "unlisted" ? "anyone" : visibility });
     });
     await recordSiteAudit(view.site.id, "share", apiAuditContext(request, actor)); // best-effort, non-atomic

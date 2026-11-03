@@ -16,6 +16,7 @@ import {
   siteSharingChange,
   moveSharing,
   getSiteSharing,
+  getScope,
 } from "@/lib/sharing-defaults";
 const origin = "https://sharing.test";
 async function actor() {
@@ -34,6 +35,45 @@ async function actor() {
 }
 const tenantPolicy = { audience: "tenant" as const, comments: true };
 const privatePolicy = { audience: "private" as const, comments: false };
+it.each([false, true])("reports authoritative scope state and confirms renewed inheritance (folder=%s)", async folderScope => {
+  const a = await actor();
+  const site = (await createSite({ mode: "paste", html: "Independent settings" }, { ownerId: a.user.id })).site;
+  const folderId = folderScope ? (await createUserFolder(a.user.id, "Concurrent changes")).id : null;
+  if (folderId) await assignUserSite(a.user.id, site.slug, folderId);
+  async function apply(enabled: boolean, comments = false) {
+    const input = { enabled, policy: { ...privatePolicy, comments } };
+    const preview = await scopeChange(a.request, folderId, input);
+    await scopeChange(a.request, folderId, { ...input, confirmation: preview.confirmation });
+  }
+  await apply(true);
+  const opened = await getScope(a.request, folderId);
+  const ordinary = await scopeChange(a.request, folderId, { enabled: true, policy: { ...privatePolicy, comments: true } });
+  expect(ordinary).toMatchObject({ scope: { enabled: true, revision: opened.revision }, requiresConfirmation: false });
+  await siteSharingChange(a.request, site.id, { action: "custom", policy: privatePolicy });
+  await apply(false);
+  const current = await getScope(a.request, folderId);
+  expect(current.revision).toBeGreaterThan(opened.revision);
+  // Even an unchanged policy newly enrolls the manual artifact as a follower.
+  const renewed = await scopeChange(a.request, folderId, { enabled: true, policy: privatePolicy });
+  expect(renewed).toMatchObject({ scope: { enabled: false, revision: current.revision }, requiresConfirmation: true, items: [{ changed: false, source: folderScope ? "folder" : "all" }] });
+  expect(await getSiteSharing(site)).toMatchObject({ source: "manual", policy: privatePolicy });
+  await apply(true);
+  await expect(scopeChange(a.request, folderId, { enabled: true, policy: privatePolicy, confirmation: renewed.confirmation })).rejects.toThrow("Sharing changed");
+});
+it("offers scope organization access only to non-init users without rewriting saved policies", async () => {
+  const a = await actor();
+  const folder = await createUserFolder(a.user.id, "Team folder");
+  for (const id of [null, folder.id]) {
+    expect(await getScope(a.request, id)).toMatchObject({ canSelectOrganization: false, policy: { audience: "private" } });
+  }
+  const preview = await scopeChange(a.request, null, { enabled: true, policy: tenantPolicy });
+  await scopeChange(a.request, null, { enabled: true, policy: tenantPolicy, confirmation: preview.confirmation });
+  expect(await getScope(a.request, null)).toMatchObject({ canSelectOrganization: false, policy: tenantPolicy });
+  await rbacQuery("INSERT INTO tenants(id,name) VALUES('scope-team','Team')");
+  await rbacQuery("INSERT INTO tenant_members(tenant_id,user_id) VALUES('scope-team',$1)", [a.user.id]);
+  await rbacQuery("UPDATE users SET tenant_id='scope-team' WHERE id=$1", [a.user.id]);
+  for (const id of [null, folder.id]) expect(await getScope(a.request, id)).toMatchObject({ canSelectOrganization: true });
+});
 afterEach(async () => {
   await closeDbForTests();
   vi.unstubAllEnvs();
@@ -352,8 +392,8 @@ it("blocks unconfirmed legacy filing/import and restores on folder deletion", as
   });
   expect(result.report.sitesSkipped).toBe(1);
   expect(result.state.assign[site.slug]).toBeUndefined();
-  preview = await moveSharing(a.request, [site.slug], folder.id);
-  await moveSharing(a.request, [site.slug], folder.id, preview.confirmation);
+  const movePreview = await moveSharing(a.request, [site.slug], folder.id);
+  await moveSharing(a.request, [site.slug], folder.id, movePreview.confirmation);
   await setSharingPreference(a.request, "init", {
     audience: "login",
     comments: false,
@@ -691,7 +731,7 @@ it("publishes shared defaults immediately without private review schema", async 
   expect(migrations.map(row => row.id)).toContain("0017-tenant-slugs");
   expect(migrations.map(row => row.id)).toContain("0018-sharing-defaults");
   expect(migrations.map(row => row.id)).toContain("0021-public-author-name");
-  expect(migrations).toHaveLength(19);
+  expect(migrations).toHaveLength(20);
   expect(migrations.some(row => /0015|0016|0019|0020/.test(String(row.id)))).toBe(false);
   const tables = process.env.ARTIFACT_DB_DRIVER === "postgres"
     ? await rbacQuery("SELECT table_name AS name FROM information_schema.tables WHERE table_schema=current_schema()")

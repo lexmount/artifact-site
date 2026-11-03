@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/use-auth";
 import { mcpTools as tools } from "@/lib/mcp-tools";
 import CommandBlock from "@/components/command-block";
 import { useT } from "@/components/locale-provider";
+import { agentPrompt } from "@/lib/agent-prompt";
 import { guideCommands } from "@/lib/agent-connection-guide";
 
 const modes = ["agent", "cli", "mcp"] as const;
@@ -68,7 +69,7 @@ export default function AgentConnectionGuide({ base, oidcEnabled, dcrEnabled = t
       {modes.map((id, index) => <button type="button" key={id} id={`tab-${id}`} ref={(el) => { tabs.current[index] = el; }} role="tab" aria-selected={mode === id} aria-controls={id} tabIndex={mode === id ? 0 : -1} onKeyDown={(e) => navigate(e, index)} onClick={() => choose(id)}>{labels[index]}{index === 0 && <small>{t("Recommended")}</small>}</button>)}
     </div>
     <section id="agent" role="tabpanel" aria-labelledby="tab-agent" hidden={mode !== "agent"} tabIndex={0}>
-      <CommandBlock size="large" command={t("Publish this project's output (a web page or a PDF/Office document) to artifact-site. Publishing guide: {url}", { url: `${base}/for-agents.md` })} />
+      <CommandBlock size="large" command={agentPrompt(base, t)} />
       <p className="hint">{t("Works with Claude Code, Cursor, Codex and other assistants that can read a URL.")}</p>
       <ol className="steps">{[
         { icon: ClipboardCopy, title: t("Copy the line"), text: t("Send it to the agent you are working in.") },

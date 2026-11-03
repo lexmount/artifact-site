@@ -819,8 +819,8 @@ export class PostgresStore implements MetadataStore {
   }
 
   async updateSiteVisibility(siteId: string, visibility: Visibility): Promise<void> {
-    await this.pool.query("UPDATE sites SET visibility=$1, updated_at=$2 WHERE id=$3 AND deleted_at IS NULL",
-      [visibility, Date.now(), siteId]);
+    await this.pool.query("UPDATE sites SET visibility=$1 WHERE id=$2 AND deleted_at IS NULL",
+      [visibility, siteId]);
   }
 
   async listAudienceExcludedUserIds(siteId: string): Promise<string[]> {

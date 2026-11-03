@@ -64,7 +64,11 @@ describe.skipIf(!base || !token)("package preview in final image", () => {
       await page.waitForSelector(".package-navigation:not([hidden])");
       expect(await frame.$eval("#report", e => getComputedStyle(e).color)).toBe("rgb(12, 34, 56)");
       await page.screenshot({ path: "test-results/package-html.png", fullPage: true });
-      await frame.click("a"); await frame.waitForFunction(() => document.body.textContent?.includes("Second page"));
+      await Promise.all([
+        frame.waitForNavigation({ waitUntil: "load" }),
+        frame.locator("a").click(),
+      ]);
+      await frame.waitForFunction(() => document.body.textContent?.includes("Second page"));
       await page.evaluate(() => { const button = [...document.querySelectorAll("button")].find(b => b.textContent === "Back to file directory"); button?.click(); });
       await page.waitForFunction(() => document.querySelector("iframe.fs-frame") !== null);
       frame = (await (await page.$("iframe.fs-frame"))!.contentFrame())!;
@@ -160,8 +164,8 @@ describe.skipIf(!base || !token)("package preview in final image", () => {
     try {
       await page.setExtraHTTPHeaders({ "accept-language": "en" });
       await page.goto(base, { waitUntil: "networkidle2" });
-      const input = await page.waitForSelector("input[type=file]:not([webkitdirectory])");
-      await input!.uploadFile(file);
+      const [chooser] = await Promise.all([page.waitForFileChooser(), page.click("button:has(.home-upload-label)")]);
+      await chooser.accept([file]);
       await page.waitForSelector("dialog[open] .solid"); await page.click("dialog[open] .solid");
       await page.waitForSelector('.package-upload-hint a[href*="/s/"]');
       await page.click('.package-upload-hint a[href*="/s/"]');
@@ -188,9 +192,8 @@ describe.skipIf(!base || !token)("package preview in final image", () => {
     await page.setExtraHTTPHeaders({ "accept-language": "en" });
     try {
       await page.goto(base, { waitUntil: "networkidle2" });
-      await page.waitForSelector("input[type=file]:not([webkitdirectory])");
-      const input = await page.$("input[type=file]:not([webkitdirectory])");
-      await input!.uploadFile(path.resolve("test/fixtures/archives/acceptance.7z"));
+      const [chooser] = await Promise.all([page.waitForFileChooser(), page.click("button:has(.home-upload-label)")]);
+      await chooser.accept([path.resolve("test/fixtures/archives/acceptance.7z")]);
       await page.waitForSelector("dialog[open] .solid");
       await page.click("dialog[open] .solid");
       await page.waitForSelector('.package-upload-hint a[href*="/s/"]');
@@ -217,8 +220,9 @@ describe.skipIf(!base || !token)("package preview in final image", () => {
       await writeFile(path.join(dir, ".DS_Store"), "junk");
       await page.setExtraHTTPHeaders({ "accept-language": "en" });
       await page.goto(base, { waitUntil: "networkidle2" });
-      const input = await page.waitForSelector("input[webkitdirectory]");
-      await input!.uploadFile(dir);
+      await page.click('button[aria-label="More upload options"]');
+      const [chooser] = await Promise.all([page.waitForFileChooser(), page.click('::-p-text(A folder)')]);
+      await chooser.accept([dir]);
       await page.waitForSelector("dialog[open] .solid");
       await page.click("dialog[open] .solid");
       await page.waitForSelector('.package-upload-hint a[href*="/s/"]');

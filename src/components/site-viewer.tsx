@@ -31,7 +31,6 @@ import VersionUpload from "@/components/version-upload";
 import Coachmark from "@/components/coachmark";
 import { useLearnHint } from "@/lib/use-learn-hint";
 import VersionHistory, { drawerHost } from "@/components/version-history";
-import AdminActivity from "@/components/admin-activity";
 import SharePanel from "@/components/share-panel";
 import type { SitePermissions } from "@/lib/authz";
 import AuthButton from "@/components/auth-button";
@@ -284,7 +283,6 @@ export default function SiteViewer(props: {
   const onSharingOpen = useCallback((open: boolean) => setDrawerOpen("sharing", open), [setDrawerOpen]);
   const onMenuOpen = useCallback((open: boolean) => setDrawerOpen("menu", open), [setDrawerOpen]);
   const onVersionsOpen = useCallback((open: boolean) => setDrawerOpen("versions", open), [setDrawerOpen]);
-  const onActivityOpen = useCallback((open: boolean) => setDrawerOpen("activity", open), [setDrawerOpen]);
 
   // The intro hint runs once on mount. Toggling the pin later must not restart the timer: in manual
   // mode, unpinning means "stay where I left you", not "hide again in 2.6 seconds".
@@ -501,7 +499,7 @@ export default function SiteViewer(props: {
             </div>
             <div className="viewer-meta">
               <span className="kind-chip">{kind === "single" ? t("Single file") : kind === "document" ? t("Document") : t("Folder")}</span>
-              {props.mainAudience === "tenant" || props.mainAudience === "login" ? <span className="kind-chip">{t(AUDIENCE_LABELS[props.mainAudience])}</span> : <VisibilityChip visibility={props.visibility} />}
+              {props.mainAudience === "tenant" || props.mainAudience === "login" || props.mainAudience === "passcode" ? <span className="kind-chip">{t(AUDIENCE_LABELS[props.mainAudience])}</span> : <VisibilityChip visibility={props.visibility} />}
               <span className="dot" aria-hidden="true" />
             </div>
             <OfficialVersion slug={slug} versionId={viewedVersion} onStatus={officialStatus} onOpenChange={onVersionsOpen} />
@@ -527,12 +525,6 @@ export default function SiteViewer(props: {
               onFocus={(event) => { if (event.currentTarget.matches(":focus-visible")) showPinTip(event.currentTarget); }}
               onBlur={() => setPinTip(null)}
               onClick={togglePinned}><Pin size={14} aria-hidden="true" /></button>
-            {/* The bar carries the two things an owner does most — edit and share — as the design draws them:
-                an outline button and a black one, then everything else behind "···". */}
-            {mayEdit && <Link className="btn" href={`/s/${slug}/edit${(commentVersion || props.pinnedVersionId) ? `?version=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`}><Pencil size={14} aria-hidden="true" /> {t(officialVersion === viewedVersion ? "Create a new version" : "Edit")}</Link>}
-            {!mayEdit && permissions.needsLogin && kind !== "document" && (
-              <LockedAction label={t("Edit")} icon={<Pencil size={14} />} hint={t("Sign in required")} onOpen={() => openGate("edit")} />
-            )}
             {permissions.canManageSharing && <SharePanel key={slug} slug={slug} visibility={props.visibility} onOpenChange={onSharingOpen} />}
             {!permissions.canManageSharing && permissions.needsLogin && (
               <LockedAction label={t("Sharing settings")} icon={<Share2 size={14} />} hint={t("Sign in required")} onOpen={() => openGate("share")} />
@@ -540,6 +532,11 @@ export default function SiteViewer(props: {
             {/* Secondary actions fold into one "···" menu so the bar keeps its width for the title: the device
                 preview, the bare artifact, history, forking, the reveal-mode switch. */}
             <MoreMenu label={t("More")} iconOnly onOpenChange={onMenuOpen}>
+            {mayEdit && <Link role="menuitem" className="menu-item" href={`/s/${slug}/edit${(commentVersion || props.pinnedVersionId) ? `?version=${encodeURIComponent(commentVersion || props.pinnedVersionId!)}` : ""}`}><Pencil size={14} aria-hidden="true" /> {t(officialVersion === viewedVersion ? "Create a new version" : "Edit")}</Link>}
+            {!mayEdit && permissions.needsLogin && kind !== "document" && (
+              <LockedAction variant="menu-item" label={t("Edit")} icon={<Pencil size={14} />} hint={t("Sign in required")} onOpen={() => openGate("edit")} />
+            )}
+
               {permissions.canManageSharing && <SharePanel key={`views-${slug}`} slug={slug} visibility={props.visibility} entry="views" onOpenChange={onSharingOpen}/>}
               {permissions.canEditContent && <button role="menuitem" className="menu-item" onClick={openUpload}><FileUp size={14} /> {t("Upload new version")}</button>}
               {/* Named, not a bare external-link arrow: in almost every product that arrow reads as "share", and
@@ -560,8 +557,6 @@ export default function SiteViewer(props: {
               <button type="button" role="menuitem" className="menu-item" onClick={fork} disabled={forking || !permissions.canReadSource} title={t("Copy into a separate new site")}>
                 {forking ? <Loader2 size={14} className="spin" /> : <Copy size={14} aria-hidden="true" />} {t(commentVersion && commentVersion !== latestVersion ? "Save latest version as new site" : "Save as new site")}
               </button>
-              {/* The owner's view of the administration log: what staff did to this site, and when. */}
-              {permissions.canManageSharing && <AdminActivity slug={slug} onOpenChange={onActivityOpen} />}
               <span className="menu-sep" role="separator" />
               {/* Reveal-mode switch. Each state writes "what it is now, what clicking will change it to" into its title:
                   the "mouse + click" icon = manual (opens only when the handle is clicked), the "mouse" icon = automatic

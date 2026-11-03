@@ -42,17 +42,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       verification_url_manual: `${base}/activate`,
       interval: DEVICE_POLL_INTERVAL_S,
       expires_in: Math.floor(DEVICE_GRANT_TTL_MS / 1000),
-      /**
-       * The whole point of this field: an agent asked to "tell the user the verification_url" has
-       * to compose a sentence, and composing is exactly what a model skips when it is busy running
-       * the next command — so the link ends up buried in a tool log the user has to go spelunking
-       * for. Relaying a ready-made block verbatim needs no composition, so it survives. Keep it
-       * self-contained (both routes, the code, the deadline) and quotable as-is.
-       */
+      // Ready to relay or localize, preserving the exact links, code and expiry.
       user_message:
-        `Please open this link to authorize; sign in, then click "Allow":\n${verificationUrl}\n\n` +
+        `Please sign in and authorize this connection by opening the link below, then clicking "Allow":\n${verificationUrl}\n\n` +
+        `After approval, your agent can continue the requested hosting and sharing task. Later requests can reuse this connection while it remains authorized.\n\n` +
         `If it does not open, go to ${base}/activate and enter the code: ${userCode}\n` +
-        `(valid for ${Math.floor(DEVICE_GRANT_TTL_MS / 60000)} minutes; once authorized, sites I publish from this machine will be owned by you directly)`,
+        `(valid for ${Math.floor(DEVICE_GRANT_TTL_MS / 60000)} minutes; authorization connects your account and does not make your artifacts public)`,
     }, 200);
   } catch (error) {
     return errorResponse(error);

@@ -58,11 +58,12 @@ async function resolveCommentFacts(request:Request,site:Site,scope:CommentScope,
   // Ordinary artifact readers may access latest and the currently designated official snapshot.
   // This predicate is evaluated from the fresh site row and never grants arbitrary history.
   const readablePublicVersion = readerVersionAllowed(current, scope.versionId);
-  // A separate no-share path: neither token carrier nor passcode cookies are consulted here.
+  // Direct membership and main-link access are independent of tokenized shares.
   const mainReadable = Boolean((accountRole && (readablePublicVersion || (await rolePermissions(accountRole)).includes("site.history.read"))) || elevated || isAnonymousCreator(resolveViewer(request, session), current)
     || (!current.takenDownAt && current.visibility !== "private" && await mainSharingActive(current) && readablePublicVersion));
   const mainRole = await (await import("@/lib/sharing-defaults")).mainSharingRole(current, identity?.userId ?? null);
-  const mainGrantReadable = Boolean(mainRole && readablePublicVersion);
+  const passcodeRole = !recipientUserId ? await (await import("@/lib/main-passcode")).mainPasscodeRole(request, current) : null;
+  const mainGrantReadable = Boolean((mainRole || passcodeRole) && readablePublicVersion);
   const [settings] = await rbacQuery("SELECT main_policy,reader_access FROM site_comment_settings WHERE site_id=$1", [current.id]);
   const mainPolicy = settings ? (settings.main_policy === "login" || settings.main_policy === "members" ? settings.main_policy : "off") : "login";
   let shareMode: CommentAccessFacts["shareMode"] = null;

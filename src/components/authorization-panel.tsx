@@ -67,6 +67,7 @@ export default function AuthorizationPanel({
   inline = false,
   onStateChange,
   initialAdd = false,
+  initialQuery = "",
   onSaved,
 }: {
   resource: Resource;
@@ -74,6 +75,7 @@ export default function AuthorizationPanel({
   inline?: boolean;
   onStateChange?: (editing: boolean, busy: boolean) => void;
   initialAdd?: boolean;
+  initialQuery?: string;
   onSaved?: () => void;
 }) {
   const t = useT();
@@ -85,7 +87,7 @@ export default function AuthorizationPanel({
   const [editing, setEditing] = useState<Binding | null>(null);
   const [subjectType, setSubjectType] = useState<Subject["type"]>("user");
   const [subjectId, setSubjectId] = useState("");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [finding, setFinding] = useState(initialAdd);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
