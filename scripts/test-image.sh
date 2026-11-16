@@ -45,6 +45,11 @@ for i in {1..60}; do
   if [ "$i" = 60 ]; then echo "Test image did not become ready" >&2; exit 1; fi
   sleep 1
 done
+# The application serves images directly. Even a valid source must not reach the optimizer.
+curl --max-time 30 -fsS -o /dev/null "$base/icon.png" || { echo "Image optimizer probe source icon is unavailable" >&2; exit 1; }
+code=$(curl --max-time 30 -sS -o /dev/null -w '%{http_code}' "$base/_next/image?url=%2Ficon.png&w=640&q=75" || true)
+[ "$code" = 404 ] || { echo "Expected 404 from the disabled image optimizer, got $code" >&2; exit 1; }
+
 # curl sends HTTP chunk framing without Content-Length, exercising Next's actual request stream.
 code=$(head -c 26000000 /dev/zero | curl --http1.1 --max-time 30 -sS -o /dev/null -w '%{http_code}' \
   -H 'Transfer-Encoding: chunked' -H 'Content-Type: application/json' \
@@ -58,4 +63,4 @@ HOME_E2E_DEFAULT_VISIBILITY=public COMMENT_PREVIEW_E2E=1 PUBLISH_E2E_URL="$base"
 
 # Seed identities only in this disposable database, then exercise real role-aware browser pages.
 pg_port="$(docker port "$pg" 5432/tcp | awk -F: '{print $NF}')"
-MY_SITES_E2E_URL="$base" SHARING_E2E_URL="$base" SHARE_EDUCATION_E2E_URL="$base" RBAC_E2E_ADMIN_TOKEN=image-mcp-acceptance-token RBAC_E2E_URL="$base" ARTIFACT_DB_DRIVER=postgres ARTIFACT_DATABASE_URL="postgres://test:test@127.0.0.1:$pg_port/test?sslmode=disable" npx vitest run test/collection-folders.e2e.test.ts test/sharing-defaults.e2e.test.ts test/my-sites-sharing.e2e.test.ts test/bulk-sharing.e2e.test.ts test/rbac.e2e.test.ts test/account-navigation.e2e.test.ts test/navigation-performance.e2e.test.ts test/ux-completion.e2e.test.ts test/share-education.e2e.test.ts test/main-passcode.e2e.test.ts
+MY_SITES_E2E_URL="$base" SHARING_E2E_URL="$base" SHARE_EDUCATION_E2E_URL="$base" RBAC_E2E_ADMIN_TOKEN=image-mcp-acceptance-token RBAC_E2E_URL="$base" ARTIFACT_DB_DRIVER=postgres ARTIFACT_DATABASE_URL="postgres://test:test@127.0.0.1:$pg_port/test?sslmode=disable" npx vitest run test/platform-navigation.e2e.test.ts test/collection-folders.e2e.test.ts test/sharing-defaults.e2e.test.ts test/my-sites-sharing.e2e.test.ts test/bulk-sharing.e2e.test.ts test/rbac.e2e.test.ts test/account-navigation.e2e.test.ts test/navigation-performance.e2e.test.ts test/ux-completion.e2e.test.ts test/share-education.e2e.test.ts test/main-passcode.e2e.test.ts

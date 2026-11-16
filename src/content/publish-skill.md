@@ -534,9 +534,18 @@ PY
 
 - Links to a PDF in the uploaded tree open the platform's PDF.js reader; use relative file
   paths. Byte fetches and Range requests still return the PDF, and the reader offers a download.
-- Links to the platform's exact `/`, `/me`, or `/explore` routes in the main viewer ask the reader
-  to continue in the host page so browser sign-in works. Do not embed the platform UI in the
-  artifact or weaken sandbox permissions to share its login.
+- Ordinary links to the platform's `/`, `/me`, `/explore`, `/c/<token>`, `/s/<slug>`, or
+  `/v/<token>` routes ask the reader to continue through the host so browser sign-in works.
+  Use the deployment's base path when present. Main, shared and presentation viewers support
+  same-tab links, `target="_blank"`, middle-click and Ctrl/Cmd/Shift-click. Collection search and
+  folder filters, artifact version/collection context, presentation mode, and comment deep links
+  (`thread`, `message`, `comments=1` or `comments=all`, and `#comment=<thread-id>`) are preserved after validation.
+  Links that stop event propagation still use the host; links that cancel activation with
+  `preventDefault()` keep their own behavior.
+  Prefer ordinary anchors: direct `window.open()` calls and the browser's context-menu commands
+  bypass this click bridge and can create tabs that inherit the sandbox, even after reload.
+  An already affected tab must be reopened from outside the preview. Do not embed the platform
+  UI in the artifact or weaken sandbox permissions to share its login.
 
 ### Usable but not persistent
 

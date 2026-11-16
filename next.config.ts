@@ -9,6 +9,8 @@ const nextConfig: NextConfig = {
   // Emit a self-contained server bundle (.next/standalone/server.js) so the
   // Docker runtime image can drop node_modules and the source tree entirely.
   output: "standalone",
+  // Serve images directly; the unused optimizer returns 404 before processing sources.
+  images: { unoptimized: true },
   // A short, in-memory router cache avoids refetching on back-and-forth navigation.
   // Mutations refresh the router; sign-in/out performs a full navigation.
   experimental: { staleTimes: { dynamic: 30 } },
