@@ -110,7 +110,12 @@ h1, h2, h3, p, blockquote, figure { margin-top: 0; }
 .share-allow-ai input { accent-color: var(--accent); }
 /* "Updated" toast — bottom-center so it reads as page news, clear of the assistant ball (bottom right)
    and the viewer bar (top). Fixed colours mirror the terminal strip: news chrome, not paper. */
-.version-toast { position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: .8rem; padding: .6rem .9rem; background: #16171a; border: 1px solid #2c2d31; color: #eceade; font: 600 .8rem/1.4 var(--font-ui); box-shadow: var(--shadow); }
+.version-toast { position: fixed; bottom: max(1.2rem, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: .65rem; width: max-content; max-width: calc(100% - 2rem); padding: .5rem .65rem .5rem .9rem; background: #16171a; border: 1px solid #2c2d31; color: #eceade; font: 600 .8rem/1.4 var(--font-ui); box-shadow: var(--shadow); }
+.version-toast > span { min-width: 0; overflow-wrap: anywhere; }
+.version-toast > button { flex: none; }
+.version-toast-dismiss { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; }
+.version-toast-dismiss:hover { background: #ffffff1a; }
+.version-toast-dismiss:focus-visible { outline-color: currentColor; outline-offset: 1px; }
 /* Sites grid. */
 .sites-section { margin-top: clamp(3rem, 6vw, 5rem); }
 .sites-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 1.6rem; padding-bottom: .9rem; border-bottom: 1px solid var(--line); }

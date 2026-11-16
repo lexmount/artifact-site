@@ -8,6 +8,7 @@ import { appPath } from "@/lib/app-path";
 // sandbox CSP; assets get the bare sandbox CSP. Serves the site's CURRENT version dir.
 import path from "node:path";
 import { previewNavigationBootstrap } from "@/lib/preview-navigation";
+import { previewInteractionBootstrap } from "@/lib/preview-interaction";
 import { commentPreviewBootstrap } from "@/lib/comments/preview-bootstrap";
 import { config } from "@/lib/config";
 import { bundledPdfViewer, refreshDocumentWrapper } from "@/lib/document-site";
@@ -108,7 +109,7 @@ function injectAfterHead(html: string, fragment: string): string {
 
 export function injectPreviewBootstrap(html: string, baseHref: string, filePath = "index.html", documentMode = false, targetOrigin = config.publicUrl ? new URL(config.publicUrl).origin : "*", previewRoot = baseHref, packagePaths = false): string {
   const base = `<base href="${escapeAttribute(appPath(baseHref))}">`;
-  return injectAfterHead(html, `${base}${storageShim}${previewNavigationBootstrap()}${selectionBootstrap(targetOrigin)}${commentPreviewBootstrap(filePath, targetOrigin, documentMode, appPath(previewRoot), packagePaths)}`);
+  return injectAfterHead(html, `${base}${storageShim}${previewNavigationBootstrap()}${previewInteractionBootstrap()}${selectionBootstrap(targetOrigin)}${commentPreviewBootstrap(filePath, targetOrigin, documentMode, appPath(previewRoot), packagePaths)}`);
 }
 
 /**

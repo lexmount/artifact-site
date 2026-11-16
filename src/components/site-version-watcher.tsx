@@ -15,8 +15,10 @@ import { appFetch, appPath } from "@/lib/app-path";
 //
 //   editors  the change is what they were waiting for → refresh immediately, tell them after.
 //   readers  may be mid-scroll in a long report → offer it, let them choose the moment.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { useT } from "@/components/locale-provider";
+import { PREVIEW_INTERACTION_EVENT } from "@/lib/preview-interaction";
 
 export const POLL_INTERVAL_MS = 10_000;
 /**
@@ -57,28 +59,58 @@ export default function SiteVersionWatcher({ slug, versionId, autoRefresh = fals
   autoRefresh?: boolean;
 }) {
   const t = useT();
-  const [fresh, setFresh] = useState<{ versionNumber?: number; applied?: boolean } | null>(null);
+  const [fresh, setFresh] = useState<{ slug: string; versionNumber?: number; applied?: boolean } | null>(null);
+  const notice = useRef<HTMLDivElement>(null);
+  const lastAnnounced = useRef<{ slug: string; versionId: unknown } | null>(null);
+
+  // router.refresh replaces versionId without remounting us. The notice owns its timer;
+  // restarting the feed must neither cancel its expiry nor repeat a dismissed update.
+  useEffect(() => {
+    if (!fresh?.applied) return;
+    const timer = setTimeout(() => setFresh(null), AUTO_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [fresh]);
+
+  useEffect(() => {
+    if (!fresh || fresh.slug !== slug) return;
+    const dismiss = () => setFresh(null);
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !notice.current?.contains(event.target)) dismiss();
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
+    // A focused sandbox owns its pointer events. Accept only a dismissal signal from the
+    // current artifact frame, never content, credentials or a request to refresh.
+    const previewInteraction = (event: MessageEvent) => {
+      if (event.data?.type !== PREVIEW_INTERACTION_EVENT) return;
+      const frame = document.querySelector<HTMLIFrameElement>("iframe.fs-frame");
+      if (frame?.contentWindow && event.source === frame.contentWindow) dismiss();
+    };
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("keydown", escape);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("message", previewInteraction);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("keydown", escape);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("message", previewInteraction);
+    };
+  }, [fresh, slug]);
 
   useEffect(() => {
     let stopped = false;
     let poll: ReturnType<typeof setInterval> | null = null;
-    let noteTimer: ReturnType<typeof setTimeout> | null = null;
 
-    /** One arrival, two behaviours — see the header. Idempotent: both transports may report the
-     *  same change, and refreshing an already-refreshed frame is harmless. */
-    let lastAnnounced: unknown;
+    /** Both transports may report the same change, including after a subscription restart. */
     const announce = (info: { versionNumber?: number; versionId?: unknown }) => {
-      if (stopped || info.versionId === lastAnnounced) return;
-      lastAnnounced = info.versionId;
+      if (stopped || (lastAnnounced.current?.slug === slug && info.versionId === lastAnnounced.current.versionId)) return;
+      lastAnnounced.current = { slug, versionId: info.versionId };
       if (autoRefresh) {
         const applied = requestArtifactRefresh(typeof info.versionId === "string" ? info.versionId : undefined, true);
-        setFresh({ ...info, applied });
-        if (!applied) return;
-        if (noteTimer) clearTimeout(noteTimer);
-        noteTimer = setTimeout(() => { if (!stopped) setFresh(null); }, AUTO_NOTE_MS);
+        setFresh({ ...info, slug, applied });
         return;
       }
-      setFresh(info);
+      setFresh({ ...info, slug });
     };
     let source: EventSource | null = null;
     let watchdog: ReturnType<typeof setTimeout> | null = null;
@@ -169,22 +201,24 @@ export default function SiteVersionWatcher({ slug, versionId, autoRefresh = fals
     return () => {
       stopped = true;
       window.removeEventListener("artifact:refresh-applied", applied);
-      if (noteTimer) clearTimeout(noteTimer);
       document.removeEventListener("visibilitychange", onVisibility);
       closeStream(); // also stops polling
     };
   }, [slug, versionId, autoRefresh]);
 
-  if (!fresh) return null;
+  if (!fresh || fresh.slug !== slug) return null;
   const label = fresh.versionNumber ? t("Artifact updated to v{n}", { n: fresh.versionNumber }) : t("Artifact updated");
   return (
-    <div className="version-toast" role="status">
+    <div ref={notice} className="version-toast" role="status">
       <span>{fresh.applied ? t("{label}, refreshed for you", { label }) : label}</span>
       {!fresh.applied && (
         <button type="button" className="btn sm solid" onClick={() => { if (requestArtifactRefresh()) setFresh(null); }}>
           {t("Refresh to view")}
         </button>
       )}
+      <button type="button" className="version-toast-dismiss" aria-label={t("Dismiss")} onClick={() => setFresh(null)}>
+        <X size={16} aria-hidden="true" />
+      </button>
     </div>
   );
 }
