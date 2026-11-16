@@ -121,6 +121,10 @@ jobs:
         run: npx vitest run test/auth-recovery.browser.test.ts
         env:
           E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+      - name: Test sharing menu touch and keyboard activation
+        run: npx vitest run test/sharing-more-browser.test.ts
+        env:
+          E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - uses: docker/build-push-action@v7
         with:
           context: .
