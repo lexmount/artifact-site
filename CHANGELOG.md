@@ -5,8 +5,11 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Upgrade Next.js to 16.4.6 and sharp to 0.35.5, and disable the unused image optimizer while continuing to serve images directly.
+
 - Simplify sharing controls, protect main links with passcodes, and share directly from My sites.
 - Apply sharing changes atomically to selected sites, with explicit public-access and Discover-listing confirmation.
+- Keep sharing menu actions active when touch input moves focus before the click, including Safari, while preserving keyboard navigation and outside dismissal.
 - Drag sites into folders and preview permission changes; keep content timestamps and ordering unchanged when sharing changes.
 - Put agent publishing guidance first on the homepage and align navigation and directory action icons.
 
