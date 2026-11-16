@@ -25,14 +25,15 @@ const nextConfig: NextConfig = {
   // read below would miss. Docker (WORKDIR /app) already roots here; this makes local match.
   outputFileTracingRoot: process.cwd(),
 
-  // The publish guide is read from disk at runtime (see lib/publish-skill.ts). Standalone tracing
-  // can't see through fs.readFileSync, so force the source markdown into the bundle for both routes
-  // that serve it — otherwise /for-agents and /for-agents.md would 500 in the Docker image.
+  // Agent documents are read from disk at runtime. Explicitly trace each source into the routes
+  // that serve it, including the short discovery documents, so standalone images retain them.
   outputFileTracingIncludes: {
     "/*": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
     "/for-agents": ["./src/content/publish-skill.md"],
     "/for-agents/reference": ["./src/content/publish-skill.md"],
     "/for-agents.md": ["./src/content/publish-skill.md"],
+    "/AGENTS.md": ["./src/content/agent-instructions.md"],
+    "/llms.txt": ["./src/content/llms.txt"],
   },
 
   async headers() {

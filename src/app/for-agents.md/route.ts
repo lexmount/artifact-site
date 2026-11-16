@@ -17,9 +17,9 @@ export async function GET(request: Request): Promise<Response> {
       // The same value the API stamps on every response; an agent compares the two to know its copy is stale.
       [SKILL_VERSION_HEADER]: getSkillVersion(),
       // Only bites a deployment that has NOT set ARTIFACT_PUBLIC_URL (there the base comes from
-      // Host). Without this, a shared cache fronting two hostnames could serve one host's skill —
-      // i.e. the wrong API address — to the other. With PUBLIC_URL set the body is constant anyway.
-      vary: "Host",
+      // Host and the external scheme). A shared cache must not mix their generated API addresses.
+      // With PUBLIC_URL set the body is constant anyway.
+      vary: "Host, X-Forwarded-Proto",
     },
   });
 }

@@ -10,6 +10,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import puppeteer from 'puppeteer-core';
 import { zipSync } from 'fflate';
+import { assertAgentDocuments } from './test-agent-documents.mjs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 const exec = promisify(execFile);
@@ -100,6 +101,9 @@ const gateway = http.createServer((req,res) => {
  }
  if (url.hostname !== 'b.test') { res.writeHead(404); return res.end(); }
  if (url.pathname === '/') { res.writeHead(302, {location:B+'/'+url.search}); return res.end(); }
+ if (['/AGENTS.md', '/llms.txt'].includes(url.pathname) && ['GET', 'HEAD'].includes(req.method)) {
+  res.writeHead(302, {location:B+url.pathname}); return res.end();
+ }
  const rewritten = discoveryRoutes.get(url.pathname);
  if (rewritten) discoveryRequests.add(url.pathname);
  if (!rewritten && url.pathname !== '/artifact-site' && !url.pathname.startsWith('/artifact-site/')) { res.writeHead(404); return res.end(); }
@@ -189,6 +193,24 @@ try {
  const optimized=await localFetch(B+'/_next/image?url=%2Fartifact-site%2Ficon.png&w=640&q=75',{signal:AbortSignal.timeout(30000)});
  assert.equal(optimized.status,404,'The mounted image optimizer must return 404');await optimized.arrayBuffer();
  browser=await puppeteer.launch({executablePath:chrome,headless:true,args:['--no-sandbox','--no-proxy-server','--host-resolver-rules=MAP a.test 127.0.0.1, MAP b.test 127.0.0.1, MAP idp.test 127.0.0.1']});
+ console.log('Checking anonymous agent documents and exact root aliases');
+ await assertAgentDocuments(B, localFetch);
+ for (const file of ['AGENTS.md', 'llms.txt']) {
+  for (const method of ['GET', 'HEAD']) {
+   const alias=await localFetch(`http://b.test:${port}/${file}`, {method});
+   assert.equal(alias.status,302);assert.equal(alias.headers.get('location'),`${B}/${file}`);
+  }
+  assert.equal((await localFetch(`http://b.test:${port}/${file}/unrelated`)).status,404);
+  assert.equal((await localFetch(`http://b.test:${port}/${file}`,{method:'POST'})).status,404);
+ }
+ const documentPage=await browser.newPage(), documentRequests=[];
+ documentPage.on('request',request=>documentRequests.push(request.url()));
+ for(const file of ['AGENTS.md','llms.txt']) {
+  const response=await documentPage.goto(`http://b.test:${port}/${file}`,{waitUntil:'networkidle0'});
+  assert.equal(response.status(),200);assert.equal(documentPage.url(),`${B}/${file}`);
+ }
+ assert(!documentRequests.some(url=>url.includes('/api/auth/')||url.startsWith(issuer)), 'Raw document visits must not trigger browser sign-in');
+ await documentPage.close();
  const page=await browser.newPage();page.setDefaultTimeout(20000);
  const escaped=[],pageErrors=[];
  page.on('request',req=>{const u=new URL(req.url());if(u.hostname==='b.test'&&!u.pathname.startsWith('/artifact-site')&&!u.pathname.startsWith('/.well-known/')){ escaped.push(u.href); console.error('Escaped mount request', {url:u.href, document:req.frame()?.url(), type:req.resourceType(), initiator:req.initiator()}); }});

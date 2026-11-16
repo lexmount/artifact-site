@@ -12,6 +12,7 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 - Keep sharing menu actions active when touch input moves focus before the click, including Safari, while preserving keyboard navigation and outside dismissal.
 - Drag sites into folders and preview permission changes; keep content timestamps and ordering unchanged when sharing changes.
 - Put agent publishing guidance first on the homepage and align navigation and directory action icons.
+- Add anonymous `/AGENTS.md` and `/llms.txt` discovery documents, and preserve canonical subpaths in agent documentation links and standalone images.
 
 - Browse uploaded folders and ZIP/RAR/7z/TAR packages as file directories, with sandboxed previews and authorized original downloads.
 - Process packages in recoverable background jobs; resume archive chunks across browser, CLI and MCP uploads and inspect progress in Upload tasks.

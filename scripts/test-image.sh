@@ -55,6 +55,8 @@ code=$(head -c 26000000 /dev/zero | curl --http1.1 --max-time 30 -sS -o /dev/nul
   -H 'Transfer-Encoding: chunked' -H 'Content-Type: application/json' \
   --data-binary @- "$base/api/sites" || true)
 [ "$code" = 413 ] || { echo "Expected 413 for oversized chunked body, got $code" >&2; exit 1; }
+# Read the bundled agent documents from the final standalone image.
+node scripts/test-agent-documents.mjs "$base"
 npm --prefix cli ci
 npm --prefix cli run build
 HOME_E2E_DEFAULT_VISIBILITY=public COMMENT_PREVIEW_E2E=1 PUBLISH_E2E_URL="$base" PUBLISH_E2E_TOKEN=image-mcp-acceptance-token VIEWER_E2E_URL="$base" MCP_E2E_URL="$base" MCP_E2E_TOKEN=image-mcp-acceptance-token npx vitest run test/home-agent-first.e2e.test.ts test/comment-package-host.e2e.test.ts test/comment-preview.e2e.test.ts test/package-preview.e2e.test.ts test/version-ui.e2e.test.ts test/version-ui.browser.test.ts test/feedback-browser.test.ts test/more-menu-browser.test.ts test/progressive-preview.browser.test.ts test/recent-home.e2e.test.ts test/document-viewer.e2e.test.ts test/agent-guide.e2e.test.ts test/official-version.e2e.test.ts test/remote-mcp.integration.test.ts test/publish-recovery.integration.test.ts
