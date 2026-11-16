@@ -16,7 +16,7 @@ import { createSession, getPublishToken, getSession, revokeBrowserSessions, touc
 import { isSecureRequest, readCookie } from "@/lib/http";
 import { InsufficientScopeError, isAdmin } from "@/lib/auth";
 import { resolveOauthAccessToken } from "@/lib/oauth";
-import { issuerFor, parseScopeList, SCOPE_WRITE } from "@/lib/oauth-shared";
+import { issuerFor, parseScopeList, SCOPE_READ, SCOPE_WRITE } from "@/lib/oauth-shared";
 import { hashTokenSecret, oauthAccessTokenFromRequest, publishTokenFromRequest } from "@/lib/publish-token";
 import type { Session } from "@/lib/types";
 
@@ -121,7 +121,9 @@ export async function resolveSession(request: Request): Promise<Session | null> 
     const token = await resolveOauthAccessToken(oauthBearer, issuerFor(request));
     if (!token) return null; // a bad explicit credential must not fall back to cookies
     const scopes = parseScopeList(token.scope);
-    if (!scopes.includes(SCOPE_WRITE) && !READ_METHODS.has(request.method)) throw new InsufficientScopeError(SCOPE_WRITE);
+    // Identity-only grants belong to UserInfo, never to artifact APIs or MCP.
+    if (!scopes.includes(SCOPE_READ) && !scopes.includes(SCOPE_WRITE)) throw new InsufficientScopeError(SCOPE_READ, scopes);
+    if (!scopes.includes(SCOPE_WRITE) && !READ_METHODS.has(request.method)) throw new InsufficientScopeError(SCOPE_WRITE, scopes);
     return {
       id: `oat:${token.id}`, userId: token.userId, oidcSid: null,
       createdAt: token.createdAt, expiresAt: token.expiresAt, absoluteExpiresAt: token.absoluteExpiresAt,

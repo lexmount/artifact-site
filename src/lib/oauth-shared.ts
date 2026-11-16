@@ -37,8 +37,11 @@ export const ROTATION_GRACE_MS = 30 * 1000;
 
 export const SCOPE_READ = "artifacts:read";
 export const SCOPE_WRITE = "artifacts:write";
+export const SCOPE_OPENID = "openid";
+export const SCOPE_EMAIL = "email";
 /** Everything a personal token can do, split at the one line that matters: reading versus changing. */
 export const SCOPES: readonly string[] = [SCOPE_READ, SCOPE_WRITE];
+const SUPPORTED_SCOPES: readonly string[] = [...SCOPES, SCOPE_OPENID, SCOPE_EMAIL];
 
 /** An OAuth-shaped failure: `code` is the RFC 6749 error code the client keys on, the message is
  *  the `error_description`. The status is what the endpoint answers with (401 for invalid_client). */
@@ -59,14 +62,20 @@ export function parseScopeList(scope: string): string[] {
 
 /**
  * Requested → granted. Only the scopes this server defines are granted; anything else a client
- * asks for (`openid`, `email`, a scope of some other product) is ignored rather than refused —
+ * asks for (a scope of some other product) is ignored rather than refused —
  * OAuth lets the server narrow the request, and the client learns what it actually got from the
- * `scope` in the token response. A request that names none of ours gets the full default set: an
+ * `scope` in the token response. A request that names none of ours gets the artifact default set: an
  * MCP client has no domain knowledge to pick from, and the consent page shows exactly what is granted.
  */
 export function grantedScopes(requested: string | null | undefined): string[] {
-  const known = parseScopeList(requested ?? "").filter((s) => SCOPES.includes(s));
+  const known = parseScopeList(requested ?? "").filter((s) => SUPPORTED_SCOPES.includes(s));
   return known.length > 0 ? [...new Set(known)] : [...SCOPES];
+}
+
+/** A new artifact consent must retain identity claims already approved by this person.
+ *  Identity scopes stay opt-in; discovery and default grants remain artifact-only. */
+export function artifactConsentScope(held: readonly string[]): string {
+  return [...SCOPES, ...[SCOPE_OPENID, SCOPE_EMAIL].filter((scope) => held.includes(scope))].join(" ");
 }
 
 /** The scope a tool call needs, or null for names this server does not gate (the MCP server itself
@@ -153,6 +162,7 @@ export function authorizationServerMetadata(issuer: string, variant: "oauth" | "
     authorization_endpoint: `${issuer}/oauth/authorize`,
     token_endpoint: `${issuer}/oauth/token`,
     revocation_endpoint: `${issuer}/oauth/revoke`,
+    userinfo_endpoint: `${issuer}/oauth/userinfo`,
     ...(policy.oauth.dcrEnabled ? { registration_endpoint: `${issuer}/oauth/register` } : {}),
     response_types_supported: ["code"],
     response_modes_supported: ["query"],
@@ -160,7 +170,7 @@ export function authorizationServerMetadata(issuer: string, variant: "oauth" | "
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: methods,
     revocation_endpoint_auth_methods_supported: methods,
-    scopes_supported: [...SCOPES],
+    scopes_supported: [...SUPPORTED_SCOPES],
     client_id_metadata_document_supported: true,
     authorization_response_iss_parameter_supported: true,
     service_documentation: `${issuer}/for-agents`,

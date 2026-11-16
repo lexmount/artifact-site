@@ -137,8 +137,17 @@ What it implements, and only that:
   (RFC 7009) takes them back.
 - **Scopes.** `artifacts:read` (find, open, export) and `artifacts:write` (publish, update,
   share, roll back, delete). The challenge asks for both; a client may ask for less, and a
-  read-only grant is refused every change with `403` and `insufficient_scope`. Unknown scopes
-  are ignored, and the token response says what was granted.
+  read-only grant is refused every change with `403` and `insufficient_scope`. Both identity-only
+  connection challenges and per-tool step-up challenges retain previously granted `openid` and
+  `email` scopes, so consenting to artifact access does not remove UserInfo claims. They never
+  add ungranted identity scopes. Unknown scopes are ignored, and the token response says what
+  was granted.
+- **Identity claims.** Clients may explicitly request `openid` and `email` in addition to
+  artifact scopes. Discovery advertises `/oauth/userinfo`; GET or POST with the OAuth bearer
+  returns `sub`, and a verified `email` plus `email_verified: true` only when the email scope
+  was granted and the account's address is verified. Cookies and personal tokens cannot access
+  UserInfo. Identity-only grants cannot access artifact APIs or MCP. Identity scopes are not
+  added to the default artifact grant, and this server does not issue ID tokens.
 - **Tokens.** Opaque and stored hashed, like sessions and personal tokens, so revocation is
   immediate. Access tokens live an hour; refresh tokens thirty days, rotated on every use, under
   a ninety-day ceiling fixed at consent. A refresh retires the previous access token as well, so
@@ -157,9 +166,22 @@ What it implements, and only that:
 Troubleshooting: `401` on every request right after a successful sign-in means the address
 clients use differs from `ARTIFACT_PUBLIC_URL` (scheme, host or port). "Could not discover
 OAuth" or a `404` on `/.well-known/…` means the reverse proxy does not pass paths beginning with
-a dot, or `/oauth/*`. A `403 insufficient_scope` means the connection was made read-only:
-disconnect it and connect again. The consent page needs a browser sign-in; a token session
-cannot approve.
+a dot, or `/oauth/*`. A `403 insufficient_scope` means the grant lacks artifact access or the
+scope needed by this tool. The host must start a new authorization-code flow using the scope
+from `WWW-Authenticate`, then retry after the person approves. Refresh can only retain or narrow
+an existing grant; it cannot add permissions. The consent page needs a browser sign-in; a token
+session cannot approve.
+
+**Client compatibility:** the acceptance suite covers full issued token responses (including
+refresh tokens) with `@modelcontextprotocol/client` 2.4.0. Its step-up flow bypasses refresh and
+asks for consent. The older `@modelcontextprotocol/sdk` 1.30.0 client instead refreshes the old
+grant and fails with `Server returned 403 after trying upscoping`; the server cannot distinguish
+that scope-less refresh request from a normal renewal. Upgrading the server does not upgrade
+an external host's OAuth client. Legacy host integrations must provide an explicit reconnect:
+retain the challenge's scope, clear their cached tokens, and start authorization with that scope
+(for SDK 1.x, `auth(provider, { serverUrl, scope })`), then finish the code exchange and reconnect
+on a fresh transport. The suite verifies this fallback separately; it does not claim automatic
+recovery in SDK 1.x or certify any particular ChatGPT/Claude deployment.
 
 ## Operations
 

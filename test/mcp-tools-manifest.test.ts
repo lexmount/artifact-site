@@ -35,3 +35,18 @@ it("cli/src/mcp-tools.json matches the tools this server registers", async () =>
   expect(committed === fresh, `${FILE} is out of date with src/lib/mcp/server.ts: run "npm run generate:mcp-tools" and commit the result`).toBe(true);
   expect(JSON.parse(committed).tools.map((t: { name: string }) => t.name).sort()).toEqual(mcpTools.map(([name]) => name).sort());
 });
+
+it("declares explicit safety hints for publication, retrieval and upload cancellation", async () => {
+  const { tools } = JSON.parse(await generate());
+  for (const tool of tools) {
+    for (const hint of ["readOnlyHint", "destructiveHint", "openWorldHint"]) {
+      expect(typeof tool.annotations[hint], `${tool.name}.${hint}`).toBe("boolean");
+    }
+  }
+  const annotations = (name: string) => tools.find((tool: { name: string }) => tool.name === `artifact_site_${name}`).annotations;
+  expect(annotations("publish")).toMatchObject({ readOnlyHint: false, openWorldHint: true });
+  expect(annotations("set_visibility")).toMatchObject({ destructiveHint: true, openWorldHint: true });
+  expect(annotations("read")).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: false });
+  expect(annotations("upload_cancel")).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
+  expect(annotations("upload_retry")).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: true });
+});

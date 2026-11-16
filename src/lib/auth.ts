@@ -33,8 +33,8 @@ export class InsufficientScopeError extends Error {
   readonly statusCode = 403;
   readonly code = "insufficient_scope";
   readonly scope: string;
-  constructor(scope: string) {
-    super(`This connection was authorized for reading only; authorize it again with ${scope} to make changes`);
+  constructor(scope: string, readonly grantedScopes: readonly string[] = []) {
+    super(`This connection lacks the required scope; authorize it again with ${scope}`);
     this.name = "InsufficientScopeError";
     this.scope = scope;
   }

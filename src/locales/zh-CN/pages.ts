@@ -19,6 +19,8 @@ export const pages: Messages = {
   "Connect an application": "连接应用",
   "your account": "你的账号",
   "Read: find, open and export your artifacts": "读取：查找、打开和导出你的作品",
+  "Identity: identify your account to the connected application": "身份：向已连接的应用提供你的账号标识",
+  "Email: share your verified email address with the connected application": "邮箱：向已连接的应用提供你已验证的邮箱地址",
   "Change: publish new artifacts; update, share, roll back and delete existing ones": "修改：发布新作品，更新、分享、回滚和删除已有作品",
   "Allow {app} to use your artifacts?": "允许 {app} 使用你的作品？",
   "{app} ({host}) wants to work with the artifacts of {name} on this server. It gets exactly what is listed below, until you disconnect it from My sites.": "{app}（{host}）请求以 {name} 的身份使用本服务上的作品。它获得的权限仅限下方所列，直到你在「我的站点」里断开。",
