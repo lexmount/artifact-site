@@ -94,7 +94,7 @@ describe.skipIf(!process.env.E2E_CHROME)("artifact feedback browser regressions"
     await page.waitForFunction(() => !document.querySelector("dialog"));
     expect(deletes).toBe(2);
   });
-  it("lets artifact handlers and alternate browsing gestures take priority", async () => {
+  it("honors cancelled activation and hands alternate platform browsing gestures to the host", async () => {
     const frame = await artifact();
     const prevented = await frame.evaluate(() => {
       const anchor = document.querySelector<HTMLAnchorElement>("#home")!;
@@ -103,16 +103,19 @@ describe.skipIf(!process.env.E2E_CHROME)("artifact feedback browser regressions"
       anchor.click();
       anchor.removeEventListener("click", handled);
       const results: boolean[] = [];
-      // Prevent the actual browser default after checking whether the bridge consumed it.
-      window.addEventListener("click", e => { results.push(e.defaultPrevented); e.preventDefault(); });
+      // Observe after the bridge's capture-installed tail, then suppress native activation.
+      window.addEventListener("click", () => {
+        window.addEventListener("click", e => { results.push(e.defaultPrevented); e.preventDefault(); }, { once: true });
+      }, true);
       anchor.target = "_blank"; anchor.click(); anchor.target = "";
       for (const key of ["metaKey", "ctrlKey", "shiftKey", "altKey"]) {
         anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, [key]: true }));
       }
       return results;
     });
-    expect(prevented).toEqual([false, false, false, false, false]);
-    expect(await page.$("dialog")).toBeNull();
+    expect(prevented).toEqual([true, true, true, true, false]);
+    await page.waitForSelector("dialog[open]");
+    await page.keyboard.press("Escape");
   });
   it("returns through the host with its session and rejects arbitrary navigation messages", async () => {
     await artifact();
