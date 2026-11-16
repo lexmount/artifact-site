@@ -58,6 +58,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 - Keep comment URL changes synchronized with the router while preserving viewer return paths, including after sharing updates refresh the page.
 
+- Open approved platform links from sandboxed previews through host confirmation, preserving browser sign-in and safe new-tab behavior in normal, shared and presentation viewers.
+
 - Fix failed sign-outs silently reloading, stale browser account state, and sign-in celebrations without a confirmed session; preserve subpath deployment URLs and invalidate account caches across tabs.
 
 ### Added
