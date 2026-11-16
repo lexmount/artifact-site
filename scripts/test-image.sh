@@ -45,6 +45,11 @@ for i in {1..60}; do
   if [ "$i" = 60 ]; then echo "Test image did not become ready" >&2; exit 1; fi
   sleep 1
 done
+# The application serves images directly. Even a valid source must not reach the optimizer.
+curl --max-time 30 -fsS -o /dev/null "$base/icon.png" || { echo "Image optimizer probe source icon is unavailable" >&2; exit 1; }
+code=$(curl --max-time 30 -sS -o /dev/null -w '%{http_code}' "$base/_next/image?url=%2Ficon.png&w=640&q=75" || true)
+[ "$code" = 404 ] || { echo "Expected 404 from the disabled image optimizer, got $code" >&2; exit 1; }
+
 # curl sends HTTP chunk framing without Content-Length, exercising Next's actual request stream.
 code=$(head -c 26000000 /dev/zero | curl --http1.1 --max-time 30 -sS -o /dev/null -w '%{http_code}' \
   -H 'Transfer-Encoding: chunked' -H 'Content-Type: application/json' \

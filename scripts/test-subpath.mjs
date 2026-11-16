@@ -182,6 +182,12 @@ try {
  await docker('run','-d','--name',pg,'--network',network,'--tmpfs','/var/lib/postgresql','-e','POSTGRES_USER=test','-e','POSTGRES_PASSWORD=test','-e','POSTGRES_DB=test','postgres:18-alpine');
  for(let i=0;i<45;i++){try{await docker('exec',pg,'pg_isready','-U','test','-d','test');break;}catch{await sleep(1000);}}
  await start();
+ console.log('Checking direct images and disabled optimization under the mount');
+ const icon=await localFetch(B+'/icon.png',{signal:AbortSignal.timeout(30000)});
+ assert.equal(icon.status,200,'The mounted source icon must be accessible');
+ assert.match(icon.headers.get('content-type')??'',/^image\/png/,'The mounted source icon must have a PNG content type');await icon.arrayBuffer();
+ const optimized=await localFetch(B+'/_next/image?url=%2Fartifact-site%2Ficon.png&w=640&q=75',{signal:AbortSignal.timeout(30000)});
+ assert.equal(optimized.status,404,'The mounted image optimizer must return 404');await optimized.arrayBuffer();
  browser=await puppeteer.launch({executablePath:chrome,headless:true,args:['--no-sandbox','--no-proxy-server','--host-resolver-rules=MAP a.test 127.0.0.1, MAP b.test 127.0.0.1, MAP idp.test 127.0.0.1']});
  const page=await browser.newPage();page.setDefaultTimeout(20000);
  const escaped=[],pageErrors=[];
