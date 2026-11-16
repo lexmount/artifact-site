@@ -108,7 +108,7 @@ jobs:
         with:
           install-dependencies: true
       - name: Test native navigation, upload guards and downloads
-        run: npx vitest run test/preview-navigation.browser.test.ts test/upload-leave-browser.test.ts test/download-browser.test.ts
+        run: npx vitest run test/preview-navigation.browser.test.ts test/sharing-more-browser.test.ts test/upload-leave-browser.test.ts test/download-browser.test.ts
         env:
           E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - name: Test static thumbnail sandbox
