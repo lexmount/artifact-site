@@ -77,6 +77,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ### Changed
 
+- Expire automatic artifact update notices across refreshes, allow outside-click and Escape dismissal, and avoid repeating dismissed versions.
+
 - Preserve viewer return chains through copied artifacts, browser Back/Forward and language changes without relying on Referer headers.
 
 - Save main-link visibility immediately, with pending-copy protection and failure rollback. Clarify visibility labels and icons with touch-accessible explanations. Return from a viewer to its entry page across version changes and reloads, falling back to Home for direct links.
