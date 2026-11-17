@@ -535,6 +535,61 @@ Restrict the old-page redirect to GET/HEAD, and exclude `/api`, `/mcp`, `/oauth`
 Keep new-host root redirects exact so they do not take over unrelated paths.
 The canonical application address remains the subpath even when a visitor starts at the root.
 
+### Public agent documentation
+
+Every deployment serves three English documents without authentication:
+
+| Path relative to `ARTIFACT_PUBLIC_URL` | Purpose |
+| --- | --- |
+| `/llms.txt` | Short documentation index with connection, CLI and MCP links |
+| `/AGENTS.md` | Service-use instructions for agents; not this repository's contributor rules |
+| `/for-agents.md` | Complete, versioned publishing and runtime contract |
+
+The application substitutes its complete public address into these documents, including the
+compiled prefix. For example, `ARTIFACT_PUBLIC_URL=https://new.example.net/artifact-site`
+serves them at `/artifact-site/llms.txt`, `/artifact-site/AGENTS.md` and
+`/artifact-site/for-agents.md`. Keep these exact document routes outside gateway sign-in
+requirements; both GET and HEAD must work without cookies or credentials. They do not grant
+access to private artifacts or management APIs.
+
+If this app is also the destination of the host's root homepage, add these two **exact** root
+aliases at the gateway so agents can discover its documentation. A root-mounted deployment
+already serves these paths and needs no aliases:
+
+| Incoming path | GET/HEAD redirect target (302) |
+| --- | --- |
+| `/AGENTS.md` | `https://new.example.net/artifact-site/AGENTS.md` |
+| `/llms.txt` | `https://new.example.net/artifact-site/llms.txt` |
+
+For Nginx, add the following to the same server block as the existing application proxy:
+
+```nginx
+location = /AGENTS.md {
+    if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+    return 302 https://new.example.net/artifact-site/AGENTS.md;
+}
+location = /llms.txt {
+    if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+    return 302 https://new.example.net/artifact-site/llms.txt;
+}
+```
+
+Replace the example address with the configured public base. Do not redirect unrelated root
+paths or copy the documents into a second location. The application image cannot claim paths
+outside its compiled mount. The documents permit one-hour public caching and vary by Host and
+X-Forwarded-Proto; preserve these response headers and overwrite client-supplied forwarding
+headers at the gateway. Verify the actual gateway after deployment:
+
+```sh
+BASE=https://new.example.net/artifact-site
+curl -fsS "$BASE/llms.txt"
+curl -fsSI "$BASE/AGENTS.md"
+curl -fsSL https://new.example.net/AGENTS.md
+curl -fsSL https://new.example.net/llms.txt
+```
+
+### OAuth discovery routes
+
 Standard OAuth discovery also needs four **exact path rewrites** on the new host:
 
 | Public path | Path forwarded to the app |

@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 import CommentWorkspace from "./anchored-workspace";
 import type { CommentWorkspaceProps } from "./comment-workspace";
+import PreviewNavigation from "@/components/preview-navigation";
 
 /** Reader chrome preserves the server-rendered artifact and header; comments stay in the host. */
 export default function SharedCommentShell({ children, header, comments }: {
@@ -23,6 +24,7 @@ export default function SharedCommentShell({ children, header, comments }: {
   }, []);
   return <div ref={viewer} className="fs-viewer" data-device="desktop" data-bar={barOpen ? "open" : "closed"}>
     {children}
+    <PreviewNavigation frameRef={frameRef} />
     <div className={`fs-chrome${barOpen ? " is-open" : ""}`} onFocusCapture={() => setBarOpen(true)}>
       {header}
     </div>

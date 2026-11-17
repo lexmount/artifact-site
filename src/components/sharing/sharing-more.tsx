@@ -14,6 +14,7 @@ export default function SharingMore({ data, disabled, onLinks, onMembers, onFoll
   onStop: () => void;
 }) {
   const t = useT(), id = useId(), root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null);
+  const pointerActivation = useRef(false);
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!open) return;
@@ -27,19 +28,26 @@ export default function SharingMore({ data, disabled, onLinks, onMembers, onFoll
       items?.[last ? items.length - 1 : 0]?.focus();
     });
   }
-  return <div className="sharing-more" ref={root} onBlur={event => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false);
-  }} onKeyDown={event => {
-    if (!open) return;
-    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
-    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-      event.preventDefault();
-      const items = Array.from(root.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
-      const index = items.indexOf(document.activeElement as HTMLButtonElement);
-      const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
-      items[next]?.focus();
-    }
-  }}>
+  // WebKit can move focus to the modal before a tapped button receives its click.
+  // Keep the item mounted through that activation, including touch's mouse events.
+  return <div className="sharing-more" ref={root}
+    onPointerDownCapture={() => { pointerActivation.current = true; }}
+    onPointerCancel={() => { pointerActivation.current = false; }}
+    onClickCapture={() => { pointerActivation.current = false; }}
+    onBlur={event => {
+      if (!pointerActivation.current && !event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false);
+    }} onKeyDown={event => {
+      pointerActivation.current = false;
+      if (!open) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
+      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const items = Array.from(root.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+        const index = items.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
+        items[next]?.focus();
+      }
+    }}>
     <button ref={trigger} type="button" className="btn sm ghost" aria-label={t("More sharing options")} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled}
       onClick={() => { setOpen(!open); if (!open) focusItem(); }} onKeyDown={event => {
         if (!open && ["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); setOpen(true); focusItem(event.key === "ArrowUp"); }

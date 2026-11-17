@@ -130,6 +130,8 @@ export const components: Messages = {
 
   "Continue": "继续",
   "Return to {destination}?": "返回{destination}？",
+  "Open this collection?": "打开这个合集？",
+  "Open this artifact?": "打开这个作品？",
   "Open the platform outside this preview using your current browser sign-in.": "将在预览外打开平台，并使用浏览器当前的登录状态。",
 
   "Delete \"{title}\"?": "删除「{title}」？",

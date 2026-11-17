@@ -1,21 +1,22 @@
-// OAuth for remote MCP clients (lib/oauth): a real MCP SDK client — the same OAuth client code
-// ChatGPT-style hosts run — discovers this server's authorization server from /mcp's 401, gets
-// through consent, exchanges its code with PKCE and then works as the person, over the route
-// handlers in-process. Around that: the discovery documents, what OAuth 2.1 says to refuse,
-// refresh rotation, scope, the account page's connections, and the old tokens still working.
+// OAuth for remote MCP clients (lib/oauth): real SDK 1.x and 2.x clients discover this server,
+// obtain consent and exchange codes with PKCE, over the route handlers in-process. This tests
+// SDK interoperability, not the implementation deployed by any particular external host.
+// Around that: discovery, OAuth refusals, refresh rotation, scope, and connection lifecycle.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
-import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { auth, extractWWWAuthenticateParams, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import { Client as StepUpClient, StreamableHTTPClientTransport as StepUpTransport, type StoredOAuthTokens } from "@modelcontextprotocol/client";
+import { OAuthTokensSchema, type OAuthClientInformationMixed, type OAuthClientMetadata, type OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { GET as protectedResource } from "@/app/.well-known/oauth-protected-resource/route";
 import { GET as protectedResourceMcp } from "@/app/.well-known/oauth-protected-resource/mcp/route";
 import { GET as authorizationServer } from "@/app/.well-known/oauth-authorization-server/route";
 import { GET as openidConfiguration } from "@/app/.well-known/openid-configuration/route";
 import { POST as tokenEndpoint } from "@/app/oauth/token/route";
+import { GET as userInfo } from "@/app/oauth/userinfo/route";
 import { POST as registerEndpoint } from "@/app/oauth/register/route";
 import { POST as revokeEndpoint } from "@/app/oauth/revoke/route";
 import { POST as decisionEndpoint } from "@/app/oauth/decision/route";
@@ -49,7 +50,7 @@ const CLAUDE_REDIRECT = "https://claude.ai/api/mcp/auth_callback";
 const claudeDocument = { client_id: CLAUDE_CLIENT, client_name: "Claude", redirect_uris: [CLAUDE_REDIRECT], token_endpoint_auth_method: "none" };
 
 let dir: string;
-const clients: Client[] = [];
+const clients: { close(): Promise<void> }[] = [];
 /** The public internet, as far as this suite is concerned: one document, served to one address. */
 let documents: Record<string, unknown> = {};
 
@@ -99,7 +100,7 @@ async function dispatch(input: RequestInfo | URL, init?: RequestInit): Promise<R
 /** What an MCP host keeps between steps of the flow: client identity, verifier, tokens, and where it was told to send the person. */
 class HostProvider implements OAuthClientProvider {
   info: OAuthClientInformationMixed | undefined;
-  saved: OAuthTokens | undefined;
+  saved: StoredOAuthTokens | undefined;
   verifier = "";
   authorizationUrl: URL | undefined;
   readonly stateValue = `st-${Math.random().toString(36).slice(2)}`;
@@ -111,7 +112,12 @@ class HostProvider implements OAuthClientProvider {
   clientInformation() { return this.info; }
   saveClientInformation(info: OAuthClientInformationMixed) { this.info = info; }
   tokens() { return this.saved; }
-  saveTokens(tokens: OAuthTokens) { this.saved = tokens; }
+  saveTokens(tokens: StoredOAuthTokens) { this.saved = tokens; }
+  invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery") {
+    if (scope === "all" || scope === "tokens") this.saved = undefined;
+    if (scope === "all" || scope === "client") this.info = undefined;
+    if (scope === "all" || scope === "verifier") this.verifier = "";
+  }
   redirectToAuthorization(url: URL) { this.authorizationUrl = url; }
   saveCodeVerifier(verifier: string) { this.verifier = verifier; }
   codeVerifier() { return this.verifier; }
@@ -392,11 +398,12 @@ describe("scope and lifecycle", () => {
     const alice = await person("alice");
     const v = verifier();
     const issued = await exchange({ grant_type: "authorization_code", code: await codeFor(alice, v, { scope: `${SCOPE_READ} openid email` }), code_verifier: v, redirect_uri: CHATGPT_REDIRECT, client_id: CHATGPT_CLIENT });
-    expect(issued.body.scope).toBe(SCOPE_READ);
+    expect(issued.body.scope).toBe(`${SCOPE_READ} openid email`);
     const bearer = String(issued.body.access_token);
     const forbidden = await rpc(bearer, { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "artifact_site_publish", arguments: { html: "<html></html>", share: false } } });
     expect(forbidden.status).toBe(403);
     expect(forbidden.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
+    expect(forbidden.headers.get("www-authenticate")).toContain(`scope="${SCOPE_READ} ${SCOPE_WRITE} openid email"`);
     expect((await forbidden.json()).code).toBe("insufficient_scope");
     const rest = await createSite(new Request(`${origin}/api/sites`, { method: "POST", headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" }, body: JSON.stringify({ mode: "paste", html: "<html></html>" }) }));
     expect(rest.status).toBe(403); expect((await rest.json()).code).toBe("insufficient_scope");
@@ -444,6 +451,177 @@ describe("scope and lifecycle", () => {
     expect((await ping(three.tokens.access_token)).status).toBe(401);
     // And the sweep leaves nothing behind once everything has aged out.
     expect(await pruneOauth(Date.now() + 100 * 24 * 60 * 60 * 1000)).toBeGreaterThan(0);
+  });
+});
+
+describe("OAuth user information", () => {
+  async function identityToken(browser: Browser, scope: string) {
+    const v = verifier();
+    const issued = await exchange({ grant_type: "authorization_code", code: await codeFor(browser, v, { scope }), code_verifier: v, redirect_uri: CHATGPT_REDIRECT, client_id: CHATGPT_CLIENT });
+    expect(issued.status).toBe(200);
+    expect(issued.body.scope).toBe(scope);
+    return String(issued.body.access_token);
+  }
+  const request = (token: string) => new Request(`${origin}/oauth/userinfo`, { headers: { authorization: `Bearer ${token}` } });
+
+  it("advertises identity scopes and a UserInfo endpoint at the deployment base", async () => {
+    process.env.ARTIFACT_PUBLIC_URL = "https://example.test/artifact-site";
+    const metadata = await (await openidConfiguration(new Request(`${origin}/.well-known/openid-configuration`))).json();
+    expect(metadata.userinfo_endpoint).toBe("https://example.test/artifact-site/oauth/userinfo");
+    expect(metadata.scopes_supported).toEqual(expect.arrayContaining(["openid", "email", SCOPE_READ, SCOPE_WRITE]));
+  });
+
+  it("returns only consented identity claims and keeps identity grants out of artifact APIs", async () => {
+    const alice = await person("userinfo");
+    const token = await identityToken(alice, "openid email");
+    const response = await userInfo(request(token));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ sub: alice.userId, email: alice.email, email_verified: true });
+    const rest = await whoami(new Request(`${origin}/api/auth/me`, { headers: { authorization: `Bearer ${token}` } }));
+    expect(rest.status).toBe(403);
+    expect((await rest.json()).code).toBe("insufficient_scope");
+    const mcpDenied = await ping(token);
+    expect(mcpDenied.status).toBe(403);
+    expect(mcpDenied.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
+    expect(mcpDenied.headers.get("www-authenticate")).toContain(`resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`);
+    expect(mcpDenied.headers.get("cache-control")).toBe("no-store");
+    expect(mcpDenied.headers.get("www-authenticate")).toContain(`scope="${SCOPE_READ} ${SCOPE_WRITE} openid email"`);
+    expect(await mcpDenied.json()).toMatchObject({ code: "insufficient_scope", scope: SCOPE_READ });
+    const write = await createSite(new Request(`${origin}/api/sites`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ mode: "paste", html: "<html></html>" }) }));
+    expect(write.status).toBe(403);
+  });
+
+  it.each(["", "/artifact-site"])("documents SDK 1.x full-token recovery through explicit reconsent at mount '%s'", async (mount) => {
+    origin = `http://test.local${mount}`;
+    process.env.NEXT_PUBLIC_ARTIFACT_BASE_PATH = mount;
+    const alice = await person("legacy-upscope");
+    const provider = new HostProvider(CHATGPT_REDIRECT, CHATGPT_CLIENT);
+    const v = verifier();
+    const issued = await exchange({ grant_type: "authorization_code", code: await codeFor(alice, v, { scope: "openid email" }), code_verifier: v, redirect_uri: CHATGPT_REDIRECT, client_id: CHATGPT_CLIENT });
+    provider.saved = OAuthTokensSchema.parse(issued.body);
+    const originalRefresh = provider.saved.refresh_token;
+    expect(originalRefresh).toBeTruthy();
+    const challenge = extractWWWAuthenticateParams(await ping(provider.saved.access_token));
+    const first = new Client({ name: "legacy-acceptance", version: "1" }); clients.push(first);
+    // SDK 1.x refreshes instead of asking for broader consent. Keep the entire issued
+    // response to expose this client limitation; the server must not widen a refresh.
+    await expect(first.connect(new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), { authProvider: provider, fetch: dispatch }))).rejects.toThrow("403 after trying upscoping");
+    expect(provider.authorizationUrl).toBeUndefined();
+    expect(provider.saved.scope).toBe("openid email");
+    expect(provider.saved.refresh_token).toBeTruthy();
+    expect(provider.saved.refresh_token).not.toBe(originalRefresh);
+    expect(await listSitesByOwner(alice.userId)).toHaveLength(0);
+    expect((await userInfo(request(provider.saved.access_token))).status).toBe(200);
+    // Explicit host/user reconnect, retaining the challenge's identity scopes. This
+    // is a fallback for legacy hosts, not automatic recovery by the unchanged SDK.
+    provider.invalidateCredentials("tokens");
+    expect(await auth(provider, { serverUrl: `${origin}/mcp`, scope: challenge.scope, fetchFn: dispatch })).toBe("REDIRECT");
+    expect(provider.authorizationUrl!.searchParams.get("scope")).toBe(`${SCOPE_READ} ${SCOPE_WRITE} openid email`);
+    const callback = await consent(alice, provider.authorizationUrl!);
+    await new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), { authProvider: provider, fetch: dispatch }).finishAuth(callback.searchParams.get("code")!);
+    const client = new Client({ name: "legacy-acceptance", version: "1" }); clients.push(client);
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), { authProvider: provider, fetch: dispatch }));
+    expect((await call(client, "publish", { html: "<h1>Consented publication</h1>", share: false })).error).toBe(false);
+    expect(await (await userInfo(request(provider.saved!.access_token))).json()).toEqual({ sub: alice.userId, email: alice.email, email_verified: true });
+  });
+
+  describe.each(["", "/artifact-site"])("SDK 2.4 full-token step-up at mount '%s'", (mount) => {
+    it.each(["openid email", `${SCOPE_READ} openid email`, SCOPE_READ])("reauthorizes '%s' before publishing and retains consented claims", async (scope) => {
+      origin = `https://test.local${mount}`;
+      process.env.NEXT_PUBLIC_ARTIFACT_BASE_PATH = mount;
+      const alice = await person("step-up");
+      const provider = new HostProvider(CHATGPT_REDIRECT, CHATGPT_CLIENT);
+      provider.info = { client_id: CHATGPT_CLIENT };
+      provider.verifier = verifier();
+      const code = await codeFor(alice, provider.verifier, { scope });
+      const grants: string[] = [];
+      const fetchHost: typeof dispatch = async (input, init) => {
+        const req = new Request(input, init);
+        if (new URL(req.url).pathname.endsWith("/oauth/token")) grants.push(new URLSearchParams(await req.clone().text()).get("grant_type")!);
+        return dispatch(req);
+      };
+      const transport = () => new StepUpTransport(new URL(`${origin}/mcp`), { authProvider: provider, fetch: fetchHost });
+      // Let the real host save the complete code-exchange response, including the
+      // refresh token and issuer it records. No access-token-only fixture shortcut.
+      await transport().finishAuth(new URLSearchParams({ code, iss: origin }));
+      expect(provider.saved?.refresh_token).toBeTruthy();
+      expect(provider.saved?.issuer).toBe(origin);
+      expect(provider.saved?.scope).toBe(scope);
+      const saved = structuredClone(provider.saved);
+      const first = new StepUpClient({ name: "step-up-acceptance", version: "2" }); clients.push(first);
+      if (scope.includes(SCOPE_READ)) {
+        await first.connect(transport());
+        await expect(first.callTool({ name: "artifact_site_publish", arguments: { html: "<h1>Not yet consented</h1>", share: false } })).rejects.toThrow();
+      } else {
+        await expect(first.connect(transport())).rejects.toThrow();
+      }
+      expect(provider.authorizationUrl).toBeDefined();
+      const expectedScope = scope.includes("openid") ? `${SCOPE_READ} ${SCOPE_WRITE} openid email` : `${SCOPE_READ} ${SCOPE_WRITE}`;
+      expect(new Set(provider.authorizationUrl!.searchParams.get("scope")!.split(" "))).toEqual(new Set(expectedScope.split(" ")));
+      expect(provider.authorizationUrl!.searchParams.get("resource")).toBe(`${origin}/mcp`);
+      expect(provider.saved).toEqual(saved);
+      expect(grants).toEqual(["authorization_code"]); // widening must bypass refresh
+      expect(await listSitesByOwner(alice.userId)).toHaveLength(0);
+      // The person may refuse: the old grant remains unchanged and no tool ran.
+      const denied = await consent(alice, provider.authorizationUrl!, "deny");
+      expect(denied.searchParams.get("error")).toBe("access_denied");
+      expect(provider.saved).toEqual(saved);
+      expect(await listSitesByOwner(alice.userId)).toHaveLength(0);
+      const callback = await consent(alice, provider.authorizationUrl!);
+      await transport().finishAuth(callback.searchParams);
+      expect(new Set(provider.saved!.scope!.split(" "))).toEqual(new Set(expectedScope.split(" ")));
+      const client = new StepUpClient({ name: "step-up-acceptance", version: "2" }); clients.push(client);
+      await client.connect(transport());
+      const published = await client.callTool({ name: "artifact_site_publish", arguments: { html: "<h1>Consented publication</h1>", share: false } });
+      expect(published.isError).not.toBe(true);
+      expect(await listSitesByOwner(alice.userId)).toHaveLength(1);
+      const info = await userInfo(request(provider.saved!.access_token));
+      if (scope.includes("openid")) {
+        expect(info.status).toBe(200);
+        expect(await info.json()).toEqual({ sub: alice.userId, email: alice.email, email_verified: true });
+      } else {
+        expect(info.status).toBe(403); // reconsent must not add identity scopes
+      }
+    });
+  });
+
+  it("does not disclose email without its scope or a verified email address", async () => {
+    const alice = await person("subject-only");
+    expect(await (await userInfo(request(await identityToken(alice, "openid")))).json()).toEqual({ sub: alice.userId });
+    const user = await upsertUser({ authProvider: "test", providerSubject: "unverified-userinfo", email: "unverified@example.test", emailVerified: false });
+    const minted = await mintSession(new Request(origin), user.id);
+    const cookie = minted.cookie.split(";")[0];
+    const unverified = { userId: user.id, email: "unverified@example.test", session: minted.session, cookie, headers: { cookie, origin } };
+    expect(await (await userInfo(request(await identityToken(unverified, "openid email")))).json()).toEqual({ sub: user.id });
+  });
+
+  it("rejects cookies, artifact-only grants, foreign tokens, and revoked connections", async () => {
+    const alice = await person("userinfo-access");
+    expect((await userInfo(new Request(`${origin}/oauth/userinfo`, { headers: alice.headers }))).status).toBe(401);
+    expect((await userInfo(request("ahp_not-an-oauth-token"))).status).toBe(401);
+    const artifactOnly = await identityToken(alice, SCOPE_READ);
+    expect((await userInfo(request(artifactOnly))).status).toBe(403);
+    const token = await identityToken(alice, "openid email");
+    process.env.ARTIFACT_PUBLIC_URL = "https://another.example";
+    expect((await userInfo(request(token))).status).toBe(401);
+    delete process.env.ARTIFACT_PUBLIC_URL;
+    await revokeEndpoint(new Request(`${origin}/oauth/revoke`, { method: "POST", body: new URLSearchParams({ client_id: CHATGPT_CLIENT, token }) }));
+    const revoked = await userInfo(request(token));
+    expect(revoked.status).toBe(401);
+    expect(revoked.headers.get("www-authenticate")).toContain('error="invalid_token"');
+  });
+
+  it("refuses expired tokens and disabled accounts", async () => {
+    const alice = await person("userinfo-lifecycle");
+    const token = await identityToken(alice, "openid email");
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 61 * 60 * 1000);
+    expect((await userInfo(request(token))).status).toBe(401);
+    vi.useRealTimers();
+    process.env.PUBLISH_API_TOKEN = "operator-secret";
+    await disableUser(new Request(`${origin}/api/admin/users`, { headers: { authorization: "Bearer operator-secret" } }), { kind: "token", userId: null }, alice.userId, "review-test");
+    expect((await userInfo(request(token))).status).toBe(401);
   });
 });
 

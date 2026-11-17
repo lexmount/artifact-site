@@ -5,10 +5,14 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Upgrade Next.js to 16.4.6 and sharp to 0.35.5, and disable the unused image optimizer while continuing to serve images directly.
+
 - Simplify sharing controls, protect main links with passcodes, and share directly from My sites.
 - Apply sharing changes atomically to selected sites, with explicit public-access and Discover-listing confirmation.
+- Keep sharing menu actions active when touch input moves focus before the click, including Safari, while preserving keyboard navigation and outside dismissal.
 - Drag sites into folders and preview permission changes; keep content timestamps and ordering unchanged when sharing changes.
 - Put agent publishing guidance first on the homepage and align navigation and directory action icons.
+- Add anonymous `/AGENTS.md` and `/llms.txt` discovery documents, and preserve canonical subpaths in agent documentation links and standalone images.
 
 - Browse uploaded folders and ZIP/RAR/7z/TAR packages as file directories, with sandboxed previews and authorized original downloads.
 - Process packages in recoverable background jobs; resume archive chunks across browser, CLI and MCP uploads and inspect progress in Upload tasks.
@@ -17,6 +21,7 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 - Browse shared collections by folder, with permission-filtered counts, search and links that preserve the selected folder through sign-in.
 - Add automatic OIDC sign-in and explicit account switching. Respect local sign-out, preserve return destinations, and protect the selected account from delayed login responses.
+- Support opt-in OAuth identity claims through UserInfo, preserve them during artifact-scope consent, and declare explicit MCP tool safety hints.
 - Distinguish access denial, missing sites and missing versions, with sign-in, retry and account-switch actions that preserve the original URL.
 - Filter My works by sharing status and show public author names in Recently viewed. Existing login identifiers are never backfilled as author names.
 - Recover stalled or failed browser account checks through a same-tab retry without repeatedly refreshing My sites.
@@ -54,6 +59,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 - Declare the mounted favicon in the initial document head so browsers do not request a root-level icon during streamed navigation.
 
 - Keep comment URL changes synchronized with the router while preserving viewer return paths, including after sharing updates refresh the page.
+
+- Open approved platform links from sandboxed previews through host confirmation, preserving browser sign-in and safe new-tab behavior in normal, shared and presentation viewers.
 
 - Fix failed sign-outs silently reloading, stale browser account state, and sign-in celebrations without a confirmed session; preserve subpath deployment URLs and invalidate account caches across tabs.
 

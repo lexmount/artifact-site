@@ -1,0 +1,20 @@
+# artifact-site
+
+> Publish, version, and share HTML websites, PDFs, and Office documents.
+> Manage access and collaborate around a stable artifact URL.
+
+Canonical service URL: {{BASE_URL}}
+
+Documentation is publicly readable. Access to artifacts and management
+operations depends on the current user's permissions.
+
+## Documentation
+
+- [Agent instructions]({{BASE_URL}}/AGENTS.md): Essential guidance for using this service.
+- [Complete agent guide]({{BASE_URL}}/for-agents.md): Authentication, publishing, updates, sharing, runtime limits, and recovery.
+- [Connection setup]({{BASE_URL}}/for-agents): Setup instructions for supported clients.
+
+## Optional
+
+- [CLI setup]({{BASE_URL}}/for-agents#cli): Connect and publish from a local environment.
+- [MCP setup]({{BASE_URL}}/for-agents#mcp): Connect an MCP-compatible agent.
