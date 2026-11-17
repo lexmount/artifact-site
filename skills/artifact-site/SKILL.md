@@ -27,7 +27,7 @@ Use the deployment's supported authentication and existing credentials. Do not a
 
 Build source projects into static output first; artifact-site does not run builds or application backends. Keep asset references relative to the site root, exclude `.git` and `node_modules`, and check the current guide's file and size limits. Hosted HTML runs in a sandbox without the platform's login session; browser persistence and external API access have restrictions. PDF is viewable online; Office preview requires the deployment's Gotenberg conversion service.
 
-Respect the user's requested audience. CLI and MCP publication create a public share by default. Use `--share none` (CLI) or `share: false` (MCP) when publication should remain unshared, then configure any requested access through the supported sharing interface. Do not broaden access to work around a failed verification.
+Respect the user's requested audience. CLI and MCP publication create private artifacts by default, without an independent share link. A request to save work or return its address does not authorize broader access. When the user asks to share the main link, use `artifact-site visibility <slug> unlisted` (CLI) or `artifact_site_set_visibility` with `visibility: unlisted` (MCP). Use public discovery only when explicitly requested. Independent share links are an advanced, opt-in workflow. Do not broaden access to work around a failed verification.
 
 Typical CLI operations after configuration:
 

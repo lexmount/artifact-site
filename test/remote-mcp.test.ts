@@ -127,6 +127,45 @@ it("rejects a stale chunked update at commit and preserves the newer contents", 
   expect((await call(ca, "read", { slug, file: "index.html" })).data.text).toContain("stale");
 });
 
+it("declares the publication effects of retrying a failed public replacement", async () => {
+  const { rbacQuery, getSiteBySlug } = await import("@/lib/db");
+  const { getStorage } = await import("@/lib/storage");
+  const owner = await identity("retry-owner"), c = await connect(owner.token);
+  const published = await call(c, "publish", { files: [{ path: "index.html", content: "<h1>Original public version</h1>" }, { path: "notes.txt", content: "Original package" }], share: false });
+  expect(published.error).toBe(false);
+  expect(published.data.status).toBe("queued");
+  expect(await runNextPackageJob()).toBe(true);
+  published.data = (await call(c, "upload_status", { upload_id: published.data.versionId })).data.result;
+  const { slug, versionId: originalVersion } = published.data;
+  expect((await call(c, "set_visibility", { slug, visibility: "public" })).error).toBe(false);
+  const queued = await call(c, "update", { slug, expected_version: originalVersion, files: [{ path: "index.html", content: "<h1>Retried public version</h1>" }, { path: "notes.txt", content: "Replacement package" }] });
+  expect(queued.error, JSON.stringify(queued.data)).toBe(false);
+  expect(queued.data.status).toBe("queued");
+  const upload_id = queued.data.versionId;
+  const failure = vi.spyOn(getStorage("package"), "sizeOf").mockRejectedValue(new Error("Temporary storage outage"));
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await rbacQuery("UPDATE package_jobs SET available_at=0 WHERE version_id=$1", [upload_id]);
+      expect(await runNextPackageJob()).toBe(true);
+    }
+  } finally { failure.mockRestore(); }
+  expect((await call(c, "upload_status", { upload_id })).data).toMatchObject({ status: "failed", retryable: true });
+  expect((await getSiteBySlug(slug))!.currentVersionId).toBe(originalVersion);
+
+  const retried = await call(c, "upload_retry", { upload_id });
+  expect(retried.error).toBe(false);
+  expect(retried.data.status).toBe("queued");
+  expect(await runNextPackageJob()).toBe(true);
+  expect((await call(c, "upload_status", { upload_id })).data).toMatchObject({ status: "completed", result: { slug, versionId: upload_id } });
+  expect(await getSiteBySlug(slug)).toMatchObject({ currentVersionId: upload_id, visibility: "public" });
+  const visible = await call(c, "read", { slug, file: "index.html" });
+  expect(visible.error).toBe(false);
+  expect(visible.data.text).toContain("Retried public version");
+  // No second publish/update call is needed: retry itself can replace publicly visible content.
+  const retryTool = (await c.listTools()).tools.find(tool => tool.name === "artifact_site_upload_retry");
+  expect(retryTool!.annotations).toMatchObject({ readOnlyHint: false, openWorldHint: true, destructiveHint: true });
+});
+
 it("publishes and exports a document via chunk tools without a local filesystem path", async () => {
   const a = await identity("alice"), ca = await connect(a.token);
   // A legacy Office fixture carries the same OLE signature used by document upload tests.

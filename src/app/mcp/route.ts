@@ -1,11 +1,11 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createRemoteMcpServer } from "@/lib/mcp/server";
-import { isAdmin } from "@/lib/auth";
+import { InsufficientScopeError, isAdmin } from "@/lib/auth";
 import { isSameOrigin, resolveSession } from "@/lib/session";
 import { sha256hex } from "@/lib/crypto";
 import { rateLimit } from "@/lib/config";
 import { clientKey, withRateLimitChecked, checkRateLimit } from "@/lib/ratelimit";
-import { bearerChallenge, issuerFor, requiredScopeForTool, SCOPES } from "@/lib/oauth-shared";
+import { artifactConsentScope, bearerChallenge, issuerFor, requiredScopeForTool } from "@/lib/oauth-shared";
 import { errorResponse } from "@/app/api/_util";
 
 export const runtime = "nodejs";
@@ -55,7 +55,7 @@ export async function POST(request: Request): Promise<Response> {
       if (needed && !session.scopes.includes(needed)) {
         return Response.json(
           { error: `This connection was authorized for reading only; authorize it again with ${needed} to use this tool`, code: "insufficient_scope", scope: needed },
-          { status: 403, headers: { "www-authenticate": bearerChallenge(issuerFor(request), { error: "insufficient_scope", scope: SCOPES.join(" ") }), "cache-control": "no-store" } },
+          { status: 403, headers: { "www-authenticate": bearerChallenge(issuerFor(request), { error: "insufficient_scope", scope: artifactConsentScope(session.scopes) }), "cache-control": "no-store" } },
         );
       }
     }
@@ -71,7 +71,17 @@ export async function POST(request: Request): Promise<Response> {
       response.headers.set("cache-control", "no-store");
       return response;
     } finally { await server.close(); }
-  } catch (error) { return errorResponse(error); }
+  } catch (error) {
+    // Identity-only grants are rejected during session resolution, before the per-tool gate.
+    // Keep the OAuth challenge so the host can request artifact access through consent.
+    if (error instanceof InsufficientScopeError) {
+      return Response.json(
+        { error: error.message, code: error.code, scope: error.scope },
+        { status: 403, headers: { "www-authenticate": bearerChallenge(issuerFor(request), { error: "insufficient_scope", scope: artifactConsentScope(error.grantedScopes) }), "cache-control": "no-store" } },
+      );
+    }
+    return errorResponse(error);
+  }
 }
 // Stateless request/response transport: no long-lived SSE session to open or terminate.
 export function GET() { return new Response(null, { status: 405, headers: { Allow: "POST" } }); }

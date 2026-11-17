@@ -19,7 +19,7 @@ import { viewerRequestFromHeaders } from "@/lib/authz";
 import { getUser } from "@/lib/db";
 import { getT } from "@/lib/i18n-server";
 import { prepareAuthorization, type AuthorizationOutcome } from "@/lib/oauth";
-import { issuerFromHeaders, SCOPE_READ, SCOPE_WRITE } from "@/lib/oauth-shared";
+import { issuerFromHeaders, SCOPE_EMAIL, SCOPE_OPENID, SCOPE_READ, SCOPE_WRITE } from "@/lib/oauth-shared";
 import { checkRateLimit, RateLimitError } from "@/lib/ratelimit";
 import { resolveSession } from "@/lib/session";
 
@@ -100,6 +100,8 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
   const scopeText: Record<string, string> = {
     [SCOPE_READ]: t("Read: find, open and export your artifacts"),
     [SCOPE_WRITE]: t("Change: publish new artifacts; update, share, roll back and delete existing ones"),
+    [SCOPE_OPENID]: t("Identity: identify your account to the connected application"),
+    [SCOPE_EMAIL]: t("Email: share your verified email address with the connected application"),
   };
 
   return (

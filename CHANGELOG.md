@@ -21,6 +21,7 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 - Browse shared collections by folder, with permission-filtered counts, search and links that preserve the selected folder through sign-in.
 - Add automatic OIDC sign-in and explicit account switching. Respect local sign-out, preserve return destinations, and protect the selected account from delayed login responses.
+- Support opt-in OAuth identity claims through UserInfo, preserve them during artifact-scope consent, and declare explicit MCP tool safety hints.
 - Distinguish access denial, missing sites and missing versions, with sign-in, retry and account-switch actions that preserve the original URL.
 - Filter My works by sharing status and show public author names in Recently viewed. Existing login identifiers are never backfilled as author names.
 - Recover stalled or failed browser account checks through a same-tab retry without repeatedly refreshing My sites.

@@ -43,6 +43,7 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
     "@types/node": "26.1.1",
     "@types/pg": "^8.23.1",
     "@types/react": "19.2.18",
