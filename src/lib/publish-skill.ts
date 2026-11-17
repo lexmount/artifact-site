@@ -14,6 +14,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { config } from "@/lib/config";
 import { forwardedProto } from "@/lib/http";
+import { appBasePath } from "@/lib/app-path";
+import { parsePublicUrl } from "@/lib/public-base";
 
 /**
  * The origin written into src/content/publish-skill.md. Two jobs: it is what gets swapped out at
@@ -100,15 +102,15 @@ export function parseSkill(base: string): ParsedSkill {
 }
 
 /**
- * This deployment's public origin — both the copy-me skill URL on the page and the base written into
+ * This deployment's public base — both the copy-me skill URL on the page and the base written into
  * the skill it serves. Prefers the operator's ARTIFACT_PUBLIC_URL (the same value OIDC redirects and
  * the CSRF gate are built from, so there is one address to configure, not three), then the forwarded
  * Host so an unconfigured instance still describes itself, then the placeholder DEFAULT_BASE.
- * Normalised once at the end, so every branch is trailing-slash-free regardless of its own input.
+ * Validate configured addresses; otherwise retain the compiled mount on the derived origin.
  */
 export function resolvePublicBase(headers: { get(name: string): string | null }): string {
-  const base = config.publicUrl || originFromForwardedHost(headers) || DEFAULT_BASE;
-  return base.replace(/\/+$/, "");
+  if (config.publicUrl) return parsePublicUrl(config.publicUrl);
+  return (originFromForwardedHost(headers) || DEFAULT_BASE) + appBasePath();
 }
 
 // A hostname, optionally with a port — nothing else. Both header values below are attacker-supplied

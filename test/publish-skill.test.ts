@@ -101,7 +101,7 @@ describe("GET /for-agents.md", () => {
     const res = await publishMdGET(req("https://sites.acme.internal/for-agents.md"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
-    expect(res.headers.get("vary")).toBe("Host"); // body varies by Host when PUBLIC_URL is unset
+    expect(res.headers.get("vary")).toBe("Host, X-Forwarded-Proto");
     const text = await res.text();
     expect(text.startsWith("---\nname: publish-to-artifact-site")).toBe(true); // installable as-is
     expect(text).toContain("https://sites.acme.internal");
