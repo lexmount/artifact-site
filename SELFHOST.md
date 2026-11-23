@@ -97,6 +97,11 @@ server {
 
 Leave section four of `.env` empty and the service has no accounts: anyone can view, and `ARTIFACT_CREATE_POLICY` decides who can publish. To give people accounts (sites and folders that follow them across devices, named sharing, agent tokens), point the three `ARTIFACT_OIDC_*` settings at an identity provider. The quickest one is Google — an OAuth client and three lines, no code; any OIDC platform you already run works the same way. Both recipes are in [DEPLOY.md, section 1.3](DEPLOY.md#13-register-the-oidc-application-at-the-idp).
 
+Set `ARTIFACT_OIDC_ISSUER` to the provider's exact issuer identifier, including any trailing slash.
+For Authentik, this is typically `https://auth.example.com/application/o/<slug>/`.
+Discovery and token issuer checks remain exact for both sign-in and back-channel logout;
+only the discovery request URL removes the trailing slash before appending `/.well-known/openid-configuration`.
+
 The signed-in account menu includes **Switch account**. It first signs out of Artifact, then
 requests `prompt=login`. Cancellation or failure leaves the browser signed out. Signed-out users
 see only **Sign in / Sign up**; after a deliberate local sign-out, this also requests `prompt=login`.

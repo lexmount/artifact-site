@@ -5,7 +5,13 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+## 0.5.0 — 2026-11-23
+
+- Preserve trailing slashes in OIDC issuer identifiers so Authentik sign-in and back-channel logout work, while retaining exact discovery and token issuer validation. Configure the issuer exactly as advertised by the provider.
+
 - Upgrade Next.js to 16.4.6 and sharp to 0.35.5, and disable the unused image optimizer while continuing to serve images directly.
+
+- Update the server and CLI to MCP SDK 1.32.2 and Zod 4.6.7, and refresh affected runtime dependencies including proxy-addr. Production dependency audits report no known advisories at release preparation.
 
 - Simplify sharing controls, protect main links with passcodes, and share directly from My sites.
 - Apply sharing changes atomically to selected sites, with explicit public-access and Discover-listing confirmation.

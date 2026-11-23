@@ -86,7 +86,7 @@ async function discover(): Promise<{ doc: Discovery; jwks: ReturnType<typeof cre
   if (!issuer) throw new OidcError("OIDC is not configured (ARTIFACT_OIDC_ISSUER is missing)");
   if (discoveryCache?.issuer === issuer) return discoveryCache;
 
-  const doc = await fetchIdp<Discovery>("OIDC discovery", `${issuer}/.well-known/openid-configuration`, {}, 5_000);
+  const doc = await fetchIdp<Discovery>("OIDC discovery", `${issuer.replace(/\/+$/, "")}/.well-known/openid-configuration`, {}, 5_000);
   // The document is fetched over TLS from the issuer, but a mismatched `issuer` field would mean
   // we are about to trust tokens minted by someone else.
   if (doc.issuer !== issuer) throw new OidcError("The issuer in the OIDC discovery document does not match the configuration");
