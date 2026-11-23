@@ -1,12 +1,22 @@
-/** ASCII-safe transport for administrative reasons, with explicit encoding for legacy clients. */
+import { z } from "zod";
+
+export function normalizeReasonText(value: string): string {
+  return value.replace(/\r\n?|\n/g, " ").trim();
+}
+
+/** Body and header transports share the same normalization, length and database constraints. */
+export const managementReasonSchema = z.string().transform(normalizeReasonText).pipe(
+  z.string().min(1).max(500).refine(value => !value.includes("\0")),
+);
+
+/** ASCII-safe transport for administrative reasons, including legacy clients. */
 export function managementReasonHeaders(reason: string): Record<string, string> {
   return {
-    "x-management-reason": encodeURIComponent(reason.replace(/\r\n?|\n/g, " ").trim()),
+    "x-management-reason": encodeURIComponent(normalizeReasonText(reason)),
     "x-management-reason-encoding": "percent",
   };
 }
 
-/** Validate the decoded value once for both authorization and audit consumers. */
 export function managementReason(request: Request): string | null {
   let value = request.headers.get("x-management-reason");
   if (value === null) return null;
@@ -15,7 +25,6 @@ export function managementReason(request: Request): string | null {
     if (encoding !== "percent") return null;
     try { value = decodeURIComponent(value); } catch { return null; }
   }
-  value = value.replace(/\r\n?|\n/g, " ").trim();
-  // PostgreSQL text cannot store NUL; reject it before granting management authority.
-  return value && value.length <= 500 && !value.includes("\0") ? value : null;
+  const parsed = managementReasonSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }

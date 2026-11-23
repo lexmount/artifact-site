@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { managementReasonSchema } from "@/lib/management-reason";
 import { requireAdminWrite } from "@/lib/admin";
 import { knownSite } from "@/lib/known-site";
 import { rbacQuery } from "@/lib/db";
@@ -12,7 +13,7 @@ export async function POST(request: Request) {
     const actor = await requireAdminWrite(request);
     const { reference, reason } = z.object({
       reference: z.string().trim().min(1).max(2048),
-      reason: z.string().trim().min(1).max(500).refine(value => !value.includes("\0")),
+      reason: managementReasonSchema,
     }).strict().parse(await (await readBodyWithinUploadLimit(request, 8192)).json());
     const site = await knownSite(request, reference);
     await recordRbacAudit(rbacQuery, site.tenantId, actor.userId, "site.management", site.id, reason);

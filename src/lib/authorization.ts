@@ -15,6 +15,7 @@ import { assertSessionCurrent } from "@/lib/authorized-commit";
 import { resolveSession, csrfSafe } from "@/lib/session";
 import { resolveAdmin } from "@/lib/admin";
 import {
+  tenantActive,
   memberRole,
   requireTenantManager,
   recordRbacAudit,
@@ -109,19 +110,19 @@ export async function authorizeResource(
     return { tenantId: resource.id, site: null };
   }
   const [row] = await rbacQuery(
-    "SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=sites.tenant_id AND t.disabled_at IS NULL)",
+    "SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL",
     [resource.id],
   );
   if (!row) missing();
   const site = toSite(row);
-  await requirePermission(
+  const authority = await requirePermission(
     request,
     site,
     adminRole ? "site.admins.manage" : "site.members.manage",
     session,
     audit,
   );
-  return { tenantId: site.tenantId, site };
+  return { tenantId: site.tenantId, site, authority };
 }
 export async function listBindings(request: Request, resource: Resource) {
   const session = await resolveSession(request);
@@ -371,15 +372,18 @@ export async function authorizationResources(request: Request) {
     if (type !== "site" || p.has("q") || p.has("cursor")) throw new BadRequestError("Exact site lookup cannot be combined with search or pagination");
     if (!managementReason(request)) throw new BadRequestError("A management reason is required");
     let site: Site;
+    let elevated = false;
     try {
       site = await knownSite(request, p.get("exact")!);
-      await authorizeResource(request, { type: "site", id: site.id }, session, false, false);
+      if (!(await tenantActive(site.tenantId))) missing();
+      const authorized = await authorizeResource(request, { type: "site", id: site.id }, session, false, false);
+      elevated = authorized.authority?.source === "management";
     } catch (error) {
       // A supplied identifier must not reveal existence, deletion or management eligibility.
       if (error && typeof error === "object" && "statusCode" in error && [400, 403, 404].includes(Number(error.statusCode))) missing();
       throw error;
     }
-    await recordRbacAudit(rbacQuery, site.tenantId, session?.userId ?? null, "site.management", site.id, managementReason(request)!);
+    await recordRbacAudit(rbacQuery, site.tenantId, session?.userId ?? null, elevated ? "site.management" : "site.lookup", site.id, managementReason(request)!);
     return { resources: [{ id: site.id, name: site.title, slug: site.slug, tenant_id: site.tenantId }], nextCursor: null };
   }
   const offset = pageOffset(request);

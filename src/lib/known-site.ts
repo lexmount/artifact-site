@@ -2,6 +2,7 @@ import "server-only";
 import { getShareByTokenHash, getSite, getSiteBySlug } from "@/lib/db";
 import { sha256hex } from "@/lib/crypto";
 import { BadRequestError } from "@/lib/errors";
+import { safeRelativePath } from "@/lib/storage";
 import { requestBase } from "@/lib/public-base";
 
 /** Resolve one supplied identifier, never a title search, prefix search or remote fetch. */
@@ -12,7 +13,9 @@ export async function knownSite(request: Request, input: string) {
   if (reference.includes("/")) {
     const base = new URL(requestBase(request));
     let url: URL;
-    try { url = new URL(reference, base); }
+    const mount = base.pathname.replace(/\/$/, "");
+    const address = /^\/?(?:s|v|c)\//.test(reference) ? `${mount}/${reference.replace(/^\//, "")}` : reference;
+    try { url = new URL(address, `${base.origin}${mount}/`); }
     catch { throw new BadRequestError("Invalid site address"); }
     const prefix = `${base.pathname.replace(/\/$/, "")}/`;
     if (url.origin !== base.origin || url.username || url.password || !url.pathname.startsWith(prefix))
@@ -20,7 +23,13 @@ export async function knownSite(request: Request, input: string) {
     const [route, identifier, ...tail] = url.pathname.slice(prefix.length).replace(/\/$/, "").split("/");
     if (route === "c") throw new BadRequestError("Collection links identify multiple sites; enter a site address or ID");
     if (!identifier || !/^[A-Za-z0-9_-]{1,200}$/.test(identifier)) throw new BadRequestError("Enter an exact site address, slug or ID");
-    if (route === "s" && (tail.length === 0 || (tail.length === 1 && ["comments", "edit"].includes(tail[0])))) {
+    if (route === "s") {
+      if (tail.length) {
+        let path: string;
+        try { path = decodeURIComponent(tail.join("/")); }
+        catch { throw new BadRequestError("Invalid site path"); }
+        safeRelativePath(path);
+      }
       reference = identifier;
       byId = false;
     } else if (route === "v" && tail.length === 0) {

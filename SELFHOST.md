@@ -161,7 +161,7 @@ Both operations require platform administrator credentials; browser writes requi
 CSRF validation. Default changes record the previous and next IDs and whether membership was
 added in the tenant audit trail.
 
-Name administrators by sign-in e-mail (`ARTIFACT_ADMIN_EMAILS=you@example.net,ops@example.net`) and they get the administration console at `/admin` (an entry appears in the account menu) and its API: users with their site count and storage, disabling an account (sign-in refused, sessions and agent tokens revoked), taking a site down (served to its owner only; visitors get 410), deleting and restoring sites, and running maintenance. Every act is recorded. Administrators can also open any site the console lists, private ones included, to judge a report — reading only, never editing as the owner, and every such opening of non-public content is written to the same log, so "staff can access your data" means on purpose and on the record — and the owner can check: every site's More menu has "Administrator activity", the owner's view of that log (what happened and when, with the reason; not who). `PUBLISH_API_TOKEN` as a Bearer remains an administrator for scripts.
+Name administrators by sign-in e-mail (`ARTIFACT_ADMIN_EMAILS=you@example.net,ops@example.net`) and they get the administration console at `/admin` (an entry appears in the account menu) and its API: users with their site count and storage, disabling an account (sign-in refused, sessions and agent tokens revoked), taking a site down (served to its owner only; visitors get 410), deleting and restoring sites, and running maintenance. Every act is recorded. Administrators can also open a known site by its exact address, private ones included, to judge a report — reading only, never editing as the owner, and every such opening of non-public content is written to the same log, so "staff can access your data" means on purpose and on the record — and the owner can check: every site's More menu has "Administrator activity", the owner's view of that log (what happened and when, with the reason; not who). `PUBLISH_API_TOKEN` as a Bearer remains an administrator for scripts.
 
 A deleted site is soft-deleted: its files stay `ARTIFACT_DELETED_RETENTION_DAYS` (30 by default) so it can be restored, then a purge removes them. The purge runs on its own about once an hour on any replica that sees traffic, or on demand from the console.
 
@@ -266,27 +266,39 @@ and returns 410, including for operator tokens. Authorization resource search li
 sites the account owns or has an explicit site-administrator grant for; platform and tenant
 management roles do not expand that list. The Authorization console also accepts one exact
 site address or ID with a management reason, using the same permission gates and audit trail.
+Lookups using elevated management authority record `site.management`; owner, explicit site
+administrator and operator lookups record `site.lookup`.
 Tenant details (`GET /api/tenants/<id>`) return workspace governance events only, without a
 `sites` collection or site audit events. Global admin logs and overview activity include
-non-site events and the signed-in administrator's own site actions. **Administration → System → Action log** shows up to 200 events and accepts an exact user or site ID. Other site audit records
-require an exact target ID; operator tokens see no site events in global audit views.
+non-site events and the signed-in administrator's own site actions.
+**Administration → System → Action log** shows up to 200 events and accepts an exact user
+or site ID. Reading a known site's audit records requires an exact target ID and a management reason;
+`GET /api/admin/log?target=<site-id>` accepts the reason in `x-management-reason` and records
+a `site.audit.read` event before returning the records. Operator tokens see no site events
+in global audit views. The System viewer refreshes the active filter after maintenance.
 
 Open **Administration → Site actions**, enter the known site address, slug or ID and a reason,
 and choose **Load known site**. This explicit lookup is audited and returns only that site's
-management metadata. Site comments/edit URLs and `/v/<token>` links also identify a single site; `/c/<token>` links are collections, so provide an individual site address instead. There is no title search, autocomplete or deleted-site catalog. You can
+management metadata. Site comments/edit URLs, deep file paths such as `/s/<slug>/docs/page.html`,
+and `/v/<token>` links also identify a single site. App-relative paths work under a configured
+mount prefix; full URLs must match the configured origin and mount. `/c/<token>` links are
+collections, so provide an individual site address instead. There is no title search,
+autocomplete or deleted-site catalog. You can
 assign an unowned site, take it down, restore access, delete it, or undo a deletion before its
 files are purged. Keep the site's address or ID for recovery; a signed-in administrator can
 also recover the ID of their own deletion from recent administrative actions.
 
 To assign an unowned site, choose **Assign owner** and enter the verified email of an existing,
-active account, plus a required assignment reason recorded in the audit log. Existing owners are never overwritten. Email administrators can use these
+active account, plus a required assignment reason recorded in the audit log. Existing owners
+are never overwritten. Email administrators can use these
 forms even when PUBLISH_API_TOKEN is unset; personal agent tokens do not inherit these rights.
 
 For operator scripts, POST `/api/admin/sites/<slug>/owner` with
 `Authorization: Bearer <PUBLISH_API_TOKEN>` and JSON `{"email":"recipient@example.com","reason":"Verified recovery request"}`.
-When confirming a previously loaded site, also send `expectedSiteId` on assignment, PATCH,
-and DELETE requests; a changed slug mapping returns 409 without mutating either site.
-The console always sends this ID.
+The console uses stable site IDs: POST `/api/admin/sites/by-id/<site-id>/owner` for assignment,
+and PATCH or DELETE `/api/admin/sites/by-id/<site-id>` for other actions. The legacy slug
+endpoints remain available; both forms return 404 for a missing site. Assignment always
+requires `reason`: scripts that previously sent only `email` must add it.
 This admin endpoint accepts operator tokens without Origin; browser administrators must send
 a same-origin request. The separate owner-to-owner `/api/sites/<slug>/ownership` endpoint
 still requires a same-origin Origin header, including when called by an operator script.

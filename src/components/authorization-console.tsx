@@ -86,8 +86,8 @@ export default function AuthorizationConsole() {
         finally { setLookupBusy(false); }
       }}>
         <p>{t("Manage a known site by its exact address or ID. The lookup requires a reason and is audited.")}</p>
-        <label>{t("Site address, slug or ID")}<input required maxLength={2048} value={reference} disabled={lookupBusy} onChange={event => { setReference(event.target.value); setKnown(null); setSelected(""); setActiveReason(""); }} /></label>
-        <label>{t("Management reason")}<input required maxLength={500} value={lookupReason} disabled={lookupBusy} onChange={event => { setLookupReason(event.target.value); setKnown(null); setSelected(""); setActiveReason(""); }} /></label>
+        <label>{t("Site address, slug or ID")}<input required maxLength={2048} value={reference} disabled={lookupBusy} onChange={event => { setReference(event.target.value); if (known) { setKnown(null); setSelected(""); setActiveReason(""); } }} /></label>
+        <label>{t("Management reason")}<input required maxLength={500} value={lookupReason} disabled={lookupBusy} onChange={event => { setLookupReason(event.target.value); if (known) { setKnown(null); setSelected(""); setActiveReason(""); } }} /></label>
         <button className="btn" disabled={lookupBusy || !reference.trim() || !lookupReason.trim()}>{t("Load known site")}</button>
         {known && <p role="status">{known.name} · <code>{known.id}</code></p>}
       </form>

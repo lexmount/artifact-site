@@ -58,7 +58,6 @@ export async function requireAdminWrite(request: Request): Promise<AdminActor> {
 
 /** Global audit views must not reveal sites another administrator encountered. */
 export async function visibleAdminLog(actor: AdminActor, options: { targetId?: string | null; limit: number }) {
-  if (options.targetId) return listAdminLog(options); // Exact target supplied by the caller.
   return listAdminLog({ ...options, viewerUserId: actor.kind === "user" ? actor.userId : null });
 }
 
@@ -119,30 +118,32 @@ export async function enableUser(request: Request, actor: AdminActor, userId: st
 
 // --- sites --------------------------------------------------------------------------
 
-/** Pin confirmation to the displayed identity even if its slug was reassigned meanwhile. */
-export async function adminSiteTarget(slug: string, expectedSiteId?: string): Promise<Site | null> {
-  const site = await getSiteBySlug(slug);
-  if (expectedSiteId && site?.id !== expectedSiteId) throw Object.assign(new Error("The site address changed; load the site again before confirming"), { statusCode: 409 });
+export type AdminSiteTarget = string | { id: string };
+
+/** Legacy scripts use slugs; the console uses an explicit, immutable site ID. */
+export async function adminSiteTarget(target: AdminSiteTarget): Promise<Site> {
+  const site = typeof target === "string" ? await getSiteBySlug(target) : await getSite(target.id);
+  if (!site) throw Object.assign(new Error("Site not found"), { statusCode: 404 });
   return site;
 }
 
-async function liveSite(slug: string, expectedSiteId?: string): Promise<Site> {
-  const site = await adminSiteTarget(slug, expectedSiteId);
+async function liveSite(target: AdminSiteTarget): Promise<Site> {
+  const site = await adminSiteTarget(target);
   if (!site || site.deletedAt) throw new BadRequestError("No such site");
   return site;
 }
 
 /** Stop serving the site to anyone but its owner, collaborators and administrators. Files untouched. */
-export async function takeDownSite(request: Request, actor: AdminActor, slug: string, reason: unknown, expectedSiteId?: string): Promise<Site> {
-  const site = await liveSite(slug, expectedSiteId);
+export async function takeDownSite(request: Request, actor: AdminActor, target: AdminSiteTarget, reason: unknown): Promise<Site> {
+  const site = await liveSite(target);
   const why = cleanReason(reason, true);
   if (!(await setSiteTakenDown(site.id, Date.now(), why))) throw new BadRequestError("The site is already taken down");
   await recordAdminAction(request, actor, "site.take_down", { kind: "site", id: site.id }, why);
   return (await getSite(site.id))!;
 }
 
-export async function restoreTakenDownSite(request: Request, actor: AdminActor, slug: string, reason: unknown, expectedSiteId?: string): Promise<Site> {
-  const site = await liveSite(slug, expectedSiteId);
+export async function restoreTakenDownSite(request: Request, actor: AdminActor, target: AdminSiteTarget, reason: unknown): Promise<Site> {
+  const site = await liveSite(target);
   const why = cleanReason(reason, false);
   if (!(await setSiteTakenDown(site.id, null, null))) throw new BadRequestError("The site is not taken down");
   await recordAdminAction(request, actor, "site.restore", { kind: "site", id: site.id }, why);
@@ -150,8 +151,8 @@ export async function restoreTakenDownSite(request: Request, actor: AdminActor, 
 }
 
 /** Administrative delete: the owner's delete without the owner. Soft, restorable for the retention window. */
-export async function deleteSiteAsAdmin(request: Request, actor: AdminActor, slug: string, reason: unknown, expectedSiteId?: string): Promise<Site> {
-  const site = await liveSite(slug, expectedSiteId);
+export async function deleteSiteAsAdmin(request: Request, actor: AdminActor, target: AdminSiteTarget, reason: unknown): Promise<Site> {
+  const site = await liveSite(target);
   const why = cleanReason(reason, true);
   await softDeleteSite(site.id);
   await recordAdminAction(request, actor, "site.delete", { kind: "site", id: site.id }, why);
@@ -159,8 +160,8 @@ export async function deleteSiteAsAdmin(request: Request, actor: AdminActor, slu
 }
 
 /** Undo a delete while the files are still there. */
-export async function undeleteSite(request: Request, actor: AdminActor, slug: string, reason: unknown, expectedSiteId?: string): Promise<Site> {
-  const site = await adminSiteTarget(slug, expectedSiteId);
+export async function undeleteSite(request: Request, actor: AdminActor, target: AdminSiteTarget, reason: unknown): Promise<Site> {
+  const site = await adminSiteTarget(target);
   if (!site || !site.deletedAt) throw new BadRequestError("The site is not deleted");
   if (site.purgedAt) throw new BadRequestError("The site's files were purged after the retention window; it cannot be restored");
   const why = cleanReason(reason, false);

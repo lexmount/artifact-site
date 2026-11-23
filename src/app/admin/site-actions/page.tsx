@@ -24,15 +24,15 @@ export default function AdminSiteActionsPage() {
 
   async function act(value: string, email?: string) {
     if (!site || !action) return;
-    const endpoint = `/api/admin/sites/${encodeURIComponent(site.slug)}`;
+    const endpoint = `/api/admin/sites/by-id/${encodeURIComponent(site.id)}`;
     if (action === "assign") {
-      const data = await adminFetch<{ ownerId: string }>(`${endpoint}/owner`, { method: "POST", body: { email, reason: value, expectedSiteId: site.id } });
+      const data = await adminFetch<{ ownerId: string }>(`${endpoint}/owner`, { method: "POST", body: { email, reason: value } });
       setSite({ ...site, ownerId: data.ownerId });
     } else {
       const body = action === "undelete" ? { deleted: false, reason: value }
         : action === "delete" ? { reason: value }
           : { takenDown: action === "take-down", reason: value };
-      const data = await adminFetch<{ site: KnownSite }>(endpoint, { method: action === "delete" ? "DELETE" : "PATCH", body: { ...body, expectedSiteId: site.id } });
+      const data = await adminFetch<{ site: KnownSite }>(endpoint, { method: action === "delete" ? "DELETE" : "PATCH", body });
       setSite(data.site);
     }
     setNotice(t("Site action completed."));
