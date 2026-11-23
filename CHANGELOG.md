@@ -5,6 +5,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Preserve trailing slashes in OIDC issuer identifiers so Authentik sign-in and back-channel logout work, while retaining exact discovery and token issuer validation. Configure the issuer exactly as advertised by the provider.
+
 - Upgrade Next.js to 16.4.6 and sharp to 0.35.5, and disable the unused image optimizer while continuing to serve images directly.
 
 - Simplify sharing controls, protect main links with passcodes, and share directly from My sites.

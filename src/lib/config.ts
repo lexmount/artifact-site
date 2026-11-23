@@ -253,7 +253,8 @@ export const config = {
    *  are configured; the redirect URI is derived from publicUrl and must match the IdP whitelist. */
   get oidc(): { issuer: string; clientId: string; clientSecret: string } {
     return {
-      issuer: (process.env.ARTIFACT_OIDC_ISSUER || "").trim().replace(/\/+$/, ""),
+      // Issuer identifiers are exact strings: a provider's trailing slash is significant.
+      issuer: (process.env.ARTIFACT_OIDC_ISSUER || "").trim(),
       clientId: (process.env.ARTIFACT_OIDC_CLIENT_ID || "").trim(),
       clientSecret: (process.env.ARTIFACT_OIDC_CLIENT_SECRET || "").trim(),
     };

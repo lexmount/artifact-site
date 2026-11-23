@@ -13,7 +13,7 @@ let jwksIssuer = "";
 async function keys(): Promise<ReturnType<typeof createRemoteJWKSet>> {
   const { issuer } = config.oidc;
   if (jwks && jwksIssuer === issuer) return jwks;
-  const res = await fetch(`${issuer}/.well-known/openid-configuration`);
+  const res = await fetch(`${issuer.replace(/\/+$/, "")}/.well-known/openid-configuration`);
   // Without these two checks an IdP hiccup (429/503) yields an undefined jwks_uri, `new URL`
   // throws, the caller's catch swallows it, and the logout is dropped in silence — the IdP
   // believes the session ended while ours keeps working. Mirrors discover() in lib/oidc.ts.
