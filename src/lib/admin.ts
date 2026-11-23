@@ -13,14 +13,13 @@ import { config } from "@/lib/config";
 import { policy } from "@/lib/settings";
 import { BadRequestError } from "@/lib/errors";
 import {
-  rbacQuery, listAdminLog, rbacTransaction, createId, expireAnonymousSites, getSite, getSiteBySlug, getUser, hasRecentAdminLog, insertAdminLog, listDeletedSitesBefore, restoreDeletedSite,
+  listAdminLog, rbacTransaction, createId, expireAnonymousSites, getSite, getSiteBySlug, getUser, hasRecentAdminLog, insertAdminLog, listDeletedSitesBefore, restoreDeletedSite,
   revokeOauthTokensForUser, revokePublishTokensForUser, revokeUserSessions, setSitePurged, setSiteTakenDown, setUserDisabled, softDeleteSite,
 } from "@/lib/db";
 import { auditRequestMeta } from "@/lib/audit";
 import { isTokenSession } from "@/lib/publish-token";
 import { csrfSafe, resolveSession } from "@/lib/session";
 import { getStorage } from "@/lib/storage";
-import { toAdminLog } from "@/lib/metadata-model";
 import type { AdminAction, AdminLogEntry, Session, Site, User } from "@/lib/types";
 
 export type AdminActor = { kind: "token"; userId: null } | { kind: "user"; userId: string; email: string } | { kind: "system"; userId: null };
@@ -60,11 +59,7 @@ export async function requireAdminWrite(request: Request): Promise<AdminActor> {
 /** Global audit views must not reveal sites another administrator encountered. */
 export async function visibleAdminLog(actor: AdminActor, options: { targetId?: string | null; limit: number }) {
   if (options.targetId) return listAdminLog(options); // Exact target supplied by the caller.
-  const rows = await rbacQuery(
-    "SELECT * FROM admin_log WHERE target_kind<>'site' OR (actor_kind='user' AND actor_user_id=$1) ORDER BY created_at DESC,id LIMIT $2",
-    [actor.kind === "user" ? actor.userId : null, options.limit],
-  );
-  return rows.map(toAdminLog);
+  return listAdminLog({ ...options, viewerUserId: actor.kind === "user" ? actor.userId : null });
 }
 
 export async function recordAdminAction(
@@ -124,23 +119,30 @@ export async function enableUser(request: Request, actor: AdminActor, userId: st
 
 // --- sites --------------------------------------------------------------------------
 
-async function liveSite(slug: string): Promise<Site> {
+/** Pin confirmation to the displayed identity even if its slug was reassigned meanwhile. */
+export async function adminSiteTarget(slug: string, expectedSiteId?: string): Promise<Site | null> {
   const site = await getSiteBySlug(slug);
+  if (expectedSiteId && site?.id !== expectedSiteId) throw Object.assign(new Error("The site address changed; load the site again before confirming"), { statusCode: 409 });
+  return site;
+}
+
+async function liveSite(slug: string, expectedSiteId?: string): Promise<Site> {
+  const site = await adminSiteTarget(slug, expectedSiteId);
   if (!site || site.deletedAt) throw new BadRequestError("No such site");
   return site;
 }
 
 /** Stop serving the site to anyone but its owner, collaborators and administrators. Files untouched. */
-export async function takeDownSite(request: Request, actor: AdminActor, slug: string, reason: unknown): Promise<Site> {
-  const site = await liveSite(slug);
+export async function takeDownSite(request: Request, actor: AdminActor, slug: string, reason: unknown, expectedSiteId?: string): Promise<Site> {
+  const site = await liveSite(slug, expectedSiteId);
   const why = cleanReason(reason, true);
   if (!(await setSiteTakenDown(site.id, Date.now(), why))) throw new BadRequestError("The site is already taken down");
   await recordAdminAction(request, actor, "site.take_down", { kind: "site", id: site.id }, why);
   return (await getSite(site.id))!;
 }
 
-export async function restoreTakenDownSite(request: Request, actor: AdminActor, slug: string, reason: unknown): Promise<Site> {
-  const site = await liveSite(slug);
+export async function restoreTakenDownSite(request: Request, actor: AdminActor, slug: string, reason: unknown, expectedSiteId?: string): Promise<Site> {
+  const site = await liveSite(slug, expectedSiteId);
   const why = cleanReason(reason, false);
   if (!(await setSiteTakenDown(site.id, null, null))) throw new BadRequestError("The site is not taken down");
   await recordAdminAction(request, actor, "site.restore", { kind: "site", id: site.id }, why);
@@ -148,8 +150,8 @@ export async function restoreTakenDownSite(request: Request, actor: AdminActor, 
 }
 
 /** Administrative delete: the owner's delete without the owner. Soft, restorable for the retention window. */
-export async function deleteSiteAsAdmin(request: Request, actor: AdminActor, slug: string, reason: unknown): Promise<Site> {
-  const site = await liveSite(slug);
+export async function deleteSiteAsAdmin(request: Request, actor: AdminActor, slug: string, reason: unknown, expectedSiteId?: string): Promise<Site> {
+  const site = await liveSite(slug, expectedSiteId);
   const why = cleanReason(reason, true);
   await softDeleteSite(site.id);
   await recordAdminAction(request, actor, "site.delete", { kind: "site", id: site.id }, why);
@@ -157,8 +159,8 @@ export async function deleteSiteAsAdmin(request: Request, actor: AdminActor, slu
 }
 
 /** Undo a delete while the files are still there. */
-export async function undeleteSite(request: Request, actor: AdminActor, slug: string, reason: unknown): Promise<Site> {
-  const site = await getSiteBySlug(slug);
+export async function undeleteSite(request: Request, actor: AdminActor, slug: string, reason: unknown, expectedSiteId?: string): Promise<Site> {
+  const site = await adminSiteTarget(slug, expectedSiteId);
   if (!site || !site.deletedAt) throw new BadRequestError("The site is not deleted");
   if (site.purgedAt) throw new BadRequestError("The site's files were purged after the retention window; it cannot be restored");
   const why = cleanReason(reason, false);

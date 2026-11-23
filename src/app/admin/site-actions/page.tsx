@@ -22,21 +22,25 @@ export default function AdminSiteActionsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  async function act(value: string) {
+  async function act(value: string, email?: string) {
     if (!site || !action) return;
     const endpoint = `/api/admin/sites/${encodeURIComponent(site.slug)}`;
     if (action === "assign") {
-      const data = await adminFetch<{ ownerId: string }>(`${endpoint}/owner`, { method: "POST", body: { email: value } });
+      const data = await adminFetch<{ ownerId: string }>(`${endpoint}/owner`, { method: "POST", body: { email, reason: value, expectedSiteId: site.id } });
       setSite({ ...site, ownerId: data.ownerId });
     } else {
       const body = action === "undelete" ? { deleted: false, reason: value }
         : action === "delete" ? { reason: value }
           : { takenDown: action === "take-down", reason: value };
-      const data = await adminFetch<{ site: KnownSite }>(endpoint, { method: action === "delete" ? "DELETE" : "PATCH", body });
+      const data = await adminFetch<{ site: KnownSite }>(endpoint, { method: action === "delete" ? "DELETE" : "PATCH", body: { ...body, expectedSiteId: site.id } });
       setSite(data.site);
     }
     setNotice(t("Site action completed."));
   }
+
+  const actions: Action[] = !site || site.purgedAt ? [] : site.deletedAt ? ["undelete"]
+    : [site.takenDownAt ? "restore" : "take-down", "delete"];
+  if (site && !site.ownerId && !site.deletedAt && !site.purgedAt) actions.unshift("assign");
 
   return <div className="admin-known-site">
     <p className="drawer-note">{t("Enter an exact site address, slug or ID to handle a report. This form does not browse or search other sites.")}</p>
@@ -59,10 +63,7 @@ export default function AdminSiteActionsPage() {
       <p>{t(site.purgedAt ? "Files permanently removed" : site.deletedAt ? "Deleted" : site.takenDownAt ? "Taken down" : "Active site")}</p>
       <p className="drawer-note">{t("Keep this address or ID for later recovery. No deleted-site catalog is available.")}</p>
       <div className="admin-actions-row">
-        {(site.purgedAt ? [] : site.deletedAt ? ["undelete"] : [...(!site.ownerId ? ["assign"] : []), site.takenDownAt ? "restore" : "take-down", "delete"]).map(value => {
-          const key = value as Action;
-          return <button key={key} type="button" className={`btn${key === "delete" || key === "take-down" ? " danger" : ""}`} onClick={() => setAction(key)}>{t(labels[key])}</button>;
-        })}
+        {actions.map(key => <button key={key} type="button" className={`btn${key === "delete" || key === "take-down" ? " danger" : ""}`} onClick={() => setAction(key)}>{t(labels[key])}</button>)}
       </div>
     </section>}
     <ReasonDialog open={action !== null} title={action ? t(labels[action]) : ""}
@@ -70,7 +71,7 @@ export default function AdminSiteActionsPage() {
         : action === "delete" ? t("This removes the site for everyone. Files remain recoverable only during the retention window.")
           : t("This changes access to the known site. The action and your reason are recorded.")}
       reasonRequired={action === "assign" || action === "take-down" || action === "delete"}
-      inputType={action === "assign" ? "email" : undefined} inputLabel={action === "assign" ? t("Recipient email") : undefined}
+      emailRequired={action === "assign"}
       confirmLabel={action ? t(labels[action]) : ""} danger={action === "delete" || action === "take-down"}
       onConfirm={act} onClose={() => setAction(null)} />
   </div>;

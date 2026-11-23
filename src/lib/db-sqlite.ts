@@ -68,7 +68,7 @@ import {
   type Row,
   toUserFolder, type UserFolder, type FolderAssignment,
 } from "@/lib/metadata-model";
-import type { MetadataStore } from "@/lib/db";
+import type { AdminLogOptions, MetadataStore } from "@/lib/db";
 
 /**
  * Exactly one of userId / email, as share_grants' CHECK constraint demands. Validated here rather
@@ -1327,9 +1327,9 @@ export class SqliteStore implements MetadataStore {
       .run(e.id, e.actorKind, e.actorUserId, e.action, e.targetKind, e.targetId, e.reason, e.ip, e.createdAt);
   }
 
-  async listAdminLog(opts: { targetId?: string | null; limit: number }): Promise<AdminLogEntry[]> {
+  async listAdminLog(opts: AdminLogOptions): Promise<AdminLogEntry[]> {
     const t = opts.targetId ?? null;
-    const rows = this.db.prepare("SELECT * FROM admin_log WHERE (? IS NULL OR target_id = ?) ORDER BY created_at DESC, id LIMIT ?").all(t, t, opts.limit) as Row[];
+    const rows = this.db.prepare("SELECT * FROM admin_log WHERE (? IS NULL OR target_id = ?) AND (? OR target_kind<>'site' OR (actor_kind='user' AND actor_user_id=?)) ORDER BY created_at DESC, id LIMIT ?").all(t, t, opts.viewerUserId === undefined ? 1 : 0, opts.viewerUserId ?? null, opts.limit) as Row[];
     return rows.map(toAdminLog);
   }
 

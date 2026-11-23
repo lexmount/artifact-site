@@ -5,8 +5,8 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
-- Remove the global site browser and its navigation from Administration, along with the System action-log panel. Overview statistics remain available; site events in global audit views are limited to the signed-in administrator’s own actions.
-- Retire `GET /api/admin/sites` with HTTP 410 for all credentials. Limit authorization site choices to owned sites and explicit site-administrator grants, without platform or tenant administrator discovery overrides. Remove the file list from tenant-detail responses. Add an audited exact-address/ID lookup and Site actions form for assignment, take-down, deletion and recovery without an operator token. Authorization management supports the same exact lookup with a reason. Tenant audit collections expose only workspace governance events.
+- Remove the global site browser and its navigation from Administration. The System action-log viewer supports exact target IDs. Overview statistics remain available; site events in global audit views are limited to the signed-in administrator’s own actions.
+- Retire `GET /api/admin/sites` with HTTP 410 for all credentials. Limit authorization site choices to owned sites and explicit site-administrator grants, without platform or tenant administrator discovery overrides. Remove the file list from tenant-detail responses. Add an audited exact-address/ID lookup and Site actions form for assignment, take-down, deletion and recovery without an operator token. Authorization management supports the same exact lookup with a reason. Tenant audit collections expose only workspace governance events. Exact authorization lookup returns the same unavailable response for unknown, deleted, disabled-workspace or unauthorized sites. Site subpage and version-share URLs are accepted; assignment requires a recorded reason, and console mutations verify the displayed site ID.
 
 ## 0.5.0 — 2026-11-23
 

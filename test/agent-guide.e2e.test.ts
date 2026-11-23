@@ -129,11 +129,13 @@ describe.skipIf(!base)("agent connection guide", () => {
     expect(await page.$$eval('.admin-tile', nodes => nodes.length)).toBe(4);
     expect(await page.$('a[href*="/admin/sites"]')).toBeNull();
     expect(await page.evaluate(() => document.body.innerText)).toContain("Recent administrative actions");
+    const logResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/admin/log");
     await page.goto(`${base}/admin/system`, { waitUntil: "networkidle0" });
     expect(await page.evaluate(() => document.body.innerText)).toContain("Maintenance");
-    expect(await page.$('input[aria-label="Filter the action log"]')).toBeNull();
+    expect(await page.$('.admin-known-site input')).not.toBeNull();
+    expect(((await (await logResponse).json()).entries as { targetKind: string }[]).every(entry => entry.targetKind !== "site")).toBe(true);
     expect(requests).not.toContain("/api/admin/sites");
-    expect(requests).not.toContain("/api/admin/log");
+    expect(requests).toContain("/api/admin/log");
     expect((await page.goto(`${base}/admin/sites`))?.status()).toBe(404);
     const retired = await fetch(`${base}/api/admin/sites?state=deleted`, {
       headers: { authorization: `Bearer ${process.env.MCP_E2E_TOKEN}` },

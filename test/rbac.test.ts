@@ -573,7 +573,7 @@ it("refuses administrative assignment that would orphan a site outside its owner
   expect(await claimSiteAudited(site.id,owner.user.id,{id:createId("audit"),siteId:site.id,versionId:null,action:"claim",editorKind:"admin",actorUserId:null,actorAnonId:null,method:"api",ip:null,userAgent:null})).toBe(false);
   vi.stubEnv("PUBLISH_API_TOKEN","rbac-assign-test");
   try {
-    const response=await assignOwnerRoute(request("",{authorization:"Bearer rbac-assign-test"},{email:owner.user.email}),{params:Promise.resolve({slug:site.slug})});
+    const response=await assignOwnerRoute(request("",{authorization:"Bearer rbac-assign-test"},{email:owner.user.email,reason:"Verified account recovery"}),{params:Promise.resolve({slug:site.slug})});
     expect(response.status).toBe(403);
     expect((await getSite(site.id))?.ownerId).toBeNull();
   } finally { vi.unstubAllEnvs(); }

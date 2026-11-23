@@ -1,8 +1,8 @@
 import { memberRole } from "@/lib/rbac-access";
 import { ANONYMOUS_TENANT, INIT_TENANT } from "@/lib/rbac";
 import { z } from "zod";
-import { requireAdminWrite } from "@/lib/admin";
-import { createId, getSiteBySlug, getUserByVerifiedEmail } from "@/lib/db";
+import { adminSiteTarget, requireAdminWrite } from "@/lib/admin";
+import { createId, getUserByVerifiedEmail } from "@/lib/db";
 import { claimSiteRecorded } from "@/lib/sites";
 import { apiAuditContext, auditRequestMeta } from "@/lib/audit";
 import { checkRateLimit } from "@/lib/ratelimit";
@@ -13,9 +13,9 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
   try {
     checkRateLimit(request);
     const admin = await requireAdminWrite(request);
-    const { email } = z.object({ email: z.string().trim().email().max(254) }).parse(await (await readBodyWithinUploadLimit(request, 4096)).json());
+    const { email, reason, expectedSiteId } = z.object({ email: z.string().trim().email().max(254), reason: z.string().trim().min(1).max(500).refine(value => !value.includes("\0")), expectedSiteId: z.string().min(1).max(200).optional() }).parse(await (await readBodyWithinUploadLimit(request, 4096)).json());
     const { slug } = await context.params;
-    const site = await getSiteBySlug(slug);
+    const site = await adminSiteTarget(slug, expectedSiteId);
     if (!site || site.deletedAt) return json({ error: "site not found" }, 404);
     if (site.ownerId) return json({ error: "This site already has an owner", code: "already_owned" }, 409);
     const user = await getUserByVerifiedEmail(email);
@@ -24,7 +24,7 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     if (!(await memberRole(tenantId,user.id))) return json({ error: "The new owner must be an active member of the destination tenant" },403);
     const won = await claimSiteRecorded(site.id, user.id, apiAuditContext(request, { kind: "admin", userId: admin.userId, anonId: null }), {
       id: createId("adm"), actorKind: admin.kind, actorUserId: admin.userId, action: "site.assign_owner",
-      targetKind: "site", targetId: site.id, reason: `Assigned owner: ${user.id}`, ip: auditRequestMeta(request).ip, createdAt: Date.now(),
+      targetKind: "site", targetId: site.id, reason: `${reason}\nAssigned owner: ${user.id}`, ip: auditRequestMeta(request).ip, createdAt: Date.now(),
     });
     if (!won) return json({ error: "The site was assigned or deleted concurrently", code: "already_owned" }, 409);
     return json({ ok: true, ownerId: user.id });

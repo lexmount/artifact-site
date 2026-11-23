@@ -3,6 +3,10 @@ import type { Messages } from "@/lib/i18n";
 /** The administration console (/admin, src/components/admin) and the take-down surfaces it adds
  *  to the site page, the share page and the site cards. Keys are the English source strings. */
 export const admin: Messages = {
+  "Action log": "操作日志",
+  "Exact user or site ID": "完整用户或站点 ID",
+  "Load audit records": "载入审计记录",
+  "Showing up to 200 actions. Leave the target empty for system, user and your own site actions, or enter an exact user or site ID.": "最多显示 200 条操作。留空可查看系统、用户及你自己的站点操作；也可输入完整用户或站点 ID。",
   "Assign owner": "分配所有者",
   "Take down": "下架",
   "Restore access": "恢复访问",

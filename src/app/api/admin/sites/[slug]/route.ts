@@ -9,10 +9,10 @@ import { errorResponse, json } from "../../../_util";
 import { adminSite } from "../_shape";
 
 const patch = z.union([
-  z.object({ takenDown: z.boolean(), reason: z.string().max(500).optional() }),
-  z.object({ deleted: z.literal(false), reason: z.string().max(500).optional() }),
+  z.object({ takenDown: z.boolean(), expectedSiteId: z.string().min(1).max(200).optional(), reason: z.string().max(500).optional() }),
+  z.object({ deleted: z.literal(false), expectedSiteId: z.string().min(1).max(200).optional(), reason: z.string().max(500).optional() }),
 ]);
-const del = z.object({ reason: z.string().max(500) });
+const del = z.object({ expectedSiteId: z.string().min(1).max(200).optional(), reason: z.string().max(500) });
 
 export async function PATCH(request: Request, context: { params: Promise<{ slug: string }> }): Promise<NextResponse> {
   try {
@@ -21,8 +21,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ slug:
     const { slug } = await context.params;
     const input = patch.parse(await request.json());
     const site = "takenDown" in input
-      ? (input.takenDown ? await takeDownSite(request, actor, slug, input.reason) : await restoreTakenDownSite(request, actor, slug, input.reason))
-      : await undeleteSite(request, actor, slug, input.reason);
+      ? (input.takenDown ? await takeDownSite(request, actor, slug, input.reason, input.expectedSiteId) : await restoreTakenDownSite(request, actor, slug, input.reason, input.expectedSiteId))
+      : await undeleteSite(request, actor, slug, input.reason, input.expectedSiteId);
     return json({ site: adminSite(site) });
   } catch (error) {
     return errorResponse(error);
@@ -35,7 +35,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ slug
     const actor = await requireAdminWrite(request);
     const { slug } = await context.params;
     const input = del.parse(await request.json().catch(() => ({})));
-    const site = await deleteSiteAsAdmin(request, actor, slug, input.reason);
+    const site = await deleteSiteAsAdmin(request, actor, slug, input.reason, input.expectedSiteId);
     return json({ site: adminSite(site) });
   } catch (error) {
     return errorResponse(error);

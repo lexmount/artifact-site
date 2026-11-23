@@ -484,9 +484,9 @@ describe("lists and the overview", () => {
     }
     expect((await RESOURCES(req(`/api/authorization/resources?exact=${site.slug}`, { headers: asCookie(admin.cookie) }))).status).toBe(400);
     const outsider = await person("outsider@example.net");
-    expect((await RESOURCES(req(`/api/authorization/resources?exact=${site.id}`, { headers: { ...asCookie(outsider.cookie), "x-management-reason": "Attempt" } }))).status).toBe(403);
+    expect((await RESOURCES(req(`/api/authorization/resources?exact=${site.id}`, { headers: { ...asCookie(outsider.cookie), "x-management-reason": "Attempt" } }))).status).toBe(404);
     await insertPublishToken({ id: hashTokenSecret("ahp_known-exact"), userId: admin.user.id, name: "agent", createdAt: Date.now() });
-    expect((await RESOURCES(req(`/api/authorization/resources?exact=${site.id}`, { headers: { authorization: "Bearer ahp_known-exact", "x-management-reason": "Attempt" } }))).status).toBe(403);
+    expect((await RESOURCES(req(`/api/authorization/resources?exact=${site.id}`, { headers: { authorization: "Bearer ahp_known-exact", "x-management-reason": "Attempt" } }))).status).toBe(404);
     expect(await rbacQuery("SELECT id FROM rbac_audit WHERE target_id=$1 AND action='site.management'", [site.id])).not.toHaveLength(0);
   });
 
@@ -564,7 +564,7 @@ describe("assigning unowned sites", () => {
     const { site } = await createSite({ mode: "paste", html: "<html>lost browser</html>" });
     await updateSiteVisibility(site.id, "private");
     const { POST } = await import("@/app/api/admin/sites/[slug]/owner/route");
-    const call = (headers: H, email = target.user.email!) => POST(req(`/api/admin/sites/${site.slug}/owner`, { method: "POST", headers, body: { email } }), params({ slug: site.slug }));
+    const call = (headers: H, email = target.user.email!) => POST(req(`/api/admin/sites/${site.slug}/owner`, { method: "POST", headers, body: { email, reason: "Verified account recovery" } }), params({ slug: site.slug }));
     expect((await call(asCookie(target.cookie))).status).toBe(401);
     expect((await call(asCookie(admin.cookie, false))).status).toBe(401);
     expect((await call({ ...asCookie(admin.cookie), origin: "https://foreign.example" })).status).toBe(401);
@@ -582,7 +582,7 @@ describe("assigning unowned sites", () => {
     const { site } = await createSite({ mode: "paste", html: "<html>operator</html>" });
     const { POST } = await import("@/app/api/admin/sites/[slug]/owner/route");
     await insertPublishToken({ id: hashTokenSecret("ahp_admin_assignment"), userId: admin.user.id, name: "agent", createdAt: Date.now() });
-    const call = (headers: H) => POST(req(`/api/admin/sites/${site.slug}/owner`, { method: "POST", headers, body: { email: target.user.email } }), params({ slug: site.slug }));
+    const call = (headers: H) => POST(req(`/api/admin/sites/${site.slug}/owner`, { method: "POST", headers, body: { email: target.user.email, reason: "Verified account recovery" } }), params({ slug: site.slug }));
     expect((await call({ authorization: "Bearer ahp_admin_assignment" })).status).toBe(401);
     expect((await call(asToken)).status).toBe(200);
     expect((await call(asToken)).status).toBe(409);
@@ -598,4 +598,83 @@ it("rolls back administrator assignment if its admin-log insert fails", async ()
   await insertAdminLog(log);
   await expect(claimSiteAudited(site.id, target.user.id, { id: createId("aud"), siteId: site.id, versionId: null, action: "claim", editorKind: "admin", actorUserId: admin.user.id, actorAnonId: null, method: "api", ip: null, userAgent: null }, log)).rejects.toThrow();
   expect((await getSiteBySlug(site.slug))?.ownerId).toBeNull();
+});
+
+describe("known-site review regressions", () => {
+  it("does not distinguish inaccessible, deleted and unknown sites during exact authorization lookup", async () => {
+    const owner = await person("owner@example.net"), outsider = await person("outsider@example.net");
+    const live = (await createSite({ mode: "paste", html: "<title>Private</title>" }, { ownerId: owner.user.id })).site;
+    const deleted = (await createSite({ mode: "paste", html: "<title>Deleted</title>" }, { ownerId: owner.user.id })).site;
+    await deleteSite(deleted.slug);
+    for (const reference of [live.id, live.slug, deleted.id, deleted.slug, "site_unknown", "unknown-slug"]) {
+      const response = await RESOURCES(req(`/api/authorization/resources?exact=${reference}`, { headers: { ...asCookie(outsider.cookie), "x-management-reason": "Probe" } }));
+      expect({ status: response.status, body: await response.json() }).toEqual({ status: 404, body: { error: "Resource not found" } });
+    }
+  });
+
+  it("rejects disabled-workspace sites for exact lookup and direct authorization management", async () => {
+    const owner = await person("owner@example.net"), admin = await person("admin@example.net");
+    const { site } = await createSite({ mode: "paste", html: "<title>Disabled workspace</title>" }, { ownerId: owner.user.id });
+    const { authorizeResource } = await import("@/lib/authorization");
+    await rbacQuery("UPDATE tenants SET disabled_at=1 WHERE id=$1", [site.tenantId]);
+    try {
+      for (const headers of [asToken, asCookie(admin.cookie), asCookie(owner.cookie)]) {
+        const request = req(`/api/authorization/resources?exact=${site.id}`, { headers: { ...headers, "x-management-reason": "Known report" } });
+        const response = await RESOURCES(request);
+        expect({ status: response.status, body: await response.json() }).toEqual({ status: 404, body: { error: "Resource not found" } });
+        await expect(authorizeResource(request, { type: "site", id: site.id }, await resolveSession(request))).rejects.toMatchObject({ statusCode: 404 });
+      }
+    } finally { await rbacQuery("UPDATE tenants SET disabled_at=NULL WHERE id=$1", [site.tenantId]); }
+  });
+
+  it("resolves site subpages and version share links without treating collections as a single site", async () => {
+    const { site } = await createSite({ mode: "paste", html: "<title>Reported site</title>" });
+    const { knownSite } = await import("@/lib/known-site");
+    const { createId, createShare } = await import("@/lib/db");
+    const { hashToken } = await import("@/lib/share");
+    const token = "reported-version-link";
+    await createShare({ id: createId("share"), siteId: site.id, tokenHash: hashToken(token), policy: "public", versionId: site.currentVersionId, passcodeHash: null, label: null, createdBy: null, createdAnonId: null, expiresAt: null });
+    for (const reference of [`${ORIGIN}/s/${site.slug}/comments?thread=one`, `/s/${site.slug}/edit`, `${ORIGIN}/v/${token}`]) {
+      expect((await knownSite(req("/"), reference)).id).toBe(site.id);
+    }
+    const outsider = await person("outsider@example.net"), admin = await person("admin@example.net");
+    for (const [cookie, status] of [[outsider.cookie, 404], [admin.cookie, 200]] as const) {
+      const response = await RESOURCES(req(`/api/authorization/resources?exact=${encodeURIComponent(`${ORIGIN}/v/${token}`)}`, { headers: { ...asCookie(cookie), "x-management-reason": "Reported share" } }));
+      expect(response.status).toBe(status);
+    }
+    await expect(knownSite(req("/"), `${ORIGIN}/c/collection`)).rejects.toThrow("Collection links");
+    await expect(knownSite(req("/"), `${ORIGIN}/s/${site.slug}%2Fcomments`)).rejects.toThrow();
+    await expect(knownSite(req("/"), `https://foreign.example/v/${token}`)).rejects.toThrow();
+  });
+
+  it("requires a human-written assignment reason and records it atomically with ownership", async () => {
+    const target = await person("recipient@example.net");
+    const { site } = await createSite({ mode: "paste", html: "<title>Unowned</title>" });
+    const { POST } = await import("@/app/api/admin/sites/[slug]/owner/route");
+    const call = (reason?: string) => POST(req(`/api/admin/sites/${site.slug}/owner`, { method: "POST", headers: asToken, body: { email: target.user.email, reason, expectedSiteId: site.id } }), params({ slug: site.slug }));
+    for (const reason of [undefined, " ", "bad\0reason"]) expect((await call(reason)).status).toBe(400);
+    expect((await getSiteBySlug(site.slug))?.ownerId).toBeNull();
+    expect((await call("  Verified recovery request #123  ")).status).toBe(200);
+    expect((await listAdminLog({ targetId: site.id }))[0]).toMatchObject({ action: "site.assign_owner", reason: `Verified recovery request #123\nAssigned owner: ${target.user.id}` });
+  });
+
+  it("refuses every stale-slug mutation when another site has taken the displayed slug", async () => {
+    const target = await person("recipient@example.net");
+    const original = (await createSite({ mode: "paste", html: "<title>Original</title>" })).site;
+    const replacement = (await createSite({ mode: "paste", html: "<title>Replacement</title>" })).site;
+    await rbacQuery("UPDATE sites SET slug=$1 WHERE id=$2", [`moved-${original.slug}`, original.id]);
+    await rbacQuery("UPDATE sites SET slug=$1 WHERE id=$2", [original.slug, replacement.id]);
+    const { POST } = await import("@/app/api/admin/sites/[slug]/owner/route");
+    const body = { expectedSiteId: original.id, reason: "Reported action" };
+    const calls = [
+      () => PATCH_SITE(req(`/api/admin/sites/${original.slug}`, { method: "PATCH", headers: asToken, body: { ...body, takenDown: true } }), params({ slug: original.slug })),
+      () => PATCH_SITE(req(`/api/admin/sites/${original.slug}`, { method: "PATCH", headers: asToken, body: { ...body, takenDown: false } }), params({ slug: original.slug })),
+      () => PATCH_SITE(req(`/api/admin/sites/${original.slug}`, { method: "PATCH", headers: asToken, body: { ...body, deleted: false } }), params({ slug: original.slug })),
+      () => DELETE_SITE(req(`/api/admin/sites/${original.slug}`, { method: "DELETE", headers: asToken, body }), params({ slug: original.slug })),
+      () => POST(req(`/api/admin/sites/${original.slug}/owner`, { method: "POST", headers: asToken, body: { ...body, email: target.user.email } }), params({ slug: original.slug })),
+    ];
+    for (const call of calls) expect((await call()).status).toBe(409);
+    expect(await getSiteBySlug(original.slug)).toMatchObject({ id: replacement.id, deletedAt: null, takenDownAt: null, ownerId: null });
+    expect(await listAdminLog({ targetId: replacement.id })).toEqual([]);
+  });
 });

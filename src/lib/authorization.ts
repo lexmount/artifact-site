@@ -26,7 +26,7 @@ import {
   assertPresentedBearerAlive,
 } from "@/lib/auth";
 import { isTokenSession } from "@/lib/publish-token";
-import type { Session } from "@/lib/types";
+import type { Session, Site } from "@/lib/types";
 const id = z.string().min(1).max(200);
 export const resourceSchema = z
   .object({ type: z.enum(["site", "tenant"]), id })
@@ -109,7 +109,7 @@ export async function authorizeResource(
     return { tenantId: resource.id, site: null };
   }
   const [row] = await rbacQuery(
-    "SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL",
+    "SELECT * FROM sites WHERE id=$1 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=sites.tenant_id AND t.disabled_at IS NULL)",
     [resource.id],
   );
   if (!row) missing();
@@ -370,8 +370,15 @@ export async function authorizationResources(request: Request) {
     checkRateLimit(request);
     if (type !== "site" || p.has("q") || p.has("cursor")) throw new BadRequestError("Exact site lookup cannot be combined with search or pagination");
     if (!managementReason(request)) throw new BadRequestError("A management reason is required");
-    const site = await knownSite(request, p.get("exact")!);
-    await authorizeResource(request, { type: "site", id: site.id }, session, false, false);
+    let site: Site;
+    try {
+      site = await knownSite(request, p.get("exact")!);
+      await authorizeResource(request, { type: "site", id: site.id }, session, false, false);
+    } catch (error) {
+      // A supplied identifier must not reveal existence, deletion or management eligibility.
+      if (error && typeof error === "object" && "statusCode" in error && [400, 403, 404].includes(Number(error.statusCode))) missing();
+      throw error;
+    }
     await recordRbacAudit(rbacQuery, site.tenantId, session?.userId ?? null, "site.management", site.id, managementReason(request)!);
     return { resources: [{ id: site.id, name: site.title, slug: site.slug, tenant_id: site.tenantId }], nextCursor: null };
   }

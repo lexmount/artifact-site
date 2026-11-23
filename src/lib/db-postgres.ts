@@ -67,7 +67,7 @@ import {
   type Row,
   toUserFolder, type UserFolder, type FolderAssignment,
 } from "@/lib/metadata-model";
-import type { MetadataStore } from "@/lib/db";
+import type { AdminLogOptions, MetadataStore } from "@/lib/db";
 
 // BIGINT (oid 20) comes back as a string by default to avoid precision loss; parse to Number
 // (ms timestamps and our counts are safely < 2^53). Set once at module load.
@@ -1556,9 +1556,9 @@ export class PostgresStore implements MetadataStore {
       [e.id, e.actorKind, e.actorUserId, e.action, e.targetKind, e.targetId, e.reason, e.ip, e.createdAt]);
   }
 
-  async listAdminLog(opts: { targetId?: string | null; limit: number }): Promise<AdminLogEntry[]> {
+  async listAdminLog(opts: AdminLogOptions): Promise<AdminLogEntry[]> {
     const { rows } = await this.pool.query(
-      "SELECT * FROM admin_log WHERE ($1::text IS NULL OR target_id = $1) ORDER BY created_at DESC, id LIMIT $2", [opts.targetId ?? null, opts.limit]);
+      "SELECT * FROM admin_log WHERE ($1::text IS NULL OR target_id = $1) AND ($3::boolean OR target_kind<>'site' OR (actor_kind='user' AND actor_user_id=$4)) ORDER BY created_at DESC, id LIMIT $2", [opts.targetId ?? null, opts.limit, opts.viewerUserId === undefined, opts.viewerUserId ?? null]);
     return (rows as Row[]).map(toAdminLog);
   }
 

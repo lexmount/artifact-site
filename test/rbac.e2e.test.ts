@@ -383,8 +383,12 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       const page = await context.newPage();
       await page.setViewport({ width: 390, height: 844 });
       await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
-      const catalogs: string[] = [];
-      page.on("request", request => { if (new URL(request.url()).pathname === "/api/admin/sites") catalogs.push(request.url()); });
+      const catalogs: string[] = [], mutationIds: string[] = [];
+      page.on("request", request => {
+        const path = new URL(request.url()).pathname;
+        if (path === "/api/admin/sites") catalogs.push(request.url());
+        if (path.startsWith(`/api/admin/sites/${created.slug}`) && request.method() !== "GET") mutationIds.push(JSON.parse(request.postData()!).expectedSiteId);
+      });
       const load = async (reference: string) => {
         await page.goto(`${base}/admin/site-actions`, { waitUntil: "networkidle0" });
         await page.type('.admin-known-site form label:first-of-type input', reference);
@@ -399,14 +403,18 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
           button.click();
         }, label);
         await page.waitForSelector('dialog[open]');
-        await page.type('dialog[open] input, dialog[open] textarea', input);
+        if (label === 'Assign owner') {
+          await page.type('dialog[open] input[type="email"]', input);
+          await page.type('dialog[open] textarea', 'Verified ownership recovery #123');
+        } else await page.type('dialog[open] textarea', input);
         await page.click('dialog[open] button[type="submit"]');
         await page.waitForFunction(() => !document.querySelector('dialog[open]'));
       };
       try {
-        await load(`${base}/s/${created.slug}`);
+        await load(`${base}/s/${created.slug}/comments`);
         await action('Assign owner', recipient.user.email!);
         expect((await rbacQuery("SELECT owner_id FROM sites WHERE id=$1", [String(site.id)]))[0].owner_id).toBe(recipient.user.id);
+        expect((await rbacQuery("SELECT reason FROM admin_log WHERE target_id=$1 AND action='site.assign_owner'", [String(site.id)]))[0].reason).toBe(`Verified ownership recovery #123\nAssigned owner: ${recipient.user.id}`);
         await action('Take down', 'Reported content');
         await action('Restore access', 'Report cleared');
         await action('Delete site', 'Recovery acceptance');
@@ -419,6 +427,32 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         await action('Restore deleted site', 'Undo mistaken deletion');
         expect((await rbacQuery("SELECT deleted_at FROM sites WHERE id=$1", [String(site.id)]))[0].deleted_at).toBeNull();
         expect(catalogs).toEqual([]);
+        expect(mutationIds).toEqual(Array(5).fill(site.id));
+      } finally { await context.close(); }
+    });
+
+    it("views 200 scoped audit entries and filters by an exact target in System", async () => {
+      const administrator = await actor("sharing-admin@example.test");
+      const { insertAdminLog } = await import("@/lib/db");
+      const foreignSite = createId("site");
+      for (let index = 0; index < 205; index++) await insertAdminLog({ id: createId("adm"), actorKind: "system", actorUserId: null, action: "maintenance.sweep_uploads", targetKind: "system", targetId: "sweep-uploads", reason: `Audit browser ${index}`, ip: null, createdAt: Date.now() + index });
+      await insertAdminLog({ id: createId("adm"), actorKind: "token", actorUserId: null, action: "site.view", targetKind: "site", targetId: foreignSite, reason: "Reported target audit", ip: null, createdAt: Date.now() + 1000 });
+      const context = await browser.createBrowserContext();
+      const [name, value] = administrator.cookie.split("=");
+      await context.setCookie({ name, value, domain: new URL(base!).hostname, path: "/" });
+      const page = await context.newPage();
+      await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
+      try {
+        await page.goto(`${base}/admin/system`, { waitUntil: "networkidle0" });
+        await page.waitForSelector('.admin-table tbody tr');
+        expect(await page.$$eval('.admin-table tbody tr', rows => rows.length)).toBe(200);
+        expect(await page.$eval('.admin-table', el => el.textContent)).not.toContain(foreignSite);
+        await page.type('.admin-known-site input', foreignSite);
+        await page.click('.admin-known-site button');
+        await page.waitForFunction(id => document.querySelector('.admin-table')?.textContent?.includes(id), {}, foreignSite);
+        expect(await page.$$eval('.admin-table tbody tr', rows => rows.length)).toBe(1);
+        expect(await page.$eval('.admin-table', el => el.textContent)).toContain('Reported target audit');
+        await page.screenshot({ path: 'test-results/admin-exact-audit.png', fullPage: true });
       } finally { await context.close(); }
     });
 

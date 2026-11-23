@@ -59,6 +59,13 @@ import {
 } from "@/lib/metadata-model";
 export * from "@/lib/metadata-model";
 
+export interface AdminLogOptions {
+  targetId?: string | null;
+  limit: number;
+  /** Omitted: internal/exact-target audit. Null: non-site events. String: also this user's site actions. */
+  viewerUserId?: string | null;
+}
+
 export interface MetadataStore {
   rbacQuery: RbacQuery;
   rbacTransaction: RbacTransaction;
@@ -263,7 +270,7 @@ export interface MetadataStore {
   /** Soft-deleted at or before `before` and not yet purged — the purge worklist, oldest first. */
   listDeletedSitesBefore(before: number, limit: number): Promise<Site[]>;
   insertAdminLog(entry: AdminLogEntry): Promise<void>;
-  listAdminLog(opts: { targetId?: string | null; limit: number }): Promise<AdminLogEntry[]>;
+  listAdminLog(opts: AdminLogOptions): Promise<AdminLogEntry[]>;
   /** Has this administrator done this to this target since `since`? Collapses a burst (a page and
    *  its twenty assets) into one row. */
   hasRecentAdminLog(actorUserId: string, action: AdminAction, targetId: string, since: number): Promise<boolean>;
@@ -675,8 +682,8 @@ export async function listDeletedSitesBefore(before: number, limit = 100): Promi
 export async function insertAdminLog(entry: AdminLogEntry): Promise<void> {
   return (await getStore()).insertAdminLog(entry);
 }
-export async function listAdminLog(opts: { targetId?: string | null; limit?: number } = {}): Promise<AdminLogEntry[]> {
-  return (await getStore()).listAdminLog({ targetId: opts.targetId ?? null, limit: opts.limit ?? 50 });
+export async function listAdminLog(opts: Partial<AdminLogOptions> = {}): Promise<AdminLogEntry[]> {
+  return (await getStore()).listAdminLog({ ...opts, targetId: opts.targetId ?? null, limit: opts.limit ?? 50 });
 }
 export async function adminOverview(): Promise<AdminOverview> {
   return (await getStore()).adminOverview();

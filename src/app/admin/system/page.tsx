@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 import { adminFetch } from "@/components/admin/format";
+import ActionLog from "@/components/admin/action-log";
+import type { AdminLogEntry } from "@/lib/types";
 
 type Task = "purge-deleted" | "sweep-uploads" | "reconcile" | "expire-anonymous" | "backfill-text" | "prune-audit";
 
@@ -14,9 +16,14 @@ export default function AdminSystemPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [entries, setEntries] = useState<AdminLogEntry[] | null>(null);
+  const [target, setTarget] = useState("");
+  const [logBusy, setLogBusy] = useState(false);
+  const [logError, setLogError] = useState("");
 
   useEffect(() => {
     adminFetch<{ runtime: { lines: string[]; warnings: string[] } }>("/api/admin/overview").then((r) => setRuntime(r.runtime)).catch((e: Error) => setError(e.message));
+    adminFetch<{ entries: AdminLogEntry[] }>("/api/admin/log?limit=200").then(r => setEntries(r.entries)).catch((e: Error) => setLogError(e.message));
   }, []);
 
   async function run(task: Task, dryRun?: boolean) {
@@ -61,6 +68,21 @@ export default function AdminSystemPage() {
       </div>
       {result && <pre className="admin-runtime" role="status">{result}</pre>}
       {error && <p className="drawer-error" role="alert">{error}</p>}
+      <h2 className="admin-h2">{t("Action log")}</h2>
+      <p className="drawer-note">{t("Showing up to 200 actions. Leave the target empty for system, user and your own site actions, or enter an exact user or site ID.")}</p>
+      <form className="admin-known-site" onSubmit={async event => {
+        event.preventDefault(); setLogBusy(true); setLogError(""); setEntries(null);
+        try {
+          const data = await adminFetch<{ entries: AdminLogEntry[] }>(`/api/admin/log?limit=200&target=${encodeURIComponent(target.trim())}`);
+          setEntries(data.entries);
+        } catch (err) { setLogError(err instanceof Error ? err.message : t("Request failed")); }
+        finally { setLogBusy(false); }
+      }}>
+        <label>{t("Exact user or site ID")}<input value={target} maxLength={100} disabled={logBusy} onChange={event => setTarget(event.target.value)} /></label>
+        <button className="btn" disabled={logBusy}>{t("Load audit records")}</button>
+      </form>
+      {logError && <p className="drawer-error" role="alert">{logError}</p>}
+      {entries && <ActionLog entries={entries} emptyText={t("Nothing yet.")} />}
     </>
   );
 }

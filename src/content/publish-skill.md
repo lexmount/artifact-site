@@ -612,7 +612,8 @@ Signing in from the original creating browser can still adopt that browser's own
 
 For an operator-created or historical unowned site, tell the user to ask an administrator to
 open **Administration → Site actions**, load the known site address or ID with a reason,
-then choose **Assign owner** and enter the verified email of their existing, active account. Provide the site address and intended recipient email so the administrator can
+then choose **Assign owner** and enter the verified email of their existing, active account
+and a reason for the assignment. Provide the site address and intended recipient email so the administrator can
 check the request. This keeps the original address and version history; existing owners cannot
 be overwritten through assignment.
 
