@@ -1,33 +1,23 @@
 "use client";
 
-// System: what the process runs on, the maintenance jobs on demand, and the full action log.
-import { useCallback, useEffect, useState } from "react";
-import { Loader2, Search } from "lucide-react";
+// System: what the process runs on and the maintenance jobs on demand.
+import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 import { adminFetch } from "@/components/admin/format";
-import ActionLog from "@/components/admin/action-log";
-import type { AdminLogEntry } from "@/lib/types";
 
 type Task = "purge-deleted" | "sweep-uploads" | "reconcile" | "expire-anonymous" | "backfill-text" | "prune-audit";
 
 export default function AdminSystemPage() {
   const t = useT();
   const [runtime, setRuntime] = useState<{ lines: string[]; warnings: string[] } | null>(null);
-  const [log, setLog] = useState<AdminLogEntry[] | null>(null);
-  const [target, setTarget] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const loadLog = useCallback(() => {
-    const params = new URLSearchParams({ limit: "200" });
-    if (target.trim()) params.set("target", target.trim());
-    adminFetch<{ entries: AdminLogEntry[] }>(`/api/admin/log?${params}`).then((r) => setLog(r.entries)).catch((e: Error) => setError(e.message));
-  }, [target]);
   useEffect(() => {
     adminFetch<{ runtime: { lines: string[]; warnings: string[] } }>("/api/admin/overview").then((r) => setRuntime(r.runtime)).catch((e: Error) => setError(e.message));
   }, []);
-  useEffect(() => { loadLog(); }, [loadLog]);
 
   async function run(task: Task, dryRun?: boolean) {
     const key = `${task}${dryRun ? ":dry" : ""}`;
@@ -42,12 +32,10 @@ export default function AdminSystemPage() {
           setResult(`${task}: ${JSON.stringify({ indexed, remaining: r.result.remaining })}`);
           if (!r.result.remaining || r.result.indexed === 0) break;
         }
-        loadLog();
         return;
       }
       const r = await adminFetch<{ task: Task; result: unknown }>("/api/admin/maintenance", { method: "POST", body: { task, dryRun } });
       setResult(`${task}${dryRun ? ` (${t("dry run")})` : ""}: ${JSON.stringify(r.result)}`);
-      loadLog();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -73,15 +61,6 @@ export default function AdminSystemPage() {
       </div>
       {result && <pre className="admin-runtime" role="status">{result}</pre>}
       {error && <p className="drawer-error" role="alert">{error}</p>}
-
-      <h2 className="admin-h2">{t("Action log")}</h2>
-      <div className="admin-toolbar">
-        <label className="searchbox admin-search">
-          <Search size={16} aria-hidden="true" />
-          <input type="search" placeholder={t("Filter by user or site id")} value={target} onChange={(e) => setTarget(e.target.value)} aria-label={t("Filter the action log")} />
-        </label>
-      </div>
-      {log ? <ActionLog entries={log} emptyText={t("Nothing yet.")} /> : <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}
     </>
   );
 }

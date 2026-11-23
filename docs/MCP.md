@@ -324,10 +324,17 @@ bytes without assembling the entire file again.
 
 ### Administrator assignment of unowned sites
 
-In **Administration → Sites**, open an unowned site's action menu and choose **Assign owner**.
-Enter the verified email of an existing, active account and confirm. Email administrators use
-this console flow even when PUBLISH_API_TOKEN is unset. Personal agent tokens do not inherit
-email-administrator privileges. Existing owners are never overwritten by this action.
+The administration console has no global site browser. `GET /api/admin/sites` is retired
+and returns 410, including for operator tokens. Authorization resource search lists only
+sites the account owns or has an explicit site-administrator grant for; platform and tenant
+management roles do not expand that list. Tenant details (`GET /api/tenants/<id>`) return
+audit records without a `sites` collection. Aggregate counts and administrative audit records
+remain available.
+
+For a known unowned site, use the assignment endpoint below with the verified email of an
+existing, active account. Existing owners are never overwritten. Email administrators can
+use an authenticated same-origin request even when PUBLISH_API_TOKEN is unset; personal
+agent tokens do not inherit email-administrator privileges.
 
 For operator scripts, POST `/api/admin/sites/<slug>/owner` with
 `Authorization: Bearer <PUBLISH_API_TOKEN>` and JSON `{"email":"recipient@example.com"}`.

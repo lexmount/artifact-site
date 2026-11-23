@@ -27,6 +27,9 @@ import { GET as SITE_GET, PATCH as SITE_PATCH } from "@/app/api/sites/[slug]/rou
 import { GET as VERSIONS } from "@/app/api/sites/[slug]/versions/route";
 import { GET as ACTIVITY } from "@/app/api/sites/[slug]/admin-activity/route";
 import { GET as PREVIEW } from "@/app/api/preview/[slug]/[[...path]]/route";
+import { GET as RESOURCES } from "@/app/api/authorization/resources/route";
+import { GET as TENANT } from "@/app/api/tenants/[tenantId]/route";
+import { putTenantAdmin, putUserSiteRole } from "@/lib/role-bindings";
 
 const ORIGIN = "https://x";
 const dirs: string[] = [];
@@ -307,10 +310,7 @@ describe("deleting and restoring", () => {
     expect(await getSiteView(site.slug)).toBeNull();
     expect(await getStorage().stat(site.id, version.id, version.entry)).toBe("file");
 
-    const deleted = await SITES(req("/api/admin/sites?state=deleted", { headers: asToken }));
-    expect(((await deleted.json()) as { sites: { slug: string }[] }).sites.map((s) => s.slug)).toContain(site.slug);
-    const live = await SITES(req("/api/admin/sites", { headers: asToken }));
-    expect(((await live.json()) as { sites: { slug: string }[] }).sites.map((s) => s.slug)).not.toContain(site.slug);
+    expect((await getSiteBySlug(site.slug))?.deletedAt).toBeGreaterThan(0);
 
     const restored = await PATCH_SITE(req(`/api/admin/sites/${site.slug}`, { method: "PATCH", headers: asToken, body: { deleted: false } }), params({ slug: site.slug }));
     expect(restored.status).toBe(200);
@@ -374,25 +374,70 @@ describe("lists and the overview", () => {
     expect(disabled.users.map((u) => u.email)).toEqual(["bob@example.net"]);
   });
 
-  it("sites list: owner e-mail, anonymous filter, state filter, search by title/slug/owner", async () => {
-    const alice = await person("alice@example.net");
-    const mine = await createSite({ mode: "paste", html: "<title>Quarterly report</title><body>x</body>" }, { ownerId: alice.user.id });
-    const anon = await createSite({ mode: "paste", html: "<title>Anon page</title><body>x</body>" }, { anonOwnerId: "anon_1" });
-    const list = (await (await SITES(req("/api/admin/sites", { headers: asToken }))).json()) as { sites: { slug: string; ownerEmail: string | null; anonymous: boolean; byteTotal: number; versionCount: number; anonOwnerId?: string }[]; total: number };
-    expect(list.total).toBe(2);
-    const m = list.sites.find((s) => s.slug === mine.site.slug)!;
-    expect(m.ownerEmail).toBe("alice@example.net");
-    expect(m.anonymous).toBe(false);
-    expect(m.versionCount).toBe(1);
-    expect(m.byteTotal).toBeGreaterThan(0);
-    expect(list.sites.find((s) => s.slug === anon.site.slug)!.anonOwnerId).toBeUndefined();
+  it("retires global site enumeration for every credential and legacy filter", async () => {
+    const owner = await person("alice@example.net");
+    const admin = await person("admin@example.net");
+    await createSite({ mode: "paste", html: "<title>Private report</title>" }, { ownerId: owner.user.id });
+    await createSite({ mode: "paste", html: "<title>Anonymous report</title>" }, { anonOwnerId: "anon_1" });
+    for (const headers of [{}, asCookie(owner.cookie), asCookie(admin.cookie), asToken]) {
+      for (const query of ["", "?q=report", `?owner=${owner.user.id}`, "?anonymous=1", "?state=deleted", "?state=taken_down", "?limit=200&offset=1"]) {
+        const response = await SITES(req(`/api/admin/sites${query}`, { headers }));
+        expect(response.status).toBe(410);
+        expect(await response.json()).toEqual({ error: "Administrative site listing is no longer available" });
+      }
+    }
+  });
 
-    const onlyAnon = (await (await SITES(req("/api/admin/sites?anonymous=1", { headers: asToken }))).json()) as { sites: { slug: string }[] };
-    expect(onlyAnon.sites.map((s) => s.slug)).toEqual([anon.site.slug]);
-    const byOwner = (await (await SITES(req("/api/admin/sites?q=alice@", { headers: asToken }))).json()) as { sites: { slug: string }[] };
-    expect(byOwner.sites.map((s) => s.slug)).toEqual([mine.site.slug]);
-    const byTitle = (await (await SITES(req("/api/admin/sites?q=quarterly", { headers: asToken }))).json()) as { sites: { slug: string }[] };
-    expect(byTitle.sites.map((s) => s.slug)).toEqual([mine.site.slug]);
+  it("does not turn platform or tenant management into a site resource catalog", async () => {
+    const owner = await person("alice@example.net");
+    const admin = await person("admin@example.net");
+    const manager = await person("manager@example.net");
+    const hidden = await createSite({ mode: "paste", html: "<title>Private report</title>" }, { ownerId: owner.user.id });
+    await updateSiteVisibility(hidden.site.id, "private");
+    const own = await createSite({ mode: "paste", html: "<title>My report</title>" }, { ownerId: admin.user.id });
+    const shared = await createSite({ mode: "paste", html: "<title>Delegated report</title>" }, { ownerId: owner.user.id });
+    await putUserSiteRole(rbacQuery, shared.site.id, admin.user.id, "admin", owner.user.id);
+    await putTenantAdmin(rbacQuery, hidden.site.tenantId, manager.user.id, true, owner.user.id);
+    for (const [headers, ids] of [
+      [asCookie(admin.cookie), [own.site.id, shared.site.id]],
+      [asCookie(manager.cookie), []],
+      [asToken, []],
+    ] as [H, string[]][]) {
+      const response = await RESOURCES(req("/api/authorization/resources?type=site", { headers }));
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.resources.map((r: { id: string }) => r.id).sort()).toEqual(ids.sort());
+      expect(body.nextCursor).toBeNull();
+      // Neither a title search nor a later page may reveal unrelated private resources.
+      for (const query of ["?type=site&q=Private", "?type=site&cursor=50"]) {
+        expect(await (await RESOURCES(req(`/api/authorization/resources${query}`, { headers }))).json())
+          .toEqual({ resources: [], nextCursor: null });
+      }
+      const tenants = await RESOURCES(req("/api/authorization/resources?type=tenant", { headers }));
+      expect((await tenants.json()).resources.map((r: { id: string }) => r.id)).toContain(hidden.site.tenantId);
+    }
+    const ownResources = await RESOURCES(req("/api/authorization/resources", { headers: asCookie(owner.cookie) }));
+    expect((await ownResources.json()).resources.map((r: { id: string }) => r.id).sort()).toEqual([hidden.site.id, shared.site.id].sort());
+  });
+
+  it("returns tenant audit records without embedding a tenant-wide file list", async () => {
+    const owner = await person("owner@example.net");
+    const admin = await person("admin@example.net");
+    const manager = await person("manager@example.net");
+    const { site } = await createSite({ mode: "paste", html: "<title>Private tenant file</title>" }, { ownerId: owner.user.id });
+    await updateSiteVisibility(site.id, "private");
+    await putTenantAdmin(rbacQuery, site.tenantId, manager.user.id, true, owner.user.id);
+    await rbacQuery("INSERT INTO rbac_audit(id,tenant_id,actor_id,action,target_id,reason,created_at) VALUES('tenant-audit',$1,$2,'tenant.update',$1,'Rename workspace',1)", [site.tenantId, manager.user.id]);
+    for (const headers of [asCookie(admin.cookie), asCookie(manager.cookie), asToken]) {
+      const response = await TENANT(req(`/api/tenants/${site.tenantId}`, { headers }), params({ tenantId: site.tenantId }));
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(Object.keys(body)).toEqual(["audit"]);
+      expect(body.audit).toContainEqual(expect.objectContaining({ action: "tenant.update", reason: "Rename workspace" }));
+      expect(JSON.stringify(body)).not.toContain(site.slug);
+      expect(JSON.stringify(body)).not.toContain(site.title);
+    }
+    expect((await TENANT(req(`/api/tenants/${site.tenantId}`), params({ tenantId: site.tenantId }))).status).toBe(403);
   });
 
   it("overview counts and the maintenance tasks are recorded", async () => {

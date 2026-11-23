@@ -370,13 +370,15 @@ export async function authorizationResources(request: Request) {
     searchPattern(p.get("q") ?? "");
   const uid = session?.userId ?? "";
   const management = !session || !isTokenSession(session);
-  const filter = platform
+  // Management authority can act on a known resource; it must not discover unrelated sites.
+  // Site choices require ownership or an explicit site administrator grant.
+  const filter = type === "tenant" && platform
     ? "1=1"
     : type === "tenant" && !management
       ? "1=0"
       : type === "tenant"
         ? "EXISTS(SELECT 1 FROM authorization_tenant_members m WHERE m.tenant_id=r.id AND m.user_id=$2 AND m.role='admin')"
-        : `((r.owner_id=$2 AND EXISTS(SELECT 1 FROM tenant_members m WHERE m.tenant_id=r.tenant_id AND m.user_id=$2)) OR EXISTS(SELECT 1 FROM authorization_site_members m WHERE m.site_id=r.id AND m.user_id=$2 AND m.role='admin') ${management ? "OR EXISTS(SELECT 1 FROM authorization_tenant_members m WHERE m.tenant_id=r.tenant_id AND m.user_id=$2 AND m.role='admin')" : ""})`;
+        : "((r.owner_id=$2 AND EXISTS(SELECT 1 FROM authorization_tenant_members m WHERE m.tenant_id=r.tenant_id AND m.user_id=$2)) OR EXISTS(SELECT 1 FROM authorization_site_members m WHERE m.site_id=r.id AND m.user_id=$2 AND m.subject_type<>'everyone' AND m.role='admin'))";
   // Always bind user ID, including the platform path, to keep placeholder numbering portable.
   const rows = await rbacQuery(
     `SELECT r.id,${type === "tenant" ? "r.name" : "r.title AS name,r.slug,r.tenant_id"} FROM ${type === "tenant" ? "tenants" : "sites"} r WHERE ${type === "tenant" ? "r.disabled_at IS NULL AND r.id<>'anonymous'" : "r.deleted_at IS NULL AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=r.tenant_id AND t.disabled_at IS NULL)"} AND LOWER(${type === "tenant" ? "r.name" : "r.title"}) LIKE LOWER($1) ESCAPE '!' AND (CAST($2 AS TEXT) IS NOT NULL) AND (${filter}) ORDER BY r.id LIMIT 51 OFFSET $3`,

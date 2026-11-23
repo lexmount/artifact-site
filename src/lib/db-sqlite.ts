@@ -16,7 +16,7 @@ import { dataPath } from "@/lib/config";
 import type {
   AuditEntry, InsertShareInput, Session, Share, ShareGrant, SharePolicy, ShareRow, ShareView,
   Site, SiteOpen, SiteSummary, SiteView, SiteViewStats, User, Version, Visibility,
-  AdminAction, AdminLogEntry, AdminOverview, AdminSiteRow, AdminUserRow, SettingRow, SettingWrite,
+  AdminAction, AdminLogEntry, AdminOverview, AdminUserRow, SettingRow, SettingWrite,
   OauthAuthorization, OauthClientRecord, OauthConnection, OauthToken,
 } from "@/lib/types";
 import {
@@ -32,9 +32,7 @@ import {
   type SiteTextRow,
   type SearchHit,
   type SearchToken,
-  toAdminSiteRow,
   toAdminUserRow,
-  type AdminSiteQuery,
   type AdminUserQuery,
   type QuotaOwner,
   createEditToken,
@@ -1457,25 +1455,6 @@ export class SqliteStore implements MetadataStore {
       ORDER BY ${order}, u.id
       LIMIT ? OFFSET ?`).all(opts.q, like, like, opts.disabledOnly ? 1 : 0, opts.limit, opts.offset) as Row[];
     return { rows: rows.map(toAdminUserRow), total: Number(rows[0]?.total ?? 0) };
-  }
-
-  async listSitesAdmin(opts: AdminSiteQuery): Promise<{ rows: AdminSiteRow[]; total: number }> {
-    const like = likeContains(opts.q);
-    const rows = this.db.prepare(`
-      SELECT s.*, u.email AS owner_email, u.display_name AS owner_name, COUNT(*) OVER() AS total,
-             (SELECT COUNT(*) FROM versions v WHERE v.site_id = s.id) AS version_count,
-             (SELECT COALESCE(SUM(v.byte_size), 0) FROM versions v WHERE v.site_id = s.id) AS byte_total
-      FROM sites s LEFT JOIN users u ON u.id = s.owner_id
-      WHERE (? = '' OR lower(s.title) LIKE ? ESCAPE '\\' OR lower(s.slug) LIKE ? ESCAPE '\\' OR lower(COALESCE(u.email, '')) LIKE ? ESCAPE '\\')
-        AND (? IS NULL OR (s.owner_id = ? AND EXISTS (SELECT 1 FROM authorization_tenant_members tm WHERE tm.tenant_id=s.tenant_id AND tm.user_id=s.owner_id)))
-        AND (? = 0 OR s.owner_id IS NULL)
-        AND CASE ? WHEN 'deleted' THEN (s.deleted_at IS NOT NULL AND s.purged_at IS NULL)
-                    WHEN 'taken_down' THEN (s.deleted_at IS NULL AND s.taken_down_at IS NOT NULL)
-                    ELSE s.deleted_at IS NULL END
-      ORDER BY s.updated_at DESC, s.id
-      LIMIT ? OFFSET ?`)
-      .all(opts.q, like, like, like, opts.ownerId, opts.ownerId, opts.anonymousOnly ? 1 : 0, opts.state, opts.limit, opts.offset) as Row[];
-    return { rows: rows.map(toAdminSiteRow), total: Number(rows[0]?.total ?? 0) };
   }
 
   // --- quotas and expiry --------------------------------------------------------

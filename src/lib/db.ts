@@ -24,7 +24,6 @@ import type {
   AdminAction,
   AdminLogEntry,
   AdminOverview,
-  AdminSiteRow,
   AdminUserRow,
   SettingRow,
   SettingWrite,
@@ -48,7 +47,6 @@ import {
   type InsertAuditInput,
   type QuotaOwner,
   type AdminUserQuery,
-  type AdminSiteQuery,
   type SiteTextWrite,
   type SiteTextRow,
   type SearchToken,
@@ -272,7 +270,6 @@ export interface MetadataStore {
   adminOverview(): Promise<AdminOverview>;
   /** Every account with its live site count and stored bytes (all versions of its sites). */
   listUsersAdmin(opts: AdminUserQuery): Promise<{ rows: AdminUserRow[]; total: number }>;
-  listSitesAdmin(opts: AdminSiteQuery): Promise<{ rows: AdminSiteRow[]; total: number }>;
 
   // --- quotas and expiry --------------------------------------------------------
   /** Live site count and stored bytes (every version of every unpurged site) of one owner:
@@ -686,9 +683,6 @@ export async function adminOverview(): Promise<AdminOverview> {
 }
 export async function listUsersAdmin(opts: AdminUserQuery): Promise<{ rows: AdminUserRow[]; total: number }> {
   return (await getStore()).listUsersAdmin(opts);
-}
-export async function listSitesAdmin(opts: AdminSiteQuery): Promise<{ rows: AdminSiteRow[]; total: number }> {
-  return (await getStore()).listSitesAdmin(opts);
 }
 
 // --- quotas and expiry wrappers ------------------------------------------------

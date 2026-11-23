@@ -69,7 +69,7 @@ export default function AuthorizationConsole() {
     <div className="authorization-console">
       <p>
         {t(
-          "Choose a site or workspace, then assign roles to its members or a wider audience.",
+          "Choose a site you own or administer through an explicit grant, or a workspace, then assign roles.",
         )}
       </p>
       {error && (

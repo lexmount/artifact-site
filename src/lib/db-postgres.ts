@@ -15,7 +15,7 @@ import { config } from "@/lib/config";
 import type {
   AuditEntry, InsertShareInput, Session, Share, ShareGrant, SharePolicy, ShareRow, ShareView,
   Site, SiteOpen, SiteSummary, SiteView, SiteViewStats, User, Version, Visibility,
-  AdminAction, AdminLogEntry, AdminOverview, AdminSiteRow, AdminUserRow, SettingRow, SettingWrite,
+  AdminAction, AdminLogEntry, AdminOverview, AdminUserRow, SettingRow, SettingWrite,
   OauthAuthorization, OauthClientRecord, OauthConnection, OauthToken,
 } from "@/lib/types";
 import {
@@ -31,9 +31,7 @@ import {
   type SiteTextRow,
   type SearchHit,
   type SearchToken,
-  toAdminSiteRow,
   toAdminUserRow,
-  type AdminSiteQuery,
   type AdminUserQuery,
   type QuotaOwner,
   createEditToken,
@@ -1674,24 +1672,6 @@ export class PostgresStore implements MetadataStore {
       ORDER BY ${order}, u.id
       LIMIT $4 OFFSET $5`, [opts.q, likeContains(opts.q), opts.disabledOnly, opts.limit, opts.offset]);
     return { rows: (rows as Row[]).map(toAdminUserRow), total: Number((rows[0] as Row | undefined)?.total ?? 0) };
-  }
-
-  async listSitesAdmin(opts: AdminSiteQuery): Promise<{ rows: AdminSiteRow[]; total: number }> {
-    const { rows } = await this.pool.query(`
-      SELECT s.*, u.email AS owner_email, u.display_name AS owner_name, COUNT(*) OVER() AS total,
-             (SELECT COUNT(*) FROM versions v WHERE v.site_id = s.id) AS version_count,
-             (SELECT COALESCE(SUM(v.byte_size), 0) FROM versions v WHERE v.site_id = s.id) AS byte_total
-      FROM sites s LEFT JOIN users u ON u.id = s.owner_id
-      WHERE ($1 = '' OR lower(s.title) LIKE $2 ESCAPE '\\' OR lower(s.slug) LIKE $2 ESCAPE '\\' OR lower(COALESCE(u.email, '')) LIKE $2 ESCAPE '\\')
-        AND ($3::text IS NULL OR s.owner_id = $3)
-        AND ($4 = false OR s.owner_id IS NULL)
-        AND CASE $5 WHEN 'deleted' THEN (s.deleted_at IS NOT NULL AND s.purged_at IS NULL)
-                    WHEN 'taken_down' THEN (s.deleted_at IS NULL AND s.taken_down_at IS NOT NULL)
-                    ELSE s.deleted_at IS NULL END
-      ORDER BY s.updated_at DESC, s.id
-      LIMIT $6 OFFSET $7`,
-      [opts.q, likeContains(opts.q), opts.ownerId, opts.anonymousOnly, opts.state, opts.limit, opts.offset]);
-    return { rows: (rows as Row[]).map(toAdminSiteRow), total: Number((rows[0] as Row | undefined)?.total ?? 0) };
   }
 
   // --- quotas and expiry --------------------------------------------------------

@@ -486,15 +486,6 @@ export interface AdminUserRow extends User {
   byteTotal: number;
 }
 
-export interface AdminSiteRow extends Site {
-  ownerEmail: string | null;
-  ownerName: string | null;
-  versionCount: number;
-  byteTotal: number;
-}
-
-export type AdminSiteState = "live" | "taken_down" | "deleted";
-
 /** One write to the settings table: a JSON value, or null to remove the row. */
 export interface SettingWrite { key: string; value: string | null }
 

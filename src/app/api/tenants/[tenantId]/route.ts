@@ -60,15 +60,11 @@ export async function GET(request: Request, context: Context) {
   try {
     const { tenantId } = await context.params;
     await requireTenantManager(request, tenantId);
-    const sites = await rbacQuery(
-      "SELECT id,slug,title,owner_id,deleted_at,taken_down_at FROM sites WHERE tenant_id=$1 ORDER BY updated_at DESC LIMIT 200",
-      [tenantId],
-    );
     const audit = await rbacQuery(
       "SELECT actor_id,action,target_id,reason,created_at FROM rbac_audit WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 200",
       [tenantId],
     );
-    return json({ sites, audit });
+    return json({ audit });
   } catch (e) {
     return errorResponse(e);
   }

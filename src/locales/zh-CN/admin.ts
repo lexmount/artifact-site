@@ -15,11 +15,7 @@ export const admin: Messages = {
   "Rotate preview key": "轮换预览密钥",
   "Preview key rotated. All instances now use the new key.": "预览密钥已轮换，所有实例均已使用新密钥。",
 
-  "Assign owner": "分配所有者",
   "Assigned site owner": "已分配站点所有者",
-  "Assign owner for “{title}”": "为“{title}”分配所有者",
-  "Recipient email": "接收账号邮箱",
-  "Enter the verified email of an existing account. This gives that account full control of this unowned site and records the assignment in the audit log.": "输入已有账号的已验证邮箱。该账号将获得此无主站点的完整管理权限，分配操作会记入审计日志。",
   // Shell and navigation
   "Admin": "管理",
   "Administration": "管理",
@@ -89,35 +85,10 @@ export const admin: Messages = {
   "e.g. Publishing spam sites": "例如：批量发布垃圾站点",
 
   // Sites
-  "Search title, address or owner e-mail": "搜索标题、地址或所有者邮箱",
-  "Search sites": "搜索站点",
-  "Site state": "站点状态",
-  "Live": "在线",
   "Taken down": "已下架",
   "Public": "公开",
-  "Purged": "已清理",
-  "Anonymous only": "只看匿名",
-  "Owner": "所有者",
-  "Kind": "类型",
-  "Visibility": "可见性",
   "Versions": "版本",
-  "Size": "大小",
   "Updated": "更新",
-  "Anonymous": "匿名",
-  "Take down": "下架",
-  "Restore": "恢复",
-  "No sites match.": "没有匹配的站点。",
-  "Take down “{title}”?": "下架「{title}」？",
-  "Visitors will see “This content has been removed by an administrator”. Share links stop working. The owner can still open it and save a copy; nothing is deleted, and you can restore it at any time.":
-    "访客会看到「该内容已被管理员移除」，分享链接失效。所有者仍能打开并另存一份；不删除任何东西，随时可以恢复。",
-  "Restore “{title}”?": "恢复「{title}」？",
-  "The site is served again to everyone its sharing settings allow.": "站点按其分享设置重新对外提供。",
-  "Delete “{title}”?": "删除「{title}」？",
-  "The site disappears for everyone, including its owner. Its files are kept for the retention window, so it can be restored from the “Deleted” view until then.":
-    "站点对所有人消失，包括所有者。文件在保留期内保留，在此之前可以从「已删除」视图恢复。",
-  "Restore deleted site “{title}”?": "恢复已删除站点「{title}」？",
-  "The site comes back at its old address with every version intact.": "站点在原地址回来，所有版本完好。",
-  "e.g. Phishing page reported by a user": "例如：用户举报的钓鱼页面",
 
   // System
   "Runtime": "运行时",
@@ -130,9 +101,6 @@ export const admin: Messages = {
   "Reconcile storage (dry run)": "回收存储孤儿（仅预演）",
   "Reconcile storage (delete orphans)": "回收存储孤儿（真正删除）",
   "dry run": "预演",
-  "Action log": "操作日志",
-  "Filter by user or site id": "按用户或站点 id 过滤",
-  "Filter the action log": "过滤操作日志",
 
   // Dialog
   "Reason (required)": "原因（必填）",

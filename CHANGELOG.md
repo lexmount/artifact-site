@@ -5,6 +5,9 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Remove the global site browser and its navigation from Administration, along with the System action-log panel. Overview statistics and recent administrative actions remain available.
+- Retire `GET /api/admin/sites` with HTTP 410 for all credentials. Limit authorization site choices to owned sites and explicit site-administrator grants, without platform or tenant administrator discovery overrides. Remove the file list from tenant-detail responses. Known-site administrative actions remain available through their existing audited APIs.
+
 ## 0.5.0 — 2026-11-23
 
 - Preserve trailing slashes in OIDC issuer identifiers so Authentik sign-in and back-channel logout work, while retaining exact discovery and token issuer validation. Configure the issuer exactly as advertised by the provider.
