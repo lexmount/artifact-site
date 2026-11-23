@@ -27,7 +27,7 @@ export default function AdminOverviewPage() {
   const tiles: { label: string; value: string; href?: string; note?: string }[] = [
     { label: t("Users"), value: String(o.users), href: "/admin/users", note: o.disabledUsers ? t("{n} disabled", { n: String(o.disabledUsers) }) : undefined },
     { label: t("Sites"), value: String(o.sites), note: o.takenDownSites ? t("{n} taken down", { n: String(o.takenDownSites) }) : undefined },
-    { label: t("Storage"), value: formatBytes(o.byteTotal), note: o.deletedSites ? t("{n} deleted, restorable", { n: String(o.deletedSites) }) : undefined },
+    { label: t("Storage"), value: formatBytes(o.byteTotal), note: o.deletedSites ? t("{n} deleted", { n: String(o.deletedSites) }) : undefined },
     { label: t("Anonymous sites"), value: String(o.anonymousSites) },
   ];
   return (
@@ -46,6 +46,7 @@ export default function AdminOverviewPage() {
         </div>
       )}
       <h2 className="admin-h2">{t("Recent administrative actions")}</h2>
+      <p className="drawer-note">{t("Site actions shown here are your own. Other site audit records require an exact target ID.")}</p>
       <ActionLog entries={data.payload.recent} emptyText={t("Nothing yet.")} />
       <p className="drawer-note">{t("Last updated {when}", { when: formatWhen(data.loadedAt, locale) })}</p>
     </>

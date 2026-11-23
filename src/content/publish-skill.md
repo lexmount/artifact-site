@@ -611,14 +611,14 @@ Signing in from the original creating browser can still adopt that browser's own
 #### If the creating session is lost: ask the user to contact an administrator
 
 For an operator-created or historical unowned site, tell the user to ask an administrator to
-assign ownership through the administrator API to their existing, active account using its
-verified email. Provide the site address and intended recipient email so the administrator can
+open **Administration → Site actions**, load the known site address or ID with a reason,
+then choose **Assign owner** and enter the verified email of their existing, active account. Provide the site address and intended recipient email so the administrator can
 check the request. This keeps the original address and version history; existing owners cannot
 be overwritten through assignment.
 
 A personal Agent token does not carry email-administrator privileges. Do not retry the retired
 claim endpoint or ask the user to paste an administrator credential into chat. Email administrators
-can use a same-origin authenticated API request even when PUBLISH_API_TOKEN is unset. Administrator API instructions are in
+can use these forms even when PUBLISH_API_TOKEN is unset. Administrator API instructions are in
 SELFHOST.md; this recovery step requires an authorized administrator.
 
 ## 6. Finding and reading sites that already exist

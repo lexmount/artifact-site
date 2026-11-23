@@ -264,14 +264,23 @@ Open claiming by site URL is disabled. Personal-token uploads are assigned at cr
 The administration console has no global site browser. `GET /api/admin/sites` is retired
 and returns 410, including for operator tokens. Authorization resource search lists only
 sites the account owns or has an explicit site-administrator grant for; platform and tenant
-management roles do not expand that list. Tenant details (`GET /api/tenants/<id>`) return
-audit records without a `sites` collection. Aggregate counts and administrative audit records
-remain available.
+management roles do not expand that list. The Authorization console also accepts one exact
+site address or ID with a management reason, using the same permission gates and audit trail.
+Tenant details (`GET /api/tenants/<id>`) return workspace governance events only, without a
+`sites` collection or site audit events. Global admin logs and overview activity include
+non-site events and the signed-in administrator's own site actions. Other site audit records
+require an exact target ID; operator tokens see no site events in global audit views.
 
-For a known unowned site, use the assignment endpoint below with the verified email of an
-existing, active account. Existing owners are never overwritten. Email administrators can
-use an authenticated same-origin request even when PUBLISH_API_TOKEN is unset; personal
-agent tokens do not inherit email-administrator privileges.
+Open **Administration → Site actions**, enter the known site address, slug or ID and a reason,
+and choose **Load known site**. This explicit lookup is audited and returns only that site's
+management metadata. There is no title search, autocomplete or deleted-site catalog. You can
+assign an unowned site, take it down, restore access, delete it, or undo a deletion before its
+files are purged. Keep the site's address or ID for recovery; a signed-in administrator can
+also recover the ID of their own deletion from recent administrative actions.
+
+To assign an unowned site, choose **Assign owner** and enter the verified email of an existing,
+active account. Existing owners are never overwritten. Email administrators can use these
+forms even when PUBLISH_API_TOKEN is unset; personal agent tokens do not inherit these rights.
 
 For operator scripts, POST `/api/admin/sites/<slug>/owner` with
 `Authorization: Bearer <PUBLISH_API_TOKEN>` and JSON `{"email":"recipient@example.com"}`.

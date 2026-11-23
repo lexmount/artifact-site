@@ -1,5 +1,6 @@
 import "server-only";
 import { managementReason } from "@/lib/management-reason";
+import { knownSite } from "@/lib/known-site";
 import { checkRateLimit, clientKey } from "@/lib/ratelimit";
 import { z } from "zod";
 import {
@@ -365,6 +366,15 @@ export async function authorizationResources(request: Request) {
   if (!session && !platform) throw new AuthError("Please sign in first");
   const p = new URL(request.url).searchParams,
     type = p.get("type") === "tenant" ? "tenant" : "site";
+  if (p.has("exact")) {
+    checkRateLimit(request);
+    if (type !== "site" || p.has("q") || p.has("cursor")) throw new BadRequestError("Exact site lookup cannot be combined with search or pagination");
+    if (!managementReason(request)) throw new BadRequestError("A management reason is required");
+    const site = await knownSite(request, p.get("exact")!);
+    await authorizeResource(request, { type: "site", id: site.id }, session, false, false);
+    await recordRbacAudit(rbacQuery, site.tenantId, session?.userId ?? null, "site.management", site.id, managementReason(request)!);
+    return { resources: [{ id: site.id, name: site.title, slug: site.slug, tenant_id: site.tenantId }], nextCursor: null };
+  }
   const offset = pageOffset(request);
   const term =
     searchPattern(p.get("q") ?? "");
@@ -378,7 +388,7 @@ export async function authorizationResources(request: Request) {
       ? "1=0"
       : type === "tenant"
         ? "EXISTS(SELECT 1 FROM authorization_tenant_members m WHERE m.tenant_id=r.id AND m.user_id=$2 AND m.role='admin')"
-        : "((r.owner_id=$2 AND EXISTS(SELECT 1 FROM authorization_tenant_members m WHERE m.tenant_id=r.tenant_id AND m.user_id=$2)) OR EXISTS(SELECT 1 FROM authorization_site_members m WHERE m.site_id=r.id AND m.user_id=$2 AND m.subject_type<>'everyone' AND m.role='admin'))";
+        : "((r.owner_id=$2 AND EXISTS(SELECT 1 FROM tenant_members m WHERE m.tenant_id=r.tenant_id AND m.user_id=$2)) OR EXISTS(SELECT 1 FROM authorization_site_members m WHERE m.site_id=r.id AND m.user_id=$2 AND m.subject_type<>'everyone' AND m.role='admin'))";
   // Always bind user ID, including the platform path, to keep placeholder numbering portable.
   const rows = await rbacQuery(
     `SELECT r.id,${type === "tenant" ? "r.name" : "r.title AS name,r.slug,r.tenant_id"} FROM ${type === "tenant" ? "tenants" : "sites"} r WHERE ${type === "tenant" ? "r.disabled_at IS NULL AND r.id<>'anonymous'" : "r.deleted_at IS NULL AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=r.tenant_id AND t.disabled_at IS NULL)"} AND LOWER(${type === "tenant" ? "r.name" : "r.title"}) LIKE LOWER($1) ESCAPE '!' AND (CAST($2 AS TEXT) IS NOT NULL) AND (${filter}) ORDER BY r.id LIMIT 51 OFFSET $3`,

@@ -14,11 +14,11 @@ import { createSite, deleteSite, getSiteView, listSites } from "@/lib/sites";
 import { mintSession, resolveSession } from "@/lib/session";
 import { hashTokenSecret } from "@/lib/publish-token";
 import { getStorage } from "@/lib/storage";
-import { purgeDeletedSites } from "@/lib/admin";
+import { purgeDeletedSites, recordAdminAction } from "@/lib/admin";
 import { GET as OVERVIEW } from "@/app/api/admin/overview/route";
 import { GET as USERS } from "@/app/api/admin/users/route";
 import { PATCH as PATCH_USER } from "@/app/api/admin/users/[id]/route";
-import { GET as SITES } from "@/app/api/admin/sites/route";
+import { GET as RETIRED_SITES } from "@/app/api/admin/sites/route";
 import { PATCH as PATCH_SITE, DELETE as DELETE_SITE } from "@/app/api/admin/sites/[slug]/route";
 import { GET as LOG } from "@/app/api/admin/log/route";
 import { POST as MAINTENANCE } from "@/app/api/admin/maintenance/route";
@@ -31,6 +31,7 @@ import { GET as RESOURCES } from "@/app/api/authorization/resources/route";
 import { GET as TENANT } from "@/app/api/tenants/[tenantId]/route";
 import { putTenantAdmin, putUserSiteRole } from "@/lib/role-bindings";
 
+const SITES: (request: Request) => Promise<Response> = RETIRED_SITES;
 const ORIGIN = "https://x";
 const dirs: string[] = [];
 
@@ -428,16 +429,65 @@ describe("lists and the overview", () => {
     await updateSiteVisibility(site.id, "private");
     await putTenantAdmin(rbacQuery, site.tenantId, manager.user.id, true, owner.user.id);
     await rbacQuery("INSERT INTO rbac_audit(id,tenant_id,actor_id,action,target_id,reason,created_at) VALUES('tenant-audit',$1,$2,'tenant.update',$1,'Rename workspace',1)", [site.tenantId, manager.user.id]);
+    for (const action of ["site.read", "site.management", "comment.management", "authorization.grant", "sharing.main"]) {
+      await rbacQuery("INSERT INTO rbac_audit(id,tenant_id,actor_id,action,target_id,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,2)", [action, site.tenantId, owner.user.id, action, site.id, `${site.slug}: ${site.title}`]);
+    }
     for (const headers of [asCookie(admin.cookie), asCookie(manager.cookie), asToken]) {
       const response = await TENANT(req(`/api/tenants/${site.tenantId}`, { headers }), params({ tenantId: site.tenantId }));
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(Object.keys(body)).toEqual(["audit"]);
       expect(body.audit).toContainEqual(expect.objectContaining({ action: "tenant.update", reason: "Rename workspace" }));
+      expect(JSON.stringify(body)).not.toContain(site.id);
       expect(JSON.stringify(body)).not.toContain(site.slug);
       expect(JSON.stringify(body)).not.toContain(site.title);
     }
     expect((await TENANT(req(`/api/tenants/${site.tenantId}`), params({ tenantId: site.tenantId }))).status).toBe(403);
+  });
+
+  it("scopes global admin audit to the caller's own site actions and supports exact targets", async () => {
+    const admin = await person("admin@example.net"), other = await person("second@example.net");
+    const mine = await createSite({ mode: "paste", html: "<title>Known recovery</title>" });
+    const hidden = await createSite({ mode: "paste", html: "<title>Unrelated file</title>" });
+    await recordAdminAction(null, { kind: "user", userId: admin.user.id, email: admin.user.email! }, "site.delete", { kind: "site", id: mine.site.id }, "My report");
+    await recordAdminAction(null, { kind: "user", userId: other.user.id, email: other.user.email! }, "site.view", { kind: "site", id: hidden.site.id }, hidden.site.slug);
+    for (const headers of [asCookie(admin.cookie), asToken]) {
+      const expected = headers === asToken ? [] : [mine.site.id];
+      for (const path of ["/api/admin/log", "/api/admin/log?target=&limit=500"]) {
+        const response = await LOG(req(path, { headers }));
+        const data = await response.json();
+        expect(data.entries.map((e: { targetId: string }) => e.targetId)).toEqual(expected);
+        expect(JSON.stringify(data)).not.toContain(hidden.site.id);
+        expect(JSON.stringify(data)).not.toContain(hidden.site.slug);
+      }
+      const overview = await (await OVERVIEW(req("/api/admin/overview", { headers }))).json();
+      expect(overview.recent.map((e: { targetId: string }) => e.targetId)).toEqual(expected);
+      const exact = await (await LOG(req(`/api/admin/log?target=${hidden.site.id}`, { headers }))).json();
+      expect(exact.entries.map((e: { targetId: string }) => e.targetId)).toEqual([hidden.site.id]);
+    }
+  });
+
+  it("selects only an exact known site for management with a recorded reason", async () => {
+    const owner = await person("owner@example.net"), admin = await person("admin@example.net"), manager = await person("manager@example.net");
+    const { site } = await createSite({ mode: "paste", html: "<title>Known private report</title>" }, { ownerId: owner.user.id });
+    await updateSiteVisibility(site.id, "private");
+    await putTenantAdmin(rbacQuery, site.tenantId, manager.user.id, true, owner.user.id);
+    for (const headers of [asCookie(admin.cookie), asCookie(manager.cookie), asToken]) {
+      for (const reference of [site.slug, site.id, `${ORIGIN}/s/${site.slug}`]) {
+        const response = await RESOURCES(req(`/api/authorization/resources?type=site&exact=${encodeURIComponent(reference)}`, { headers: { ...headers, "x-management-reason": "Investigate reported access" } }));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ resources: [{ id: site.id, name: site.title, slug: site.slug, tenant_id: site.tenantId }], nextCursor: null });
+      }
+      for (const reference of [site.slug.slice(0, 5), site.title]) {
+        expect((await RESOURCES(req(`/api/authorization/resources?type=site&exact=${encodeURIComponent(reference)}`, { headers: { ...headers, "x-management-reason": "Investigate reported access" } }))).status).not.toBe(200);
+      }
+    }
+    expect((await RESOURCES(req(`/api/authorization/resources?exact=${site.slug}`, { headers: asCookie(admin.cookie) }))).status).toBe(400);
+    const outsider = await person("outsider@example.net");
+    expect((await RESOURCES(req(`/api/authorization/resources?exact=${site.id}`, { headers: { ...asCookie(outsider.cookie), "x-management-reason": "Attempt" } }))).status).toBe(403);
+    await insertPublishToken({ id: hashTokenSecret("ahp_known-exact"), userId: admin.user.id, name: "agent", createdAt: Date.now() });
+    expect((await RESOURCES(req(`/api/authorization/resources?exact=${site.id}`, { headers: { authorization: "Bearer ahp_known-exact", "x-management-reason": "Attempt" } }))).status).toBe(403);
+    expect(await rbacQuery("SELECT id FROM rbac_audit WHERE target_id=$1 AND action='site.management'", [site.id])).not.toHaveLength(0);
   });
 
   it("overview counts and the maintenance tasks are recorded", async () => {
@@ -449,7 +499,7 @@ describe("lists and the overview", () => {
     expect(o.overview).toMatchObject({ users: 1, disabledUsers: 0, sites: 2, anonymousSites: 1, takenDownSites: 1, deletedSites: 0 });
     expect(o.overview.byteTotal).toBeGreaterThan(0);
     expect(o.runtime.lines.some((l) => l.startsWith("administrators:"))).toBe(true);
-    expect(o.recent[0].action).toBe("site.take_down");
+    expect(o.recent).toEqual([]);
 
     const run = await MAINTENANCE(req("/api/admin/maintenance", { method: "POST", headers: asToken, body: { task: "purge-deleted" } }));
     expect(run.status).toBe(200);
@@ -457,6 +507,53 @@ describe("lists and the overview", () => {
     const log = (await (await LOG(req("/api/admin/log", { headers: asToken }))).json()) as { entries: { action: string }[] };
     // Rows written in the same millisecond have no defined order between them: assert membership, not position.
     expect(log.entries.map((e) => e.action)).toContain("maintenance.purge_deleted");
+  });
+});
+
+describe("known-site administration", () => {
+  it("looks up an exact private or deleted site without credentials or source, and audits the reason", async () => {
+    delete process.env.PUBLISH_API_TOKEN;
+    const admin = await person("admin@example.net"), member = await person("member@example.net");
+    const { site } = await createSite({ mode: "paste", html: "<title>Recovered</title><body>secret source</body>" });
+    await updateSiteVisibility(site.id, "private");
+    const { POST } = await import("@/app/api/admin/site-lookup/route");
+    const lookup = (reference: string, headers = asCookie(admin.cookie), reason = "Recover lost session") => POST(req("/api/admin/site-lookup", { method: "POST", headers, body: { reference, reason } }));
+    for (const reference of [site.slug, site.id, `${ORIGIN}/s/${site.slug}?version=old`]) {
+      const response = await lookup(reference);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.site).toMatchObject({ id: site.id, slug: site.slug, ownerId: null, deletedAt: null });
+      for (const secret of ["editToken", "anonOwnerId", "secret source"]) expect(JSON.stringify(body)).not.toContain(secret);
+    }
+    expect((await lookup(site.slug, asCookie(member.cookie))).status).toBe(401);
+    expect((await lookup(site.slug, asCookie(admin.cookie, false))).status).toBe(401);
+    expect((await lookup(site.slug, asCookie(admin.cookie), "")).status).toBe(400);
+    for (const bad of ["", "Recovered", site.slug.slice(0, 4), "%", `${ORIGIN}/s/${site.slug}/extra`, `https://other.example/s/${site.slug}`, `${ORIGIN}/v/${site.slug}`]) {
+      expect((await lookup(bad)).status).not.toBe(200);
+    }
+    await deleteSite(site.slug);
+    const deleted = await lookup(site.id);
+    expect((await deleted.json()).site.deletedAt).toBeGreaterThan(0);
+    expect((await PATCH_SITE(req(`/api/admin/sites/${site.slug}`, { method: "PATCH", headers: asCookie(admin.cookie), body: { deleted: false, reason: "Undo deletion" } }), params({ slug: site.slug }))).status).toBe(200);
+    expect(await getSiteView(site.slug)).not.toBeNull();
+    const audit = await rbacQuery("SELECT reason FROM rbac_audit WHERE target_id=$1 AND action='site.management'", [site.id]);
+    expect(audit).toHaveLength(4);
+    expect(audit.every(row => row.reason === "Recover lost session")).toBe(true);
+  });
+
+  it("accepts only the configured mount when resolving a full site address", async () => {
+    const { site } = await createSite({ mode: "paste", html: "<title>Mounted site</title>" });
+    const { knownSite } = await import("@/lib/known-site");
+    const previous = process.env.ARTIFACT_PUBLIC_URL;
+    process.env.ARTIFACT_PUBLIC_URL = `${ORIGIN}/artifact`;
+    try {
+      expect((await knownSite(req("/"), `${ORIGIN}/artifact/s/${site.slug}`)).id).toBe(site.id);
+      await expect(knownSite(req("/"), `${ORIGIN}/s/${site.slug}`)).rejects.toThrow("this server");
+      await expect(knownSite(req("/"), `${ORIGIN}/artifact/s/${site.slug}%2Fextra`)).rejects.toThrow("exact");
+    } finally {
+      if (previous === undefined) delete process.env.ARTIFACT_PUBLIC_URL;
+      else process.env.ARTIFACT_PUBLIC_URL = previous;
+    }
   });
 });
 

@@ -1564,6 +1564,12 @@ fieldset.share-link-controls { border: 0; padding: 0; margin: 12px 0 0; min-widt
 
 /* Resource authorization: shares the console's quiet forms and horizontal rows. */
 .authorization-console { max-width: 1100px; margin: 24px auto; }
+.admin-known-site { display: grid; gap: 16px; max-width: 760px; margin: 24px 0; }
+.admin-known-site form { display: grid; gap: 16px; }
+.admin-known-site label { display: grid; gap: 8px; font-size: 14px; }
+.admin-known-site input { min-width: 0; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit; font: inherit; }
+.admin-known-site .btn { justify-self: start; }
+.admin-known-result { border-top: 1px solid var(--line); padding-top: 20px; overflow-wrap: anywhere; }
 .authorization-heading,.authorization-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .authorization-panel { margin:20px 0; border-top:1px solid var(--line,#ddd); padding-top:20px; }
 .authorization-panel h3 { margin:0; font-size:16px; }

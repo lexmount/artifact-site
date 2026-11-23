@@ -40,7 +40,7 @@ describe("/admin gate and entry", () => {
 it("removes the global site page and all console links to it", () => {
   expect(existsSync(abs("src/app/admin/sites/page.tsx"))).toBe(false);
   for (const file of [...walk(abs("src/app/admin")), ...walk(abs("src/components/admin"))]) {
-    expect(readFileSync(file, "utf8")).not.toContain("/admin/sites");
+    expect(readFileSync(file, "utf8")).not.toMatch(/href=["']\/admin\/sites/);
   }
 });
 

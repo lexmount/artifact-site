@@ -13,13 +13,14 @@ import { config } from "@/lib/config";
 import { policy } from "@/lib/settings";
 import { BadRequestError } from "@/lib/errors";
 import {
-  rbacTransaction, createId, expireAnonymousSites, getSite, getSiteBySlug, getUser, hasRecentAdminLog, insertAdminLog, listDeletedSitesBefore, restoreDeletedSite,
+  rbacQuery, listAdminLog, rbacTransaction, createId, expireAnonymousSites, getSite, getSiteBySlug, getUser, hasRecentAdminLog, insertAdminLog, listDeletedSitesBefore, restoreDeletedSite,
   revokeOauthTokensForUser, revokePublishTokensForUser, revokeUserSessions, setSitePurged, setSiteTakenDown, setUserDisabled, softDeleteSite,
 } from "@/lib/db";
 import { auditRequestMeta } from "@/lib/audit";
 import { isTokenSession } from "@/lib/publish-token";
 import { csrfSafe, resolveSession } from "@/lib/session";
 import { getStorage } from "@/lib/storage";
+import { toAdminLog } from "@/lib/metadata-model";
 import type { AdminAction, AdminLogEntry, Session, Site, User } from "@/lib/types";
 
 export type AdminActor = { kind: "token"; userId: null } | { kind: "user"; userId: string; email: string } | { kind: "system"; userId: null };
@@ -54,6 +55,16 @@ export async function requireAdminWrite(request: Request): Promise<AdminActor> {
   const actor = await requireAdmin(request);
   if (actor.kind === "user" && !csrfSafe(request)) throw new AuthError("Cross-site request rejected");
   return actor;
+}
+
+/** Global audit views must not reveal sites another administrator encountered. */
+export async function visibleAdminLog(actor: AdminActor, options: { targetId?: string | null; limit: number }) {
+  if (options.targetId) return listAdminLog(options); // Exact target supplied by the caller.
+  const rows = await rbacQuery(
+    "SELECT * FROM admin_log WHERE target_kind<>'site' OR (actor_kind='user' AND actor_user_id=$1) ORDER BY created_at DESC,id LIMIT $2",
+    [actor.kind === "user" ? actor.userId : null, options.limit],
+  );
+  return rows.map(toAdminLog);
 }
 
 export async function recordAdminAction(
@@ -182,8 +193,8 @@ export async function purgeDeletedSites(opts: { now?: number; retentionMs?: numb
 
 /**
  * Soft-delete anonymous sites that nobody claimed and nobody touched for `config.anonSiteTtlMs`.
- * They then sit in the deleted view for the retention window like any other delete, so a mistaken
- * expiry is still an administrator's restore away. Off (a no-op) until the TTL is configured.
+ * They remain recoverable by known address or ID for the retention window like any other delete.
+ * Off (a no-op) until the TTL is configured.
  * One log row per run that removed something, with the count as the reason.
  */
 export async function expireAnonymousSitesJob(opts: { now?: number; ttlMs?: number; actor?: AdminActor; request?: Request | null } = {}): Promise<{ expired: number }> {

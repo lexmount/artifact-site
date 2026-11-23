@@ -20,6 +20,10 @@ export default function AuthorizationConsole() {
   const [reason, setReason] = useState("");
   const [activeReason, setActiveReason] = useState("");
   const [error, setError] = useState("");
+  const [reference, setReference] = useState("");
+  const [lookupReason, setLookupReason] = useState("");
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [known, setKnown] = useState<{ id: string; name: string } | null>(null);
   useEffect(() => {
     let alive = true;
     authorizationFetch<{
@@ -72,6 +76,21 @@ export default function AuthorizationConsole() {
           "Choose a site you own or administer through an explicit grant, or a workspace, then assign roles.",
         )}
       </p>
+      <form className="admin-known-site" onSubmit={async event => {
+        event.preventDefault(); setLookupBusy(true); setError(""); setSelected(""); setKnown(null); setActiveReason("");
+        try {
+          const data = await authorizationFetch<{ resources: { id: string; name: string }[] }>(`/api/authorization/resources?type=site&exact=${encodeURIComponent(reference)}`, lookupReason);
+          const resource = data.resources[0];
+          setType("site"); setSelected(resource.id); setKnown(resource); setActiveReason(lookupReason.trim());
+        } catch (err) { setError(err instanceof Error ? err.message : t("Request failed")); }
+        finally { setLookupBusy(false); }
+      }}>
+        <p>{t("Manage a known site by its exact address or ID. The lookup requires a reason and is audited.")}</p>
+        <label>{t("Site address, slug or ID")}<input required maxLength={2048} value={reference} disabled={lookupBusy} onChange={event => { setReference(event.target.value); setKnown(null); setSelected(""); setActiveReason(""); }} /></label>
+        <label>{t("Management reason")}<input required maxLength={500} value={lookupReason} disabled={lookupBusy} onChange={event => { setLookupReason(event.target.value); setKnown(null); setSelected(""); setActiveReason(""); }} /></label>
+        <button className="btn" disabled={lookupBusy || !reference.trim() || !lookupReason.trim()}>{t("Load known site")}</button>
+        {known && <p role="status">{known.name} · <code>{known.id}</code></p>}
+      </form>
       {error && (
         <p role="alert" className="drawer-error">
           {error}
@@ -85,6 +104,7 @@ export default function AuthorizationConsole() {
             onChange={(e) => {
               setType(e.target.value as "site" | "tenant");
               setSelected("");
+              setKnown(null); setActiveReason("");
             }}
           >
             <option value="site">{t("Site")}</option>
@@ -103,9 +123,10 @@ export default function AuthorizationConsole() {
           {t("Resource")}
           <select
             value={selected}
-            onChange={(e) => setSelected(e.target.value)}
+            onChange={(e) => { setSelected(e.target.value); setKnown(null); setActiveReason(""); }}
           >
             <option value="">{t("Select a resource")}</option>
+            {known && !resources.some(resource => resource.id === known.id) && <option value={known.id}>{known.name}</option>}
             {resources.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.name}
