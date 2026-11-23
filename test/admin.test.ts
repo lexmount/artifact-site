@@ -48,7 +48,7 @@ async function resetPostgres(): Promise<void> {
   const { default: pg } = await import("pg");
   const pool = new pg.Pool({ connectionString: process.env.ARTIFACT_DATABASE_URL, max: 1 });
   try {
-    await pool.query("TRUNCATE users, sites, admin_log, publish_tokens, sessions CASCADE");
+    await pool.query("TRUNCATE users, sites, admin_log, rbac_audit, publish_tokens, sessions CASCADE");
   } catch (error) {
     if ((error as { code?: string }).code !== "42P01") throw error; // a fresh database: nothing to empty yet
   } finally {
