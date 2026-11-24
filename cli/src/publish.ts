@@ -50,7 +50,7 @@ export async function publishHtml(client: ArtifactSiteClient, html: string, opts
 
 async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, opts: PublishOptions): Promise<{ result: CreatedSite | VersionResult; route: PublishOutcome["route"] }> {
   const say = opts.onProgress ?? (() => {});
-  if (["zip", "archive", "dir", "file"].includes(shape.type) && (await client.uploadLimits()).packageUploads) return publishPackage(client, shape, opts);
+  if (["zip", "archive", "dir"].includes(shape.type) && (await client.uploadLimits()).packageUploads) return publishPackage(client, shape, opts);
   switch (shape.type) {
     case "html":
     case "document": {
@@ -63,7 +63,6 @@ async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, op
       say(`uploading ${path.basename(shape.file)} (${mb(shape.size)})`);
       return uploadWithRecovery(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], opts, async () => client.createFile(path.basename(shape.file), new Uint8Array(await readFile(shape.file)), opts.title, opts.official, opts), "file");
     }
-    case "file":
     case "archive": throw new Error("This server does not support package uploads; upgrade the server first");
     case "zip": {
       if (shape.size > oneShotLimit()) {
@@ -94,7 +93,6 @@ async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, op
 type UploadOptions = PublishOptions & { slug?: string; expectedVersion?: string; package?: { source: "folder" | "archive"; name?: string; directories?: string[] } };
 async function publishPackage(client: ArtifactSiteClient, shape: LocalShape, opts: UploadOptions) {
   const caps = await client.uploadLimits();
-  if (shape.type === "file") return uploadWithRecovery(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], { ...opts, title: opts.title ?? path.basename(shape.file), package: { source: "folder", directories: [] } });
   if (shape.type === "dir") return uploadWithRecovery(client, shape.files, { ...opts, package: { source: "folder", directories: shape.directories ?? [] } });
   if (shape.type !== "zip" && shape.type !== "archive") throw new Error("Expected a folder or archive");
   if (shape.size > (caps.archiveMaxBytes ?? 100 * 1024 * 1024)) throw new Error("Archive exceeds the server archive size limit");
@@ -232,7 +230,7 @@ export async function updateFromPath(client: ArtifactSiteClient, slug: string, t
       return { ...r, kind: "single" } as VersionResult & { kind: SiteKind };
     }
     case "folder": {
-      if (["zip", "archive", "dir", "file"].includes(shape.type) && (await client.uploadLimits()).packageUploads) return { ...(await publishPackage(client, shape, { ...opts, slug })).result, kind: "folder" } as VersionResult & { kind: SiteKind };
+      if (["zip", "archive", "dir"].includes(shape.type) && (await client.uploadLimits()).packageUploads) return { ...(await publishPackage(client, shape, { ...opts, slug })).result, kind: "folder" } as VersionResult & { kind: SiteKind };
       if (shape.type === "zip") {
         say(`uploading ${path.basename(shape.file)}`);
         const extracted = await extractZip(shape.file, await client.uploadLimits());

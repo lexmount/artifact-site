@@ -179,7 +179,7 @@ The server address and token are resolved like every other command: `--base` >
 `~/.config/artifact-site/tokens/<host>`. Create a personal token at `/for-agents#mcp` on your
 deployment, or run `artifact-site login` once on this machine.
 
-Without an address or token the server still starts and lists its 29 tools (a copy bundled with
+Without an address or token the server still starts and lists its bundled tools (a copy bundled with
 the package); each call then returns a tool error explaining how to sign in. A rejected token
 (HTTP 401/403) or an unreachable server is reported as a tool error too, and the process keeps
 running. stdout carries only JSON-RPC; diagnostics go to stderr.
@@ -193,7 +193,7 @@ Claude Desktop (`claude_desktop_config.json`) and Cursor (`~/.cursor/mcp.json`):
       "command": "npx",
       "args": ["-y", "@artifact-site/cli", "mcp"],
       "env": {
-        "ARTIFACT_SITE_URL": "https://artifact-site.app.lexmount.com",
+        "ARTIFACT_SITE_URL": "https://artifact-site.example.com",
         "ARTIFACT_SITE_TOKEN": "ahp_..."
       }
     }
