@@ -57,7 +57,7 @@ describe("archive", () => {
     expect((await inspect(path.join(dir, "deck.pptx"))).type).toBe("document");
     expect((await inspect(path.join(dir, "bundle.zip"))).type).toBe("zip");
     expect((await inspect(path.join(dir, "site"))).type).toBe("dir");
-    expect((await inspect(path.join(dir, "site/assets/app.css"))).type).toBe("file");
+    await expect(inspect(path.join(dir, "site/assets/app.css"))).rejects.toThrow(/Unsupported file type/);
   });
 });
 

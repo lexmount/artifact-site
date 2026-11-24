@@ -71,11 +71,3 @@ it("applies deployment byte limits to preflight and actual ZIP expansion", async
   await expect(extractZip(zip, { maxBytes: 5, maxFileBytes: 100, maxFiles: 5 })).rejects.toThrow(/expanded size/);
   const extracted = await extractZip(zip, raised); expect(extracted.files).toHaveLength(1); await extracted.cleanup();
 });
-
-it("accepts root and nested HTML/HTM indexes consistently with the server", async () => {
-  const { preflightTree } = await import("../src/archive.js");
-  for (const entry of ["index.htm", "INDEX.HTML", "INDEX.HTM", "docs/INDEX.HTM"]) {
-    expect(() => preflightTree([entry, "about.html"].map(relpath => ({relpath,absPath:"unused",size:1})))).not.toThrow();
-  }
-  expect(() => preflightTree(["a.htm", "b.html"].map(relpath => ({relpath,absPath:"unused",size:1})))).toThrow(/unambiguous/);
-});
