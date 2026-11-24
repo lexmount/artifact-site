@@ -454,14 +454,16 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         }
         void request.continue();
       });
-      const runMaintenance = async (label: string) => {
-        const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/admin/log");
+      const runMaintenance = async (label: string, refresh = true) => {
+        const refreshed = refresh ? page.waitForResponse(response => new URL(response.url()).pathname === "/api/admin/log") : null;
+        const completed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/admin/maintenance");
         await page.$$eval('.admin-actions-row button', (buttons, text) => {
           const button = buttons.find(button => button.textContent?.trim() === text) as HTMLButtonElement | undefined;
           if (!button) throw new Error(`Missing maintenance task: ${text}`);
           button.click();
         }, label);
-        expect((await refreshed).status()).toBe(200);
+        expect((await completed).status()).toBe(200);
+        if (refreshed) expect((await refreshed).status()).toBe(200);
         await page.waitForSelector('.admin-table tbody tr');
         await page.waitForFunction(() => !document.querySelector('.admin-actions-row button:disabled'));
       };
@@ -486,14 +488,41 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         await page.waitForFunction(id => document.querySelector('.admin-table')?.textContent?.includes(id), {}, String(foreignSite));
         expect(await page.$$eval('.admin-table tbody tr', rows => rows.length)).toBe(1);
         expect(await page.$eval('.admin-table', el => el.textContent)).toContain('Reported target audit');
-        // An unsubmitted draft must not replace the active audit filter on refresh.
+        // Maintenance must not replay a reason-bearing site read, including backfill.
         await page.type('.admin-known-site label:first-of-type input', '-draft');
-        await runMaintenance('Sweep abandoned uploads');
+        const readsBeforeMaintenance = logRequests.length;
+        await runMaintenance('Sweep abandoned uploads', false);
+        await runMaintenance('Index search text of existing sites', false);
+        expect(logRequests).toHaveLength(readsBeforeMaintenance);
         expect(logRequests.at(-1)).toEqual({ target: foreignSite, reason: encodeURIComponent('Investigate reported activity') });
         expect(await page.$$eval('.admin-table tbody tr', rows => rows.length)).toBe(1);
         const reads = await rbacQuery("SELECT reason FROM rbac_audit WHERE target_id=$1 AND actor_id=$2 AND action='site.audit.read'", [String(foreignSite), administrator.user.id]);
-        expect(reads).toEqual([{ reason: 'Investigate reported activity' }, { reason: 'Investigate reported activity' }]);
+        expect(reads).toEqual([{ reason: 'Investigate reported activity' }]);
         await page.screenshot({ path: 'test-results/admin-exact-audit.png', fullPage: true });
+      } finally { await context.close(); }
+    });
+
+    it("filters user audit history without a site management reason", async () => {
+      const administrator = await actor("sharing-admin@example.test");
+      const { insertAdminLog } = await import("@/lib/db");
+      await insertAdminLog({ id: createId("adm"), actorKind: "token", actorUserId: null, action: "user.enable", targetKind: "user", targetId: administrator.user.id, reason: "Restored reported account", ip: null, createdAt: Date.now() });
+      const context = await browser.createBrowserContext();
+      const [name, value] = administrator.cookie.split("=");
+      await context.setCookie({ name, value, domain: new URL(base!).hostname, path: "/" });
+      const page = await context.newPage();
+      await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
+      try {
+        await page.goto(`${base}/admin/system`, { waitUntil: "networkidle0" });
+        await page.type('.admin-known-site label:first-of-type input', administrator.user.id);
+        expect(await page.$eval('.admin-known-site label:nth-of-type(2) input', el => (el as HTMLInputElement).required)).toBe(false);
+        const loaded = page.waitForResponse(response => new URL(response.url()).searchParams.get('target') === administrator.user.id);
+        await page.click('.admin-known-site button');
+        const response = await loaded;
+        expect(response.status()).toBe(200);
+        expect(response.request().headers()['x-management-reason']).toBeUndefined();
+        await page.waitForFunction(() => document.querySelector('.admin-table')?.textContent?.includes('Restored reported account'));
+        expect(await page.$$eval('.admin-table tbody tr', rows => rows.length)).toBe(1);
+        expect(await rbacQuery("SELECT id FROM rbac_audit WHERE target_id=$1 AND action='site.audit.read'", [administrator.user.id])).toEqual([]);
       } finally { await context.close(); }
     });
 

@@ -1558,7 +1558,7 @@ export class PostgresStore implements MetadataStore {
 
   async listAdminLog(opts: AdminLogOptions): Promise<AdminLogEntry[]> {
     const { rows } = await this.pool.query(
-      "SELECT * FROM admin_log WHERE ($1::text IS NULL OR target_id = $1) AND ($3::boolean OR target_kind<>'site' OR (actor_kind='user' AND actor_user_id=$4)) ORDER BY created_at DESC, id LIMIT $2", [opts.targetId ?? null, opts.limit, opts.viewerUserId === undefined, opts.viewerUserId ?? null]);
+      "SELECT * FROM admin_log WHERE ($1::text IS NULL OR target_id = $1) AND ($3::boolean OR target_kind<>'site' OR (actor_kind='user' AND actor_user_id=$4)) ORDER BY created_at DESC, id LIMIT $2", [opts.targetId ?? null, opts.limit, opts.scope === "all", opts.viewerUserId ?? null]);
     return (rows as Row[]).map(toAdminLog);
   }
 

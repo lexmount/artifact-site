@@ -6,7 +6,7 @@ import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { errorResponse, PayloadTooLargeError } from "@/app/api/_util";
 import { AuthError, EditForbiddenError } from "@/lib/auth";
-import { BadRequestError } from "@/lib/errors";
+import { BadRequestError, NotFoundError } from "@/lib/errors";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -18,6 +18,7 @@ describe("errorResponse", () => {
       [new BadRequestError("The upload is empty"), 400],
       [new AuthError(), 401],
       [new EditForbiddenError(), 403],
+      [new NotFoundError(), 404],
       [new PayloadTooLargeError(), 413],
     ] as const) {
       const res = errorResponse(error);

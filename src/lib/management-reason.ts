@@ -5,9 +5,16 @@ export function normalizeReasonText(value: string): string {
 }
 
 /** Body and header transports share the same normalization, length and database constraints. */
-export const managementReasonSchema = z.string().transform(normalizeReasonText).pipe(
-  z.string().min(1).max(500).refine(value => !value.includes("\0")),
+const normalizedReasonSchema = z.string().transform(normalizeReasonText).pipe(
+  z.string().max(500).refine(value => !value.includes("\0")),
 );
+export const managementReasonSchema = normalizedReasonSchema.refine(value => value.length > 0);
+export const optionalManagementReasonSchema = normalizedReasonSchema.transform(value => value || undefined).optional();
+
+/** User IDs filter account events without resolving a site; all other exact targets need a reason first. */
+export function auditTargetNeedsReason(target: string): boolean {
+  return !!target.trim() && !target.trim().startsWith("usr_");
+}
 
 /** ASCII-safe transport for administrative reasons, including legacy clients. */
 export function managementReasonHeaders(reason: string): Record<string, string> {

@@ -1329,7 +1329,7 @@ export class SqliteStore implements MetadataStore {
 
   async listAdminLog(opts: AdminLogOptions): Promise<AdminLogEntry[]> {
     const t = opts.targetId ?? null;
-    const rows = this.db.prepare("SELECT * FROM admin_log WHERE (? IS NULL OR target_id = ?) AND (? OR target_kind<>'site' OR (actor_kind='user' AND actor_user_id=?)) ORDER BY created_at DESC, id LIMIT ?").all(t, t, opts.viewerUserId === undefined ? 1 : 0, opts.viewerUserId ?? null, opts.limit) as Row[];
+    const rows = this.db.prepare("SELECT * FROM admin_log WHERE (? IS NULL OR target_id = ?) AND (? OR target_kind<>'site' OR (actor_kind='user' AND actor_user_id=?)) ORDER BY created_at DESC, id LIMIT ?").all(t, t, opts.scope === "all" ? 1 : 0, opts.viewerUserId ?? null, opts.limit) as Row[];
     return rows.map(toAdminLog);
   }
 

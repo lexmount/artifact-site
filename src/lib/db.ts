@@ -62,7 +62,9 @@ export * from "@/lib/metadata-model";
 export interface AdminLogOptions {
   targetId?: string | null;
   limit: number;
-  /** Omitted: internal/exact-target audit. Null: non-site events. String: also this user's site actions. */
+  /** Defaults to visible; unrestricted reads must opt in after authorizing the exact target. */
+  scope?: "visible" | "all";
+  /** Within visible scope, include this user's site actions alongside non-site events. */
   viewerUserId?: string | null;
 }
 
@@ -683,7 +685,7 @@ export async function insertAdminLog(entry: AdminLogEntry): Promise<void> {
   return (await getStore()).insertAdminLog(entry);
 }
 export async function listAdminLog(opts: Partial<AdminLogOptions> = {}): Promise<AdminLogEntry[]> {
-  return (await getStore()).listAdminLog({ ...opts, targetId: opts.targetId ?? null, limit: opts.limit ?? 50 });
+  return (await getStore()).listAdminLog({ ...opts, scope: opts.scope ?? "visible", targetId: opts.targetId ?? null, limit: opts.limit ?? 50 });
 }
 export async function adminOverview(): Promise<AdminOverview> {
   return (await getStore()).adminOverview();

@@ -7,7 +7,7 @@ import { useT } from "@/components/locale-provider";
 import { adminFetch } from "@/components/admin/format";
 import ActionLog from "@/components/admin/action-log";
 import type { AdminLogEntry } from "@/lib/types";
-import { managementReasonHeaders } from "@/lib/management-reason";
+import { auditTargetNeedsReason, managementReasonHeaders } from "@/lib/management-reason";
 
 type Task = "purge-deleted" | "sweep-uploads" | "reconcile" | "expire-anonymous" | "backfill-text" | "prune-audit";
 
@@ -30,7 +30,7 @@ export default function AdminSystemPage() {
     const request = ++logRequest.current;
     setLogBusy(true); setLogError(""); setEntries(null);
     try {
-      const data = await adminFetch<{ entries: AdminLogEntry[] }>(`/api/admin/log?limit=200&target=${encodeURIComponent(query.target)}`, { headers: managementReasonHeaders(query.reason), signal });
+      const data = await adminFetch<{ entries: AdminLogEntry[] }>(`/api/admin/log?limit=200&target=${encodeURIComponent(query.target)}`, { headers: auditTargetNeedsReason(query.target) ? managementReasonHeaders(query.reason) : undefined, signal });
       if (!signal?.aborted && request === logRequest.current) setEntries(data.entries);
     } catch (err) {
       if (!signal?.aborted && request === logRequest.current) setLogError(err instanceof Error ? err.message : t("Request failed"));
@@ -62,12 +62,12 @@ export default function AdminSystemPage() {
           setResult(`${task}: ${JSON.stringify({ indexed, remaining: r.result.remaining })}`);
           if (!r.result.remaining || r.result.indexed === 0) break;
         }
-        await loadLog();
+        if (!activeLogQuery.current.target) await loadLog();
         return;
       }
       const r = await adminFetch<{ task: Task; result: unknown }>("/api/admin/maintenance", { method: "POST", body: { task, dryRun } });
       setResult(`${task}${dryRun ? ` (${t("dry run")})` : ""}: ${JSON.stringify(r.result)}`);
-      await loadLog();
+      if (!activeLogQuery.current.target) await loadLog();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -101,7 +101,7 @@ export default function AdminSystemPage() {
         void loadLog({ target: target.trim(), reason: logReason.trim() });
       }}>
         <label>{t("Exact user or site ID")}<input value={target} maxLength={100} disabled={logBusy} onChange={event => setTarget(event.target.value)} /></label>
-        <label>{t("Management reason")}<input value={logReason} required={!!target.trim()} maxLength={500} disabled={logBusy} onChange={event => setLogReason(event.target.value)} /></label>
+        <label>{t("Management reason")}<input value={logReason} required={auditTargetNeedsReason(target)} maxLength={500} disabled={logBusy} onChange={event => setLogReason(event.target.value)} /></label>
         <button className="btn" disabled={logBusy}>{t("Load audit records")}</button>
       </form>
       {logBusy && <p className="drawer-note" role="status"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}

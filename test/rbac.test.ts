@@ -779,7 +779,7 @@ it("version filtering adds no duplicate administrator read audit", async () => {
     const allows = await readableVersionFilter(request(admin.cookie), site);
     expect(auditRead).not.toHaveBeenCalled();
     expect(allows(site.currentVersionId)).toBe(true);
-    const rows = await listAdminLog({ limit: 100, targetId: site.id });
+    const rows = await listAdminLog({ scope: "all", limit: 100, targetId: site.id });
     expect(rows.filter(r => r.action === "site.view")).toHaveLength(1);
   } finally {
     auditRead.mockRestore();

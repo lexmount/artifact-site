@@ -5,16 +5,17 @@ import { ANONYMOUS_TENANT, INIT_TENANT } from "@/lib/rbac";
 import { createId, getUserByVerifiedEmail } from "@/lib/db";
 import { claimSiteRecorded } from "@/lib/sites";
 import { apiAuditContext, auditRequestMeta } from "@/lib/audit";
-import { managementReasonSchema } from "@/lib/management-reason";
+import { managementReasonSchema, optionalManagementReasonSchema } from "@/lib/management-reason";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { errorResponse, json, readBodyWithinUploadLimit } from "@/lib/api-http";
 import { adminSite } from "./_shape";
 
 const patch = z.union([
-  z.object({ takenDown: z.boolean(), reason: z.string().max(500).optional() }),
-  z.object({ deleted: z.literal(false), reason: z.string().max(500).optional() }),
+  z.object({ takenDown: z.literal(true), reason: managementReasonSchema }),
+  z.object({ takenDown: z.literal(false), reason: optionalManagementReasonSchema }),
+  z.object({ deleted: z.literal(false), reason: optionalManagementReasonSchema }),
 ]);
-const del = z.object({ reason: z.string().max(500) });
+const del = z.object({ reason: managementReasonSchema });
 const owner = z.object({ email: z.string().trim().email().max(254), reason: managementReasonSchema });
 
 /** Both URL forms use the same authorization, CSRF, validation and audit behavior. */

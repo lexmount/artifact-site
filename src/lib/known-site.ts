@@ -1,7 +1,7 @@
 import "server-only";
 import { getShareByTokenHash, getSite, getSiteBySlug } from "@/lib/db";
-import { sha256hex } from "@/lib/crypto";
-import { BadRequestError } from "@/lib/errors";
+import { hashToken } from "@/lib/share";
+import { BadRequestError, NotFoundError } from "@/lib/errors";
 import { safeRelativePath } from "@/lib/storage";
 import { requestBase } from "@/lib/public-base";
 
@@ -34,14 +34,14 @@ export async function knownSite(request: Request, input: string) {
       byId = false;
     } else if (route === "v" && tail.length === 0) {
       // A share identifies a target; it never supplies management authority.
-      const share = await getShareByTokenHash(sha256hex(identifier));
-      if (!share) throw Object.assign(new Error("Site not found"), { statusCode: 404 });
+      const share = await getShareByTokenHash(hashToken(identifier));
+      if (!share) throw new NotFoundError("Site not found");
       reference = share.siteId;
       byId = true;
     } else throw new BadRequestError("Use a site address on this server");
   }
   if (!/^[A-Za-z0-9_-]{1,200}$/.test(reference)) throw new BadRequestError("Enter an exact site address, slug or ID");
   const site = byId ? await getSite(reference) : await getSiteBySlug(reference);
-  if (!site) throw Object.assign(new Error("Site not found"), { statusCode: 404 });
+  if (!site) throw new NotFoundError("Site not found");
   return site;
 }

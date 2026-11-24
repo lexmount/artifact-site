@@ -11,7 +11,8 @@ import "server-only";
 import { AuthError, isAdmin as isTokenAdmin } from "@/lib/auth";
 import { config } from "@/lib/config";
 import { policy } from "@/lib/settings";
-import { BadRequestError } from "@/lib/errors";
+import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { managementReasonSchema, optionalManagementReasonSchema } from "@/lib/management-reason";
 import {
   listAdminLog, rbacTransaction, createId, expireAnonymousSites, getSite, getSiteBySlug, getUser, hasRecentAdminLog, insertAdminLog, listDeletedSitesBefore, restoreDeletedSite,
   revokeOauthTokensForUser, revokePublishTokensForUser, revokeUserSessions, setSitePurged, setSiteTakenDown, setUserDisabled, softDeleteSite,
@@ -58,7 +59,7 @@ export async function requireAdminWrite(request: Request): Promise<AdminActor> {
 
 /** Global audit views must not reveal sites another administrator encountered. */
 export async function visibleAdminLog(actor: AdminActor, options: { targetId?: string | null; limit: number }) {
-  return listAdminLog({ ...options, viewerUserId: actor.kind === "user" ? actor.userId : null });
+  return listAdminLog({ ...options, scope: "visible", viewerUserId: actor.kind === "user" ? actor.userId : null });
 }
 
 export async function recordAdminAction(
@@ -75,10 +76,7 @@ export async function recordAdminAction(
 }
 
 function cleanReason(reason: unknown, required: boolean): string | null {
-  const text = typeof reason === "string" ? reason.trim() : "";
-  if (required && !text) throw new BadRequestError("A reason is required");
-  if (text.length > 500) throw new BadRequestError("The reason is too long (500 characters at most)");
-  return text || null;
+  return (required ? managementReasonSchema : optionalManagementReasonSchema).parse(reason ?? undefined) ?? null;
 }
 
 // --- users --------------------------------------------------------------------------
@@ -123,13 +121,13 @@ export type AdminSiteTarget = string | { id: string };
 /** Legacy scripts use slugs; the console uses an explicit, immutable site ID. */
 export async function adminSiteTarget(target: AdminSiteTarget): Promise<Site> {
   const site = typeof target === "string" ? await getSiteBySlug(target) : await getSite(target.id);
-  if (!site) throw Object.assign(new Error("Site not found"), { statusCode: 404 });
+  if (!site) throw new NotFoundError("Site not found");
   return site;
 }
 
 async function liveSite(target: AdminSiteTarget): Promise<Site> {
   const site = await adminSiteTarget(target);
-  if (!site || site.deletedAt) throw new BadRequestError("No such site");
+  if (site.deletedAt) throw new BadRequestError("No such site");
   return site;
 }
 
@@ -162,7 +160,7 @@ export async function deleteSiteAsAdmin(request: Request, actor: AdminActor, tar
 /** Undo a delete while the files are still there. */
 export async function undeleteSite(request: Request, actor: AdminActor, target: AdminSiteTarget, reason: unknown): Promise<Site> {
   const site = await adminSiteTarget(target);
-  if (!site || !site.deletedAt) throw new BadRequestError("The site is not deleted");
+  if (!site.deletedAt) throw new BadRequestError("The site is not deleted");
   if (site.purgedAt) throw new BadRequestError("The site's files were purged after the retention window; it cannot be restored");
   const why = cleanReason(reason, false);
   if (!(await restoreDeletedSite(site.id))) throw new BadRequestError("The site could not be restored");

@@ -15,12 +15,11 @@ import { assertSessionCurrent } from "@/lib/authorized-commit";
 import { resolveSession, csrfSafe } from "@/lib/session";
 import { resolveAdmin } from "@/lib/admin";
 import {
-  tenantActive,
   memberRole,
   requireTenantManager,
   recordRbacAudit,
 } from "@/lib/rbac-access";
-import { BadRequestError } from "@/lib/errors";
+import { BadRequestError, NotFoundError } from "@/lib/errors";
 import {
   AuthError,
   EditForbiddenError,
@@ -65,7 +64,7 @@ function conflict(message: string): never {
   throw Object.assign(new Error(message), { statusCode: 409 });
 }
 function missing(): never {
-  throw Object.assign(new Error("Resource not found"), { statusCode: 404 });
+  throw new NotFoundError();
 }
 export function bindingResource(row: Row): Resource {
   return {
@@ -375,9 +374,8 @@ export async function authorizationResources(request: Request) {
     let elevated = false;
     try {
       site = await knownSite(request, p.get("exact")!);
-      if (!(await tenantActive(site.tenantId))) missing();
       const authorized = await authorizeResource(request, { type: "site", id: site.id }, session, false, false);
-      elevated = authorized.authority?.source === "management";
+      elevated = authorized.authority?.source === "management" || authorized.authority?.source === "operator";
     } catch (error) {
       // A supplied identifier must not reveal existence, deletion or management eligibility.
       if (error && typeof error === "object" && "statusCode" in error && [400, 403, 404].includes(Number(error.statusCode))) missing();

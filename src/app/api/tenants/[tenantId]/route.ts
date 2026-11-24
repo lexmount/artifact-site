@@ -62,7 +62,7 @@ export async function GET(request: Request, context: Context) {
     await requireTenantManager(request, tenantId);
     const audit = await rbacQuery(
       // Only workspace governance belongs in this collection. Site audit requires a known site.
-      "SELECT actor_id,action,target_id,reason,created_at FROM rbac_audit WHERE tenant_id=$1 AND (action IN ('tenant.create','tenant.update','tenant.member.change','user.default_tenant.change') OR (target_id=$1 AND action IN ('authorization.grant','authorization.revoke','sharing.defaults'))) ORDER BY created_at DESC LIMIT 200",
+      "SELECT actor_id,action,target_id,reason,created_at FROM rbac_audit WHERE tenant_id=$1 AND (action IN ('tenant.create','tenant.update','tenant.member.change','user.default_tenant.change','sharing.defaults') OR (target_id=$1 AND action IN ('authorization.grant','authorization.revoke'))) ORDER BY created_at DESC LIMIT 200",
       [tenantId],
     );
     return json({ audit });
