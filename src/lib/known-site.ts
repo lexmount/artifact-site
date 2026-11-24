@@ -33,7 +33,8 @@ export async function knownSite(request: Request, input: string) {
       reference = identifier;
       byId = false;
     } else if (route === "v" && tail.length === 0) {
-      // A share identifies a target; it never supplies management authority.
+      // Keep revoked/expired links usable as historical report identifiers. The caller must
+      // independently authorize and audit management; this never restores share access.
       const share = await getShareByTokenHash(hashToken(identifier));
       if (!share) throw new NotFoundError("Site not found");
       reference = share.siteId;

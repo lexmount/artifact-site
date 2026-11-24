@@ -4,10 +4,10 @@ import type { Messages } from "@/lib/i18n";
  *  to the site page, the share page and the site cards. Keys are the English source strings. */
 export const admin: Messages = {
   "Action log": "操作日志",
-  "Exact user or site ID": "完整用户或站点 ID",
+  "User/site ID or system target": "用户/站点 ID 或系统目标",
   "Load audit records": "载入审计记录",
   "Reading a site's audit records requires a management reason and is itself audited.": "查看站点审计记录需要填写管理原因，查询行为也会被记录。",
-  "Showing up to 200 actions. Leave the target empty for system, user and your own site actions, or enter an exact user or site ID.": "最多显示 200 条操作。留空可查看系统、用户及你自己的站点操作；也可输入完整用户或站点 ID。",
+  "Showing up to 200 actions. Leave the target empty for system, user and your own site actions, or enter a user/site ID or a system target such as expire-anonymous.": "最多显示 200 条操作。留空可查看系统、用户及你自己的站点操作；也可输入用户/站点 ID 或系统目标。",
   "Assign owner": "分配所有者",
   "Take down": "下架",
   "Restore access": "恢复访问",

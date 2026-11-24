@@ -414,7 +414,7 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         await load(`${base}/s/${created.slug}/docs/page.html`);
         await action('Assign owner', recipient.user.email!);
         expect((await rbacQuery("SELECT owner_id FROM sites WHERE id=$1", [String(site.id)]))[0].owner_id).toBe(recipient.user.id);
-        expect((await rbacQuery("SELECT reason FROM admin_log WHERE target_id=$1 AND action='site.assign_owner'", [String(site.id)]))[0].reason).toBe(`Verified ownership recovery #123\nAssigned owner: ${recipient.user.id}`);
+        expect((await rbacQuery("SELECT reason FROM admin_log WHERE target_id=$1 AND action='site.assign_owner'", [String(site.id)]))[0].reason).toBe(`Verified ownership recovery #123 Assigned owner: ${recipient.user.id}`);
         await action('Take down', 'Reported content');
         await action('Restore access', 'Report cleared');
         await action('Delete site', 'Recovery acceptance');
@@ -502,10 +502,11 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       } finally { await context.close(); }
     });
 
-    it("filters user audit history without a site management reason", async () => {
+    it.each(["user", "system"] as const)("filters %s audit history without a site management reason", async kind => {
       const administrator = await actor("sharing-admin@example.test");
       const { insertAdminLog } = await import("@/lib/db");
-      await insertAdminLog({ id: createId("adm"), actorKind: "token", actorUserId: null, action: "user.enable", targetKind: "user", targetId: administrator.user.id, reason: "Restored reported account", ip: null, createdAt: Date.now() });
+      const target = kind === "user" ? administrator.user.id : "expire-anonymous";
+      await insertAdminLog({ id: createId("adm"), actorKind: "token", actorUserId: null, action: kind === "user" ? "user.enable" : "maintenance.expire_anonymous", targetKind: kind, targetId: target, reason: "Reported event", ip: null, createdAt: Date.now() });
       const context = await browser.createBrowserContext();
       const [name, value] = administrator.cookie.split("=");
       await context.setCookie({ name, value, domain: new URL(base!).hostname, path: "/" });
@@ -513,16 +514,16 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
       await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
       try {
         await page.goto(`${base}/admin/system`, { waitUntil: "networkidle0" });
-        await page.type('.admin-known-site label:first-of-type input', administrator.user.id);
+        await page.type('.admin-known-site label:first-of-type input', target);
         expect(await page.$eval('.admin-known-site label:nth-of-type(2) input', el => (el as HTMLInputElement).required)).toBe(false);
-        const loaded = page.waitForResponse(response => new URL(response.url()).searchParams.get('target') === administrator.user.id);
+        const loaded = page.waitForResponse(response => new URL(response.url()).searchParams.get('target') === target);
         await page.click('.admin-known-site button');
         const response = await loaded;
         expect(response.status()).toBe(200);
         expect(response.request().headers()['x-management-reason']).toBeUndefined();
-        await page.waitForFunction(() => document.querySelector('.admin-table')?.textContent?.includes('Restored reported account'));
+        await page.waitForFunction(() => document.querySelector('.admin-table')?.textContent?.includes('Reported event'));
         expect(await page.$$eval('.admin-table tbody tr', rows => rows.length)).toBe(1);
-        expect(await rbacQuery("SELECT id FROM rbac_audit WHERE target_id=$1 AND action='site.audit.read'", [administrator.user.id])).toEqual([]);
+        expect(await rbacQuery("SELECT id FROM rbac_audit WHERE target_id=$1 AND action='site.audit.read'", [target])).toEqual([]);
       } finally { await context.close(); }
     });
 

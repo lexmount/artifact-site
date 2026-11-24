@@ -7,7 +7,7 @@ import { useT } from "@/components/locale-provider";
 import { adminFetch } from "@/components/admin/format";
 import ActionLog from "@/components/admin/action-log";
 import type { AdminLogEntry } from "@/lib/types";
-import { auditTargetNeedsReason, managementReasonHeaders } from "@/lib/management-reason";
+import { managementReasonHeaders } from "@/lib/management-reason";
 
 type Task = "purge-deleted" | "sweep-uploads" | "reconcile" | "expire-anonymous" | "backfill-text" | "prune-audit";
 
@@ -30,7 +30,7 @@ export default function AdminSystemPage() {
     const request = ++logRequest.current;
     setLogBusy(true); setLogError(""); setEntries(null);
     try {
-      const data = await adminFetch<{ entries: AdminLogEntry[] }>(`/api/admin/log?limit=200&target=${encodeURIComponent(query.target)}`, { headers: auditTargetNeedsReason(query.target) ? managementReasonHeaders(query.reason) : undefined, signal });
+      const data = await adminFetch<{ entries: AdminLogEntry[] }>(`/api/admin/log?limit=200&target=${encodeURIComponent(query.target)}`, { headers: query.reason ? managementReasonHeaders(query.reason) : undefined, signal });
       if (!signal?.aborted && request === logRequest.current) setEntries(data.entries);
     } catch (err) {
       if (!signal?.aborted && request === logRequest.current) setLogError(err instanceof Error ? err.message : t("Request failed"));
@@ -94,14 +94,14 @@ export default function AdminSystemPage() {
       {result && <pre className="admin-runtime" role="status">{result}</pre>}
       {error && <p className="drawer-error" role="alert">{error}</p>}
       <h2 className="admin-h2">{t("Action log")}</h2>
-      <p className="drawer-note">{t("Showing up to 200 actions. Leave the target empty for system, user and your own site actions, or enter an exact user or site ID.")}</p>
+      <p className="drawer-note">{t("Showing up to 200 actions. Leave the target empty for system, user and your own site actions, or enter a user/site ID or a system target such as expire-anonymous.")}</p>
       <p className="drawer-note">{t("Reading a site's audit records requires a management reason and is itself audited.")}</p>
       <form className="admin-known-site" onSubmit={event => {
         event.preventDefault();
         void loadLog({ target: target.trim(), reason: logReason.trim() });
       }}>
-        <label>{t("Exact user or site ID")}<input value={target} maxLength={100} disabled={logBusy} onChange={event => setTarget(event.target.value)} /></label>
-        <label>{t("Management reason")}<input value={logReason} required={auditTargetNeedsReason(target)} maxLength={500} disabled={logBusy} onChange={event => setLogReason(event.target.value)} /></label>
+        <label>{t("User/site ID or system target")}<input value={target} maxLength={100} disabled={logBusy} onChange={event => setTarget(event.target.value)} /></label>
+        <label>{t("Management reason")}<input value={logReason} maxLength={500} disabled={logBusy} onChange={event => setLogReason(event.target.value)} /></label>
         <button className="btn" disabled={logBusy}>{t("Load audit records")}</button>
       </form>
       {logBusy && <p className="drawer-note" role="status"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}

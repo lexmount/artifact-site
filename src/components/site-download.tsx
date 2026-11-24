@@ -5,19 +5,17 @@ import { createPortal } from "react-dom";
 import { Download, Loader2 } from "lucide-react";
 import { useT, useLocale } from "@/components/locale-provider";
 import { siteFetch } from "@/lib/share-context";
-import { managementReasonHeaders } from "@/lib/management-reason";
 import { downloadSite } from "@/lib/download";
 import { relTime } from "@/lib/rel-time";
 import type { VersionInfo } from "@/lib/types";
 
-/** One download flow across personal, editor and administrative surfaces. */
-export default function SiteDownload({ slug, editToken, versionId, label, management = false, menuItem = true, onOpenChange }: {
+/** One download flow across personal and editor surfaces. */
+export default function SiteDownload({ slug, editToken, versionId, label, menuItem = true, onOpenChange }: {
   slug: string;
   label?: string;
   editToken?: string | null;
   /** A history row or editor pins its saved snapshot; lists default to current. */
   versionId?: string;
-  management?: boolean;
   menuItem?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -28,15 +26,13 @@ export default function SiteDownload({ slug, editToken, versionId, label, manage
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reason, setReason] = useState("");
   const [versions, setVersions] = useState<VersionInfo[] | null>(null);
   const [selected, setSelected] = useState(versionId ?? "");
   const [done, setDone] = useState(false);
   const headers: Record<string, string> = {
     ...(editToken ? { "x-edit-token": editToken } : {}),
-    ...(management ? managementReasonHeaders(reason) : {}),
   };
-  const ready = !busy && (!management || reason.trim().length > 0);
+  const ready = !busy;
 
   useEffect(() => {
     if (open && dialog.current && !dialog.current.open) dialog.current.showModal();
@@ -58,7 +54,7 @@ export default function SiteDownload({ slug, editToken, versionId, label, manage
 
   return <>
     <button data-analytics-button="download" type="button" role={menuItem ? "menuitem" : undefined} className={menuItem ? "menu-item" : "btn sm ghost"}
-      onClick={() => { setError(null); setReason(""); setVersions(null); setSelected(versionId ?? ""); setDone(false); setOpen(true); }}>
+      onClick={() => { setError(null); setVersions(null); setSelected(versionId ?? ""); setDone(false); setOpen(true); }}>
       <Download size={14} aria-hidden="true" /> {label ?? t(versionId ? "Download this version" : "Download")}
     </button>
     {open && typeof document !== "undefined" && createPortal(
@@ -73,10 +69,6 @@ export default function SiteDownload({ slug, editToken, versionId, label, manage
         }}>
           <h2 id={titleId}>{t("Download")}</h2>
           <p>{t("Uploaded archives keep their original format. Folders and other artifacts download as ZIP; documents include the original file in original/. Unsaved edits are not included.")}</p>
-          {management && <label><span>{t("Reason (required)")}</span>
-            <textarea required maxLength={500} rows={3} value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} />
-          </label>}
-          {management && <p>{t("Administrative downloads are recorded in the audit log.")}</p>}
           {versionId ? <p>{t("Downloads the saved version selected here.")}</p> : <>
             <label><span>{t("Version")}</span>
               <select value={selected} disabled={busy} onChange={(e) => { setSelected(e.target.value); setDone(false); }}>

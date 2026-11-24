@@ -76,7 +76,9 @@ export async function recordAdminAction(
 }
 
 function cleanReason(reason: unknown, required: boolean): string | null {
-  return (required ? managementReasonSchema : optionalManagementReasonSchema).parse(reason ?? undefined) ?? null;
+  const parsed = (required ? managementReasonSchema : optionalManagementReasonSchema).safeParse(reason ?? undefined);
+  if (!parsed.success) throw new BadRequestError(parsed.error.issues[0].message);
+  return parsed.data ?? null;
 }
 
 // --- users --------------------------------------------------------------------------

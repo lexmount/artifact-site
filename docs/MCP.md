@@ -326,8 +326,8 @@ bytes without assembling the entire file again.
 
 The administration console has no global site browser. `GET /api/admin/sites` is retired
 and returns 410, including for operator tokens. Authorization resource search lists only
-sites the account owns or has an explicit site-administrator grant for; platform and tenant
-management roles do not expand that list. The Authorization console also accepts one exact
+sites the account owns or has a site-administrator grant assigned directly to that user;
+group grants and platform or tenant management roles do not expand that list. The Authorization console also accepts one exact
 site address or ID with a management reason, using the same permission gates and audit trail.
 Lookups using elevated management or operator authority record `site.management`; owner
 and explicit site-administrator lookups record `site.lookup`.
@@ -335,9 +335,11 @@ Tenant details (`GET /api/tenants/<id>`) return workspace governance events only
 `sites` collection or site audit events. Global admin logs and overview activity include
 non-site events and the signed-in administrator's own site actions.
 **Administration → System → Action log** shows up to 200 events and accepts an exact user
-or site ID. User IDs (`usr_…`) filter account events without a management reason or a site lookup.
-Every other non-empty target requires a valid reason before the server resolves it, so a missing
-reason cannot reveal whether a site exists. Reading a known site's full records also records the read;
+or site ID, or a system target (`settings`, `purge-deleted`, `sweep-uploads`, `reconcile`,
+`expire-anonymous`, `backfill-text`, `prune-audit`). Existing user IDs and these system targets
+filter non-site events without a management reason. Unknown IDs, slugs, and site IDs without
+a valid reason return the same HTTP 404 response, so an invalid reason cannot reveal whether
+a site exists. Reading a known site's full records also records the read;
 `GET /api/admin/log?target=<site-id>` accepts the reason in `x-management-reason` and records
 a `site.audit.read` event before returning the records. Operator tokens see no site events
 in global audit views. The System viewer refreshes only the unfiltered log after maintenance;
@@ -346,7 +348,9 @@ filtered history stays in place until explicitly reloaded, without replaying an 
 Open **Administration → Site actions**, enter the known site address, slug or ID and a reason,
 and choose **Load known site**. This explicit lookup is audited and returns only that site's
 management metadata. Site comments/edit URLs, deep file paths such as `/s/<slug>/docs/page.html`,
-and `/v/<token>` links also identify a single site. App-relative paths work under a configured
+and `/v/<token>` links also identify a single site. Revoked or expired share links remain usable
+as historical report identifiers, with independent management authorization and a recorded reason;
+they never restore share access. App-relative paths work under a configured
 mount prefix; full URLs must match the configured origin and mount. `/c/<token>` links are
 collections, so provide an individual site address instead. There is no title search,
 autocomplete or deleted-site catalog. You can
@@ -355,12 +359,19 @@ files are purged. Keep the site's address or ID for recovery; a signed-in admini
 also recover the ID of their own deletion from recent administrative actions.
 
 To assign an unowned site, choose **Assign owner** and enter the verified email of an existing,
-active account, plus a required assignment reason recorded in the audit log. Existing owners
-are never overwritten. Email administrators can use these
-forms even when PUBLISH_API_TOKEN is unset; personal agent tokens do not inherit these rights.
+active account, plus a required assignment reason recorded in the audit log. The stored reason
+is one line, with space reserved for ` Assigned owner: <user-id>` within its 500-character limit;
+longer reasons are rejected before ownership changes. Existing owners are never overwritten.
+Email administrators can use these forms even when PUBLISH_API_TOKEN is unset; personal agent
+tokens do not inherit these rights.
 
 For operator scripts, POST `/api/admin/sites/<slug>/owner` with
 `Authorization: Bearer <PUBLISH_API_TOKEN>` and JSON `{"email":"recipient@example.com","reason":"Verified recovery request"}`.
+All three mutation handlers (PATCH, DELETE, owner assignment) accept at most 4096 body bytes.
+Missing site targets return HTTP 404 with `Site not found`, including legacy slug routes;
+older slug take-down/delete requests returned HTTP 400 with `No such site`, and undelete
+returned HTTP 400 with `The site is not deleted`. Existing-site state errors remain HTTP 400.
+
 The console uses stable site IDs: POST `/api/admin/sites/by-id/<site-id>/owner` for assignment,
 and PATCH or DELETE `/api/admin/sites/by-id/<site-id>` for other actions. The legacy slug
 endpoints remain available; both forms return 404 for a missing site. Assignment always

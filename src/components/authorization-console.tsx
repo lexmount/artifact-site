@@ -73,7 +73,7 @@ export default function AuthorizationConsole() {
     <div className="authorization-console">
       <p>
         {t(
-          "Choose a site you own or administer through an explicit grant, or a workspace, then assign roles.",
+          "Choose a site you own or have been directly granted administrator access to, or a workspace, then assign roles.",
         )}
       </p>
       <form className="admin-known-site" onSubmit={async event => {
