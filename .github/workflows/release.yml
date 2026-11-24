@@ -7,14 +7,21 @@ name: Release
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   image:
     name: image on GHCR
+    needs: skills
+    if: ${{ github.event_name == 'push' && !cancelled() && (needs.skills.result == 'success' || github.repository != 'lexmount/artifact-site') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +53,7 @@ jobs:
   npm:
     name: "@artifact-site/cli on npm"
     # Tags are pushed in the public repository; a matching tag here must not attempt a publish.
-    if: github.repository == 'lexmount/artifact-site'
+    if: github.event_name == 'push' && github.repository == 'lexmount/artifact-site'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -62,3 +69,50 @@ jobs:
       - run: npm --prefix cli test
       - name: Publish, unless this version is already on npm (prereleases go to the `next` tag)
         run: scripts/publish-cli.sh
+
+  skills:
+    name: Complete agent skill distribution
+    needs: npm
+    if: github.event_name == 'push' && github.repository == 'lexmount/artifact-site'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/build-skill-package.mjs --check --distribution-only --release "$GITHUB_REF_NAME"
+      - name: Publish immutable skill files and manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-skill.sh
+
+  distribution:
+    name: Publish CLI and skills without a server image
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'lexmount/artifact-site'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11
+      - run: npm --prefix cli ci
+      - run: npm --prefix cli test
+      - name: Verify and pin the CLI release tag
+        id: release
+        run: bash scripts/prepare-cli-release.sh
+      - run: scripts/publish-cli.sh
+      - run: node scripts/build-skill-package.mjs --check --distribution-only --release "${{ steps.release.outputs.tag }}"
+      - name: Publish immutable skill files and manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: bash scripts/publish-skill.sh "$RELEASE_TAG"

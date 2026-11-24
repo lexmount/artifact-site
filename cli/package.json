@@ -1,6 +1,6 @@
 {
   "name": "@artifact-site/cli",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "mcpName": "io.github.lexmount/artifact-site",
   "description": "Command-line client for artifact-site: publish, update, search, share and export sites.",
   "license": "(Apache-2.0 OR MIT)",
@@ -31,7 +31,8 @@
     "src/mcp-tools.json",
     "README.md",
     "LICENSE-APACHE",
-    "LICENSE-MIT"
+    "LICENSE-MIT",
+    "skill"
   ],
   "publishConfig": {
     "access": "public"
@@ -43,7 +44,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "prepack": "npm run build"
+    "prepack": "node ../scripts/build-skill-package.mjs --check --npm --distribution-only && npm run build",
+    "pretest": "node ../scripts/build-skill-package.mjs --check --npm --distribution-only"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

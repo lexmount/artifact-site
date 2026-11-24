@@ -5,6 +5,15 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+## CLI and skills 0.6.0 — 2026-11-24
+
+- Ship a complete layered agent skill, npm and shell installation, safe update checks and
+  checksummed deployment references. Preserve local edits and existing account credentials.
+- Add CLI data and record commands, safe streamed downloads and publication recovery needed
+  by the current references. Keep the public release's dependency updates and MCP safety hints.
+- Add a manual Release workflow for publishing the CLI and skill assets independently of
+  the server image. The CLI release tag is immutable; interrupted uploads remain drafts.
+
 ## 0.5.0 — 2026-11-23
 
 - Preserve trailing slashes in OIDC issuer identifiers so Authentik sign-in and back-channel logout work, while retaining exact discovery and token issuer validation. Configure the issuer exactly as advertised by the provider.
