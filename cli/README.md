@@ -1,7 +1,7 @@
 # artifact-site CLI
 
-Publish, update, search, read, share, export and manage sites from a terminal. This client uses
-the HTTP API documented at `/for-agents.md` and stores personal credentials per server in
+Publish, update, search, read, share, export and manage sites from a terminal. This client targets the public
+[lexmount/artifact-site](https://github.com/lexmount/artifact-site) HTTP API documented at `/for-agents.md` and stores personal credentials per server in
 `~/.config/artifact-site/tokens/<host>`.
 
 Remote MCP offers the same artifact operations directly from the platform, without installing
@@ -36,7 +36,7 @@ To keep anonymous browser creation available alongside an operator token, explic
 the fallback policy to `token`, which rejects anonymous browser creation. Use `open` only where
 anonymous creation is intended; existing-site access and editing still follow their own rules.
 
-`login` requires a server with OIDC or independent Google, GitHub or email sign-in configured. CLI keyword find, read, info and skill work without a token where access permits. Remote MCP always requires a valid Bearer token — an OAuth access token the client obtained by signing in, a personal token, or the operator token. Publishing, updating, sharing and deleting require a token in the current client. The default open local setup issues no credentials; use browser uploads or the agent publishing guide, or configure a sign-in method or `PUBLISH_API_TOKEN` for authenticated CLI/MCP use. Supply an operator credential through `ARTIFACT_SITE_TOKEN`; operator tokens have broad privileges and cannot use the personal library (`find` without keywords). `whoami` reports these as operator credentials, with no personal account or folders. Older servers may not identify operator credentials; do not test identity by publishing. Environment tokens override saved tokens. `logout` forgets local credentials but does not revoke server-side tokens.
+`login` requires a server with OIDC sign-in configured. CLI keyword find, read, info and skill work without a token where access permits. Remote MCP always requires a valid Bearer token — an OAuth access token the client obtained by signing in, a personal token, or the operator token. Publishing, updating, sharing and deleting require a token in the current client. The default open local setup issues no credentials; use browser uploads or the agent publishing guide, or configure OIDC or `PUBLISH_API_TOKEN` for authenticated CLI/MCP use. Supply an operator credential through `ARTIFACT_SITE_TOKEN`; operator tokens have broad privileges and cannot use the personal library (`find` without keywords). `whoami` reports these as operator credentials, with no personal account or folders. Older servers may not identify operator credentials; do not test identity by publishing. Environment tokens override saved tokens. `logout` forgets local credentials but does not revoke server-side tokens.
 
 `login` runs the one-time device authorisation: it prints a message with a link and a code,
 opens the browser, and waits for you to click **Allow**. The publish token it receives is stored
@@ -94,8 +94,9 @@ it when passing such identifiers, for example `artifact-site --json read -- -YOU
 | --- | --- |
 | `publish <path>` | New work from HTML, a directory, ZIP/RAR/7z/TAR/TAR.GZ/TGZ, PDF/Office, or any standalone file (requires package uploads). Common text, Markdown, CSV/TSV, images, media and PDF files open from the file directory. `-` reads HTML from stdin. Creates privately without a share link. Explicit `--share` remains an advanced independent-link compatibility option. |
 | `update <slug> <path>` | Replace the current content. The route follows the site's kind: single page → the new `.html`; file tree → a directory or zip; document → the new file. Required `--expected-version <id>` refuses to overwrite someone else's newer version (exit 4). |
-| `export <slug> [--version-id <id>] [-o file]` | Download an original file or retained archive; prints the version id for `--expected-version`. |
-| `share <slug>` | Advanced independent share link: `--policy`, `--label`, `--expires 7\|30\|90`, `--passcode`. |
+| `download <slug> [--version-id <id>] [-o file]` | Download the retained package archive, or a ZIP for other uploads. |
+| `export <slug> [--version-id <id>] [-o file]` | Export a ZIP of the selected version; prints the version id for `--expected-version`. |
+| `share <slug>` | Advanced independent share link: `--policy`, `--mode`, `--version-id`, `--label`, `--expires 7\|30\|90`, `--passcode`. |
 | `find` · `info <slug> [--shares]` | Your remote artifacts · one artifact's kind, files and history, optionally owner-only sharing summaries. |
 | `find --public` | Explicit public catalog, not a personal listing. Omit keywords. |
 | `folders list` | My flat folder labels with stable IDs; requires a personal account. |
@@ -106,9 +107,6 @@ it when passing such identifiers, for example `artifact-site --json read -- -YOU
 | `edit <slug> <path> --file <relpath> --expected-version <id>` | Replace one remote text file from a local UTF-8 file (`-` for stdin), preserving other files. |
 | `fork <slug>` | Create an independent copy with a new address. |
 | `rollback <slug> <versionId>` · `delete <slug>` | Restore an earlier version · move an artifact to the trash. |
-| `collections list/access/delete <slug>` | Discover schemas/usage, change access, or permanently remove a disabled collection; owner/platform administrator only. |
-| `records list/get/create/update/delete <slug> <name>` | Individual records; mutations require `--expected-version`, `--operation-key`, and updates/deletes require `--expected-revision`. |
-| `snapshot <slug> --out page.zip [--collections names…]` | Current saved JSON and explicitly selected records, with offline reads and disabled writes; original `export` stays unchanged. |
 | `whoami` · `logout` · `skill` | Identity · forget the token · print the platform's agent guide. |
 
 Use `find` without keywords for “my artifacts”; use keywords to search all discoverable works,
@@ -151,7 +149,7 @@ Archives retain their original bytes regardless of directory-walk filtering.
 
 ```bash
 artifact-site publish dist/ --title "Q3 dashboard"        # → prints the private site URL and access state
-artifact-site download k4wey6sCyFcm --file index.html -o index.html              # → version ver_… to build on
+artifact-site export k4wey6sCyFcm -o source.zip              # → version ver_… to build on
 artifact-site update k4wey6sCyFcm dist/ --expected-version ver_…
 ```
 
@@ -225,7 +223,7 @@ Existing saved personal tokens and login remain unchanged. Use `--tenant <id>` (
 `ARTIFACT_SITE_TENANT`) when publishing into a tenant other than the account default.
 Use `--share-token <token>` (or `ARTIFACT_SITE_SHARE_TOKEN`) for access through a share;
 this does not grant tenant membership. `share --policy people` replaces the old `email`
-spelling, which is still accepted. `share --mode view|comment|edit` controls the share role. All links follow latest.
+spelling, which is still accepted. `share --mode view|comment|edit` controls the share role. Links follow latest unless a view/comment link is pinned with `--version-id`.
 Source reads, export and fork require editor-or-higher access; plain report text follows
 read permissions. Public sharing creates a reader URL without changing site visibility.
 ## Official versions
@@ -284,7 +282,7 @@ artifact-site comments context SLUG THREAD --json
 artifact-site comments read SLUG THREAD --json
 artifact-site comments read SLUG THREAD --cursor CURSOR --limit 30 --json
 artifact-site read SLUG --version-id ORIGINAL --file index.html --json
-artifact-site download SLUG --version-id BASELINE --file index.html --out source.html --json
+artifact-site export SLUG --version-id BASELINE --out source.zip --json
 artifact-site update SLUG ./output --expected-version BASELINE --operation-key feedback-fix-001 --json
 ```
 
@@ -299,7 +297,8 @@ top-level `nextCursor`. Reads do not mark anything read. Share credentials can b
 Content `update` now requires `--expected-version` (title-only rename is unchanged). Read the
 latest editable version separately from an old comment's evidence, then revise the same slug.
 A 409 exits 4: inspect and reconcile the winner, not a blind overwrite or new publication.
-Reuse the operation key after uncertain responses; all shares follow the new version.
+Reuse the operation key after uncertain responses. Latest-version shares follow the update;
+fixed-version shares continue to show their selected version.
 
 ### Main-link access
 
@@ -313,9 +312,9 @@ bytes are uploaded unchanged, streamed to the server, and retained for authorize
 package downloads. The default archive limit is 100 MiB; it is separate from decompressed
 content limits. Directory uploads preserve subdirectories, including empty directories.
 
-`export` and `download` return original files or an existing retained archive. A version without
-an archive lists its files; select one with `download SLUG --file path`. No server ZIP or live
-JSON assembly is performed. Both operations require source-export permission.
+`download` returns the retained original archive, or a generated ZIP for folder uploads.
+`export` always returns a source ZIP, excluding generated system files. Both operations
+require source-export permission. Unpack the ZIP to work with individual files.
 Legacy servers retain the existing directory/ZIP path; RAR/7z require an upgraded server.
 
 On servers advertising `asyncPackages: 1`, package commits return a durable task. The CLI
@@ -325,64 +324,24 @@ files to recover the result or retry a transient failure without re-uploading. R
 expires six hours after upload start; completed idempotent results remain recoverable
 through the operation key for seven days. Older servers keep synchronous commits.
 
-### Shared artifact data
+## Open-source compatibility (CLI 0.6.2)
 
-```sh
-artifact-site publish index.html --data-contract contract.json --data-changes initial.json
-artifact-site data list SLUG --json
-artifact-site data get SLUG sales --json
-artifact-site data set SLUG sales sales.json --expected-version VERSION --expected-revision 1
-artifact-site update SLUG index.html --expected-version VERSION --data-contract contract.json --data-changes changes.json
-artifact-site rollback SLUG OLD_VERSION --expected-version CURRENT_VERSION --data-changes changes.json
-artifact-site download SLUG -o original.html
-artifact-site download SLUG --file assets/data.json -o data.json
-```
+CLI 0.6.0 accidentally included commands for APIs absent from the open-source server.
+Version 0.6.2 removes `data`, `collections`, `records`, `snapshot`, and the publication flags
+`--data-contract`, `--data-changes`, and `--data-collections`. These now fail during argument
+parsing before any request or publication. Embed JSON in your files and update the artifact,
+or connect an external backend when persistence is needed.
 
-Contracts map dataset names to bounded JSON Schemas. Changes are an array of
-`{name, expectedRevision, value}`; use revision 0 for initial data. `publish`, `update`, and `edit`
-accept the two JSON-file options. `data set` replaces one value without creating a code version;
-conflicts exit 4 and require rereading before retrying. Readers refresh manually. Browser JS is
-read-only: `await artifactData.get("sales")`.
+`download` returns a retained original package archive, or a ZIP for other uploads. It does
+not support `--file`; export and unpack a ZIP to retrieve an individual binary file.
+`export` always requests the server's ZIP endpoint. Both accept `--version-id` and stream
+to disk, retaining an existing output if the transfer fails or is cancelled.
 
-`download` and `export` preserve original bytes; `--version-id` selects an authorized historical
-version. Fetch current JSON separately with `data get`; downloads do not include an offline adapter. Rollback keeps current
-values and validates them against the old code's schema. All share links follow latest;
-`share --version-id` is no longer supported. Documents and moderated works cannot enable data.
+`share --version-id VERSION` is supported for view/comment links; editable links follow latest.
+`rollback SLUG VERSION` restores that version's files as a new current version. The public
+rollback API has no optimistic-lock parameter, so `--expected-version` is not accepted for
+rollback. Content `update` and `edit` still require `--expected-version`.
 
-
-## Record collections
-
-Publish with `--data-collections collections.json` (also supported by update/edit). Definitions
-are documented by the deployed `/for-agents.md`. New collections default to managers only;
-visitor update/delete also requires `publicMutation: "open"`. Management requires the owner or
-platform administrator; viewer/editor runtime eligibility does not expose private responses.
-
-```sh
-artifact-site collections list SLUG
-artifact-site records create SLUG tasks record.json --expected-version VERSION --operation-key saved-unique-key
-artifact-site records list SLUG tasks --limit 50 --query meeting --filter '{"field":"done","value":false}'
-artifact-site records import SLUG tasks rows.json --expected-version VERSION --operation-key saved-import-key --validate-only
-artifact-site records import SLUG tasks rows.json --expected-version VERSION --operation-key saved-import-key
-artifact-site records export SLUG tasks --query meeting --out tasks.csv
-artifact-site records update SLUG tasks RECORD patch.json --expected-version VERSION --expected-revision 1 --operation-key another-saved-key
-artifact-site snapshot SLUG --collections tasks --out snapshot.zip
-```
-
-`records list` searches the entire collection before pagination; keep `--query` and `--filter`
-unchanged while following a cursor. `records import` accepts a JSON array (or `-` for stdin),
-previews with `--validate-only`, and appends at most 200 records atomically. It never overwrites;
-reuse the same key and identical commit input after uncertain responses. Each committed row
-counts toward the site's create budget. `records export` downloads all matching values as CSV,
-up to 5,000 records / 8 MiB of stored JSON; narrow the query if the limit is exceeded. Formula-like
-text receives a leading apostrophe for spreadsheet safety. All these commands require data management.
-
-`records create/update` accept `-` for JSON stdin. PATCH merges top-level fields; `--unset field`
-removes an optional field. Lists return `nextCursor` for `--cursor`. Keep identical input and key
-when retrying an uncertain response within 24 hours; reconcile conflicts instead of overwriting.
-`collections access` takes a JSON file with `access`, optional `publicMutation`/`rate`, and requires
-`--expected-revision` (policyRevision). Deleting a disabled collection also requires
-`--delete-records`; it permanently removes retained data. Snapshot record inclusion is explicit
-and makes those records readable to the ZIP recipient. Without `--collections`, records stay out.
-
-These commands must be present in the installed package (`artifact-site records --help`). A
-server upgrade cannot update an older local CLI; install a package containing this release.
+The bundled MCP manifest is generated from the public server. The bundled skill documents
+its supported APIs and runtime; server 0.6.1 supplies deployment documentation through
+`/for-agents.md` (the CLI falls back when `/agent-docs/manifest.json` is absent).

@@ -5,6 +5,13 @@ versions follow semver. Tagging `vX.Y.Z` publishes `ghcr.io/lexmount/artifact-si
 
 ## Unreleased
 
+- Prepare CLI 0.6.2 against the public server API: remove unsupported data, record-collection
+  and offline-snapshot commands and publication flags; reject ignored download-file and
+  rollback-lock options before sending requests. Restore ZIP export and fixed-version shares.
+- Rebuild the bundled skill from the open-source runtime and API contract, removing unsupported
+  data persistence and comment inheritance instructions. Clean compiled output before packaging
+  so removed commands cannot survive in the npm distribution.
+
 ## 0.6.1 — 2026-11-24
 
 - Remove the global site browser and its navigation from Administration. The System action-log viewer supports exact target IDs, requires and audits a reason for reading a known site's records, and refreshes the unfiltered log after maintenance without replaying prior site reads. Existing user-ID and known system-target filters need no management reason; unresolved targets and sites without a valid reason share a 404 response to prevent existence probing. Overview statistics remain available; site events in global audit views are limited to the signed-in administrator’s own actions.

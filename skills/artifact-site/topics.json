@@ -38,15 +38,5 @@
     "id": "comments",
     "title": "Comment-driven revisions",
     "when": "Read feedback and revise the same work."
-  },
-  {
-    "id": "data",
-    "title": "Named data and snapshots",
-    "when": "Update chart values, download originals, or export saved data."
-  },
-  {
-    "id": "records",
-    "title": "Forms and record collections",
-    "when": "Build forms or manage accumulated records."
   }
 ]
