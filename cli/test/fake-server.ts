@@ -281,6 +281,13 @@ export async function startFakeServer(): Promise<FakeServer> {
       return send(res, 200, { slug: site.slug, url: `/s/${site.slug}`, title: site.title, kind: site.kind, versionId: current().id, file, chars: text.length, truncated: text.length > max, text: text.slice(0, max) });
     }
     if (sub === "versions" && method === "GET") return send(res, 200, { versions: site.versions.map((v) => ({ id: v.id, createdAt: v.createdAt, source: v.source, fileCount: Object.keys(v.files).length })), currentVersionId: current().id });
+    if (sub === "download" && method === "GET") {
+      if (!mayEdit()) return send(res, 403, { error: "forbidden" });
+      const paths = Object.keys(current().files), file = url.searchParams.get("file") ?? (paths.length === 1 ? paths[0] : null);
+      if (!file) return send(res, 200, { versionId: current().id, files: paths.map(path => ({ path, size: current().files[path].byteLength })), assembled: false });
+      if (!Object.hasOwn(current().files, file)) return send(res, 404, { error: "file not found" });
+      return send(res, 200, current().files[file], { "x-artifact-version": current().id, "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file)}` });
+    }
     if (sub === "export" && method === "GET") { if (!mayEdit()) return send(res, 403, { error: "forbidden" }); return send(res, 200, zipSync(current().files), { "x-artifact-version": current().id }); }
     if (sub === "edit" && method === "POST") {
       if (!mayEdit()) return send(res, 403, { error: "forbidden" });

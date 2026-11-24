@@ -2,7 +2,7 @@
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactSiteClient } from "../src/client.js";
 import { run, type Io } from "../src/cli.js";
 import { hostKey } from "../src/config.js";
@@ -30,6 +30,31 @@ afterAll(() => server.close());
 beforeEach(() => { out = []; err = []; });
 
 describe("artifact-site CLI", () => {
+  it("installs, checks and updates bundled skills without a server or account", async () => {
+    const destination = path.join(dir, "complete-skill");
+    for (const [action, status] of [["check", "missing"], ["install", "installed"], ["check", "current"], ["update", "current"]]) {
+      expect(await cli("--json", "skill", action, "--bundled", "--dir", destination)).toBe(0);
+      expect(lastJson().status).toBe(status);
+    }
+    expect(await readFile(path.join(destination, "references/auth.md"), "utf8")).toContain("device");
+  });
+
+  it("installs, checks and updates for the detected client without target arguments", async () => {
+    const config = path.join(dir, "detected-codex");
+    vi.stubEnv("CODEX_THREAD_ID", "test-session");
+    vi.stubEnv("CODEX_HOME", config);
+    vi.stubEnv("CLAUDECODE", "");
+    vi.stubEnv("CURSOR_AGENT", "");
+    try {
+      for (const [action, status] of [["check", "missing"], ["install", "installed"], ["check", "current"], ["update", "current"]]) {
+        expect(await cli("--json", "skill", action, "--bundled")).toBe(0);
+        expect(lastJson().status).toBe(status);
+        expect(lastJson().directory).toBe(path.join(config, "skills/artifact-site"));
+      }
+      expect(await readFile(path.join(config, "skills/artifact-site/SKILL.md"), "utf8")).toContain("name: artifact-site");
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("without a base URL: exit 2 with instructions", async () => {
     expect(await cli("list")).toBe(2);
     expect(err[0]).toMatch(/--base/);
@@ -265,11 +290,13 @@ it("routes Agent comment commands and historical reads without exposing share cr
   const requests: Request[]=[];
   const factory=(baseUrl:string)=>new ArtifactSiteClient({baseUrl,shareToken:"private-share-token",fetch:async(input,init)=>{
     const request=new Request(input,init);requests.push(request);
-    return new Response(JSON.stringify({dataTrust:"trusted",items:[],nextCursor:null,text:"historical",url:"/s/site",versionId:"old",truncated:false}),{headers:{"content-type":"application/json"}});
+    return new Response(JSON.stringify({dataTrust:"trusted",synchronization:{state:"complete",historyIncomplete:true},items:[{threadId:"copy",scope:{versionId:"v2"},inheritedFrom:{versionId:"v1",threadId:"original"}}],nextCursor:null,text:"historical",url:"/s/site",versionId:"old",truncated:false}),{headers:{"content-type":"application/json"}});
   }});
   const exec=(...args:string[])=>run(["--base","http://comments.test","--share-token","private-share-token","--json",...args],io,factory);
   expect(await exec("comments","list","site","--aggregate","--all-versions","--status","open","--limit","2")).toBe(0);
   expect(new URL(requests.at(-1)!.url).searchParams.get("allVersions")).toBe("true");
+  expect(lastJson().synchronization).toEqual({state:"complete",historyIncomplete:true});
+  expect(lastJson().items[0].inheritedFrom.threadId).toBe("original");
   expect(await exec("comments","list","site","--version-id","old")).toBe(0);
   expect(new URL(requests.at(-1)!.url).searchParams.get("versionId")).toBe("old");
   expect(await exec("comments","read","site","thread")).toBe(0);
