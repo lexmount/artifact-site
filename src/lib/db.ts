@@ -24,7 +24,6 @@ import type {
   AdminAction,
   AdminLogEntry,
   AdminOverview,
-  AdminSiteRow,
   AdminUserRow,
   SettingRow,
   SettingWrite,
@@ -48,7 +47,6 @@ import {
   type InsertAuditInput,
   type QuotaOwner,
   type AdminUserQuery,
-  type AdminSiteQuery,
   type SiteTextWrite,
   type SiteTextRow,
   type SearchToken,
@@ -60,6 +58,15 @@ import {
   type DeviceGrant,
 } from "@/lib/metadata-model";
 export * from "@/lib/metadata-model";
+
+export interface AdminLogOptions {
+  targetId?: string | null;
+  limit: number;
+  /** Defaults to visible; unrestricted reads must opt in after authorizing the exact target. */
+  scope?: "visible" | "all";
+  /** Within visible scope, include this user's site actions alongside non-site events. */
+  viewerUserId?: string | null;
+}
 
 export interface MetadataStore {
   rbacQuery: RbacQuery;
@@ -265,14 +272,13 @@ export interface MetadataStore {
   /** Soft-deleted at or before `before` and not yet purged — the purge worklist, oldest first. */
   listDeletedSitesBefore(before: number, limit: number): Promise<Site[]>;
   insertAdminLog(entry: AdminLogEntry): Promise<void>;
-  listAdminLog(opts: { targetId?: string | null; limit: number }): Promise<AdminLogEntry[]>;
+  listAdminLog(opts: AdminLogOptions): Promise<AdminLogEntry[]>;
   /** Has this administrator done this to this target since `since`? Collapses a burst (a page and
    *  its twenty assets) into one row. */
   hasRecentAdminLog(actorUserId: string, action: AdminAction, targetId: string, since: number): Promise<boolean>;
   adminOverview(): Promise<AdminOverview>;
   /** Every account with its live site count and stored bytes (all versions of its sites). */
   listUsersAdmin(opts: AdminUserQuery): Promise<{ rows: AdminUserRow[]; total: number }>;
-  listSitesAdmin(opts: AdminSiteQuery): Promise<{ rows: AdminSiteRow[]; total: number }>;
 
   // --- quotas and expiry --------------------------------------------------------
   /** Live site count and stored bytes (every version of every unpurged site) of one owner:
@@ -678,17 +684,14 @@ export async function listDeletedSitesBefore(before: number, limit = 100): Promi
 export async function insertAdminLog(entry: AdminLogEntry): Promise<void> {
   return (await getStore()).insertAdminLog(entry);
 }
-export async function listAdminLog(opts: { targetId?: string | null; limit?: number } = {}): Promise<AdminLogEntry[]> {
-  return (await getStore()).listAdminLog({ targetId: opts.targetId ?? null, limit: opts.limit ?? 50 });
+export async function listAdminLog(opts: Partial<AdminLogOptions> = {}): Promise<AdminLogEntry[]> {
+  return (await getStore()).listAdminLog({ ...opts, scope: opts.scope ?? "visible", targetId: opts.targetId ?? null, limit: opts.limit ?? 50 });
 }
 export async function adminOverview(): Promise<AdminOverview> {
   return (await getStore()).adminOverview();
 }
 export async function listUsersAdmin(opts: AdminUserQuery): Promise<{ rows: AdminUserRow[]; total: number }> {
   return (await getStore()).listUsersAdmin(opts);
-}
-export async function listSitesAdmin(opts: AdminSiteQuery): Promise<{ rows: AdminSiteRow[]; total: number }> {
-  return (await getStore()).listSitesAdmin(opts);
 }
 
 // --- quotas and expiry wrappers ------------------------------------------------

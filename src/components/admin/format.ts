@@ -23,10 +23,11 @@ export function formatWhen(ts: number | null, locale: Locale): string {
  * Browsers attach it themselves on non-GET requests (and `Origin` is a forbidden header name —
  * a script cannot set it), so nothing is added here; a non-browser caller would have to send it.
  */
-export async function adminFetch<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function adminFetch<T>(path: string, init: { method?: string; body?: unknown; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<T> {
   const res = await appFetch(path, {
     method: init.method ?? "GET",
-    headers: init.body !== undefined ? { "content-type": "application/json" } : {},
+    signal: init.signal,
+    headers: { ...(init.body !== undefined ? { "content-type": "application/json" } : {}), ...init.headers },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
   const data = (await res.json().catch(() => ({}))) as { error?: string } & T;

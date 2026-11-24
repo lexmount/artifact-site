@@ -22,8 +22,6 @@ import type {
   Visibility,
   AdminLogEntry,
   AdminOverview,
-  AdminSiteRow,
-  AdminSiteState,
   AdminUserRow,
   SettingRow,
   OauthAuthorization,
@@ -361,16 +359,6 @@ export interface AdminUserQuery {
   offset: number;
 }
 
-export interface AdminSiteQuery {
-  /** Substring of title, slug or owner e-mail. */
-  q: string;
-  ownerId: string | null;
-  anonymousOnly: boolean;
-  state: AdminSiteState;
-  limit: number;
-  offset: number;
-}
-
 /** What lib/site-text stores for a site's current version. Tokens are pre-computed there (see tokenize). */
 // Revision 1 repairs the PDF worker packaging failure. Older cached bodies are re-extracted
 // lazily; this also gives future extractor fixes a bounded backfill instead of a startup scan.
@@ -505,15 +493,6 @@ export function toAdminOverview(row: Row): AdminOverview {
 }
 export function toAdminUserRow(row: Row): AdminUserRow {
   return { ...toUser(row), siteCount: Number(row.site_count ?? 0), byteTotal: Number(row.byte_total ?? 0) };
-}
-export function toAdminSiteRow(row: Row): AdminSiteRow {
-  return {
-    ...toSite(row),
-    ownerEmail: (row.owner_email as string | null) ?? null,
-    ownerName: (row.owner_name as string | null) ?? null,
-    versionCount: Number(row.version_count ?? 0),
-    byteTotal: Number(row.byte_total ?? 0),
-  };
 }
 /** ORDER BY for the admin user list — a fixed vocabulary, never user text (it is spliced into SQL). */
 export function adminUserOrder(sort: AdminUserQuery["sort"]): string {

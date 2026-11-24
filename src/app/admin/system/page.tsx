@@ -1,33 +1,53 @@
 "use client";
 
-// System: what the process runs on, the maintenance jobs on demand, and the full action log.
-import { useCallback, useEffect, useState } from "react";
-import { Loader2, Search } from "lucide-react";
+// System: what the process runs on and the maintenance jobs on demand.
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 import { adminFetch } from "@/components/admin/format";
 import ActionLog from "@/components/admin/action-log";
 import type { AdminLogEntry } from "@/lib/types";
+import { managementReasonHeaders } from "@/lib/management-reason";
 
 type Task = "purge-deleted" | "sweep-uploads" | "reconcile" | "expire-anonymous" | "backfill-text" | "prune-audit";
 
 export default function AdminSystemPage() {
   const t = useT();
   const [runtime, setRuntime] = useState<{ lines: string[]; warnings: string[] } | null>(null);
-  const [log, setLog] = useState<AdminLogEntry[] | null>(null);
-  const [target, setTarget] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [entries, setEntries] = useState<AdminLogEntry[] | null>(null);
+  const [target, setTarget] = useState("");
+  const [logReason, setLogReason] = useState("");
+  const [logBusy, setLogBusy] = useState(true);
+  const [logError, setLogError] = useState("");
+  const activeLogQuery = useRef({ target: "", reason: "" });
+  const logRequest = useRef(0);
+  const loadLog = useCallback(async (query = activeLogQuery.current, signal?: AbortSignal) => {
+    if (signal?.aborted) return;
+    activeLogQuery.current = query;
+    const request = ++logRequest.current;
+    setLogBusy(true); setLogError(""); setEntries(null);
+    try {
+      const data = await adminFetch<{ entries: AdminLogEntry[] }>(`/api/admin/log?limit=200&target=${encodeURIComponent(query.target)}`, { headers: query.reason ? managementReasonHeaders(query.reason) : undefined, signal });
+      if (!signal?.aborted && request === logRequest.current) setEntries(data.entries);
+    } catch (err) {
+      if (!signal?.aborted && request === logRequest.current) setLogError(err instanceof Error ? err.message : t("Request failed"));
+    } finally {
+      if (!signal?.aborted && request === logRequest.current) setLogBusy(false);
+    }
+  }, [t]);
 
-  const loadLog = useCallback(() => {
-    const params = new URLSearchParams({ limit: "200" });
-    if (target.trim()) params.set("target", target.trim());
-    adminFetch<{ entries: AdminLogEntry[] }>(`/api/admin/log?${params}`).then((r) => setLog(r.entries)).catch((e: Error) => setError(e.message));
-  }, [target]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.resolve().then(() => loadLog(undefined, controller.signal));
+    return () => controller.abort();
+  }, [loadLog]);
+
   useEffect(() => {
     adminFetch<{ runtime: { lines: string[]; warnings: string[] } }>("/api/admin/overview").then((r) => setRuntime(r.runtime)).catch((e: Error) => setError(e.message));
   }, []);
-  useEffect(() => { loadLog(); }, [loadLog]);
 
   async function run(task: Task, dryRun?: boolean) {
     const key = `${task}${dryRun ? ":dry" : ""}`;
@@ -42,12 +62,12 @@ export default function AdminSystemPage() {
           setResult(`${task}: ${JSON.stringify({ indexed, remaining: r.result.remaining })}`);
           if (!r.result.remaining || r.result.indexed === 0) break;
         }
-        loadLog();
+        if (!activeLogQuery.current.target) await loadLog();
         return;
       }
       const r = await adminFetch<{ task: Task; result: unknown }>("/api/admin/maintenance", { method: "POST", body: { task, dryRun } });
       setResult(`${task}${dryRun ? ` (${t("dry run")})` : ""}: ${JSON.stringify(r.result)}`);
-      loadLog();
+      if (!activeLogQuery.current.target) await loadLog();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -73,15 +93,20 @@ export default function AdminSystemPage() {
       </div>
       {result && <pre className="admin-runtime" role="status">{result}</pre>}
       {error && <p className="drawer-error" role="alert">{error}</p>}
-
       <h2 className="admin-h2">{t("Action log")}</h2>
-      <div className="admin-toolbar">
-        <label className="searchbox admin-search">
-          <Search size={16} aria-hidden="true" />
-          <input type="search" placeholder={t("Filter by user or site id")} value={target} onChange={(e) => setTarget(e.target.value)} aria-label={t("Filter the action log")} />
-        </label>
-      </div>
-      {log ? <ActionLog entries={log} emptyText={t("Nothing yet.")} /> : <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}
+      <p className="drawer-note">{t("Showing up to 200 actions. Leave the target empty for system, user and your own site actions, or enter a user/site ID or a system target such as expire-anonymous.")}</p>
+      <p className="drawer-note">{t("Reading a site's audit records requires a management reason and is itself audited.")}</p>
+      <form className="admin-known-site" onSubmit={event => {
+        event.preventDefault();
+        void loadLog({ target: target.trim(), reason: logReason.trim() });
+      }}>
+        <label>{t("User/site ID or system target")}<input value={target} maxLength={100} disabled={logBusy} onChange={event => setTarget(event.target.value)} /></label>
+        <label>{t("Management reason")}<input value={logReason} maxLength={500} disabled={logBusy} onChange={event => setLogReason(event.target.value)} /></label>
+        <button className="btn" disabled={logBusy}>{t("Load audit records")}</button>
+      </form>
+      {logBusy && <p className="drawer-note" role="status"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>}
+      {logError && <p className="drawer-error" role="alert">{logError}</p>}
+      {entries && <ActionLog entries={entries} emptyText={t("Nothing yet.")} />}
     </>
   );
 }

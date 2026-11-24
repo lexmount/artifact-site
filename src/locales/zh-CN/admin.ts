@@ -3,6 +3,31 @@ import type { Messages } from "@/lib/i18n";
 /** The administration console (/admin, src/components/admin) and the take-down surfaces it adds
  *  to the site page, the share page and the site cards. Keys are the English source strings. */
 export const admin: Messages = {
+  "Action log": "操作日志",
+  "User/site ID or system target": "用户/站点 ID 或系统目标",
+  "Load audit records": "载入审计记录",
+  "Reading a site's audit records requires a management reason and is itself audited.": "查看站点审计记录需要填写管理原因，查询行为也会被记录。",
+  "Showing up to 200 actions. Leave the target empty for system, user and your own site actions, or enter a user/site ID or a system target such as expire-anonymous.": "最多显示 200 条操作。留空可查看系统、用户及你自己的站点操作；也可输入用户/站点 ID 或系统目标。",
+  "Assign owner": "分配所有者",
+  "Take down": "下架",
+  "Restore access": "恢复访问",
+  "Restore deleted site": "恢复已删除站点",
+  "Site actions": "站点操作",
+  "Site action completed.": "站点操作已完成。",
+  "Enter an exact site address, slug or ID to handle a report. This form does not browse or search other sites.": "输入完整站点地址、短标识或 ID 以处理反馈。此表单不会列出或搜索其他站点。",
+  "Site address, slug or ID": "站点地址、短标识或 ID",
+  "Load known site": "载入指定站点",
+  "Known site": "指定站点",
+  "Files permanently removed": "文件已永久移除",
+  "Active site": "正常站点",
+  "Keep this address or ID for later recovery. No deleted-site catalog is available.": "请保留此地址或 ID，以便日后恢复。后台不提供已删除站点列表。",
+  "Enter the verified email of an active account. Only an unowned site can be assigned.": "输入正常账号的已验证邮箱。只能分配没有所有者的站点。",
+  "This removes the site for everyone. Files remain recoverable only during the retention window.": "站点将对所有人不可用。文件仅在保留期限内可以恢复。",
+  "This changes access to the known site. The action and your reason are recorded.": "这将更改指定站点的访问状态。操作及原因会被记录。",
+  "Recipient email": "接收账号邮箱",
+  "Site actions shown here are your own. Other site audit records require an exact target ID.": "此处仅显示你本人执行的站点操作。查询其他站点审计记录需要提供完整目标 ID。",
+  "Manage a known site by its exact address or ID. The lookup requires a reason and is audited.": "通过完整地址或 ID 管理指定站点。查询时必须填写原因，并会记录审计。",
+
   "Pruned expired audit logs": "已清理过期审计日志",
   "Audit log retention (days)": "审计日志保留天数",
   "0 = keep forever. Applies to site, administrator and permission audit logs. Expired records are permanently deleted in maintenance batches; increasing retention cannot restore them.": "0 表示永久保留。适用于站点操作、管理员操作和权限审计日志。维护任务会分批永久删除过期记录；延长保留时间无法恢复已删除记录。",
@@ -15,11 +40,7 @@ export const admin: Messages = {
   "Rotate preview key": "轮换预览密钥",
   "Preview key rotated. All instances now use the new key.": "预览密钥已轮换，所有实例均已使用新密钥。",
 
-  "Assign owner": "分配所有者",
   "Assigned site owner": "已分配站点所有者",
-  "Assign owner for “{title}”": "为“{title}”分配所有者",
-  "Recipient email": "接收账号邮箱",
-  "Enter the verified email of an existing account. This gives that account full control of this unowned site and records the assignment in the audit log.": "输入已有账号的已验证邮箱。该账号将获得此无主站点的完整管理权限，分配操作会记入审计日志。",
   // Shell and navigation
   "Admin": "管理",
   "Administration": "管理",
@@ -34,7 +55,7 @@ export const admin: Messages = {
   "Anonymous sites": "匿名站点",
   "{n} disabled": "{n} 个已禁用",
   "{n} taken down": "{n} 个已下架",
-  "{n} deleted, restorable": "{n} 个已删除，可恢复",
+  "{n} deleted": "{n} 个已删除",
   "Recent administrative actions": "最近的管理操作",
   "Nothing yet.": "还没有。",
   "Last updated {when}": "更新于 {when}",
@@ -89,35 +110,10 @@ export const admin: Messages = {
   "e.g. Publishing spam sites": "例如：批量发布垃圾站点",
 
   // Sites
-  "Search title, address or owner e-mail": "搜索标题、地址或所有者邮箱",
-  "Search sites": "搜索站点",
-  "Site state": "站点状态",
-  "Live": "在线",
   "Taken down": "已下架",
   "Public": "公开",
-  "Purged": "已清理",
-  "Anonymous only": "只看匿名",
-  "Owner": "所有者",
-  "Kind": "类型",
-  "Visibility": "可见性",
   "Versions": "版本",
-  "Size": "大小",
   "Updated": "更新",
-  "Anonymous": "匿名",
-  "Take down": "下架",
-  "Restore": "恢复",
-  "No sites match.": "没有匹配的站点。",
-  "Take down “{title}”?": "下架「{title}」？",
-  "Visitors will see “This content has been removed by an administrator”. Share links stop working. The owner can still open it and save a copy; nothing is deleted, and you can restore it at any time.":
-    "访客会看到「该内容已被管理员移除」，分享链接失效。所有者仍能打开并另存一份；不删除任何东西，随时可以恢复。",
-  "Restore “{title}”?": "恢复「{title}」？",
-  "The site is served again to everyone its sharing settings allow.": "站点按其分享设置重新对外提供。",
-  "Delete “{title}”?": "删除「{title}」？",
-  "The site disappears for everyone, including its owner. Its files are kept for the retention window, so it can be restored from the “Deleted” view until then.":
-    "站点对所有人消失，包括所有者。文件在保留期内保留，在此之前可以从「已删除」视图恢复。",
-  "Restore deleted site “{title}”?": "恢复已删除站点「{title}」？",
-  "The site comes back at its old address with every version intact.": "站点在原地址回来，所有版本完好。",
-  "e.g. Phishing page reported by a user": "例如：用户举报的钓鱼页面",
 
   // System
   "Runtime": "运行时",
@@ -130,9 +126,6 @@ export const admin: Messages = {
   "Reconcile storage (dry run)": "回收存储孤儿（仅预演）",
   "Reconcile storage (delete orphans)": "回收存储孤儿（真正删除）",
   "dry run": "预演",
-  "Action log": "操作日志",
-  "Filter by user or site id": "按用户或站点 id 过滤",
-  "Filter the action log": "过滤操作日志",
 
   // Dialog
   "Reason (required)": "原因（必填）",

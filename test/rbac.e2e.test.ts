@@ -15,11 +15,11 @@ async function chooseAudience(page: Page, value: string) {
 }
 const base = process.env.RBAC_E2E_URL;
 let browser: Browser;
-async function actor() {
+async function actor(email?: string) {
   const user = await upsertUser({
     authProvider: "rbac-e2e",
     providerSubject: createId("test"),
-    email: `${createId("user")}@example.com`,
+    email: email ?? `${createId("user")}@example.com`,
     emailVerified: true,
   });
   const { cookie, session } = await mintSession(new Request(base!), user.id);
@@ -373,21 +373,203 @@ describe.skipIf(!base || !process.env.ARTIFACT_DATABASE_URL)(
         expect((await context.cookies()).filter(c => c.name.endsWith("ah_edit"))).toHaveLength(1);
       } finally { await context.close(); }
     });
+    it("recovers and manages a known site using only an email administrator session", async () => {
+      const administrator = await actor("sharing-admin@example.test"), recipient = await actor();
+      const created = await (await api("/api/sites", "", "POST", { mode: "paste", html: "<title>Known site recovery</title><body>Private</body>" })).json();
+      const [site] = await rbacQuery("SELECT id FROM sites WHERE slug=$1", [created.slug]);
+      const context = await browser.createBrowserContext();
+      const [name, value] = administrator.cookie.split("=");
+      await context.setCookie({ name, value, domain: new URL(base!).hostname, path: "/" });
+      const page = await context.newPage();
+      await page.setViewport({ width: 390, height: 844 });
+      await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
+      const catalogs: string[] = [], mutationIds: string[] = [];
+      page.on("request", request => {
+        const path = new URL(request.url()).pathname;
+        if (path === "/api/admin/sites") catalogs.push(request.url());
+        if (path.startsWith("/api/admin/sites/by-id/") && request.method() !== "GET") mutationIds.push(path.split("/")[5]);
+      });
+      const load = async (reference: string) => {
+        await page.goto(`${base}/admin/site-actions`, { waitUntil: "networkidle0" });
+        await page.type('.admin-known-site form label:first-of-type input', reference);
+        await page.type('.admin-known-site form label:nth-of-type(2) input', 'Reported ownership recovery');
+        await page.click('.admin-known-site form button');
+        await page.waitForSelector('.admin-known-result');
+      };
+      const action = async (label: string, input: string) => {
+        await page.$$eval('.admin-actions-row button', (buttons, text) => {
+          const button = buttons.find(button => button.textContent === text) as HTMLButtonElement | undefined;
+          if (!button) throw new Error(`Missing action: ${text}`);
+          button.click();
+        }, label);
+        await page.waitForSelector('dialog[open]');
+        if (label === 'Assign owner') {
+          await page.type('dialog[open] input[type="email"]', input);
+          await page.type('dialog[open] textarea', 'Verified ownership recovery #123');
+        } else await page.type('dialog[open] textarea', input);
+        await page.click('dialog[open] button[type="submit"]');
+        await page.waitForFunction(() => !document.querySelector('dialog[open]'));
+      };
+      try {
+        await load(`${base}/s/${created.slug}/docs/page.html`);
+        await action('Assign owner', recipient.user.email!);
+        expect((await rbacQuery("SELECT owner_id FROM sites WHERE id=$1", [String(site.id)]))[0].owner_id).toBe(recipient.user.id);
+        expect((await rbacQuery("SELECT reason FROM admin_log WHERE target_id=$1 AND action='site.assign_owner'", [String(site.id)]))[0].reason).toBe(`Verified ownership recovery #123 Assigned owner: ${recipient.user.id}`);
+        await action('Take down', 'Reported content');
+        await action('Restore access', 'Report cleared');
+        await action('Delete site', 'Recovery acceptance');
+        const audit = await (await api('/api/admin/log', administrator.cookie)).json();
+        const deletion = audit.entries.find((entry: { action: string; targetId: string }) => entry.action === 'site.delete' && entry.targetId === site.id);
+        expect(deletion).toBeTruthy();
+        await load(deletion.targetId);
+        await page.screenshot({ path: 'test-results/admin-known-site-mobile.png' });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await action('Restore deleted site', 'Undo mistaken deletion');
+        expect((await rbacQuery("SELECT deleted_at FROM sites WHERE id=$1", [String(site.id)]))[0].deleted_at).toBeNull();
+        expect(catalogs).toEqual([]);
+        expect(mutationIds).toEqual(Array(5).fill(site.id));
+      } finally { await context.close(); }
+    });
+
+    it("views 200 scoped audit entries, audits exact reads and refreshes after maintenance", async () => {
+      const administrator = await actor("sharing-admin@example.test");
+      const { insertAdminLog } = await import("@/lib/db");
+      const created = await (await api("/api/sites", "", "POST", { mode: "paste", html: "<title>Audit target</title><body>Known site</body>" })).json();
+      const [{ id: foreignSite }] = await rbacQuery("SELECT id FROM sites WHERE slug=$1", [created.slug]);
+      for (let index = 0; index < 205; index++) await insertAdminLog({ id: createId("adm"), actorKind: "system", actorUserId: null, action: "maintenance.sweep_uploads", targetKind: "system", targetId: "sweep-uploads", reason: `Audit browser ${index}`, ip: null, createdAt: Date.now() - 10000 + index });
+      await insertAdminLog({ id: createId("adm"), actorKind: "token", actorUserId: null, action: "site.view", targetKind: "site", targetId: String(foreignSite), reason: "Reported target audit", ip: null, createdAt: Date.now() });
+      const context = await browser.createBrowserContext();
+      const [name, value] = administrator.cookie.split("=");
+      await context.setCookie({ name, value, domain: new URL(base!).hostname, path: "/" });
+      const page = await context.newPage();
+      await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
+      const initialLog = page.waitForRequest(request => new URL(request.url()).pathname === "/api/admin/log");
+      const logRequests: { target: string | null; reason: string | undefined }[] = [];
+      await page.setRequestInterception(true);
+      page.on("request", request => {
+        const url = new URL(request.url());
+        if (url.pathname === "/api/admin/log") {
+          logRequests.push({ target: url.searchParams.get("target"), reason: request.headers()["x-management-reason"] });
+          if (logRequests.length === 1) return;
+        }
+        void request.continue();
+      });
+      const runMaintenance = async (label: string, refresh = true) => {
+        const refreshed = refresh ? page.waitForResponse(response => new URL(response.url()).pathname === "/api/admin/log") : null;
+        const completed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/admin/maintenance");
+        await page.$$eval('.admin-actions-row button', (buttons, text) => {
+          const button = buttons.find(button => button.textContent?.trim() === text) as HTMLButtonElement | undefined;
+          if (!button) throw new Error(`Missing maintenance task: ${text}`);
+          button.click();
+        }, label);
+        expect((await completed).status()).toBe(200);
+        if (refreshed) expect((await refreshed).status()).toBe(200);
+        await page.waitForSelector('.admin-table tbody tr');
+        await page.waitForFunction(() => !document.querySelector('.admin-actions-row button:disabled'));
+      };
+      try {
+        await page.goto(`${base}/admin/system`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('.admin-known-site ~ p[role="status"]', { timeout: 5000 });
+        expect(await page.$eval('.admin-known-site ~ p[role="status"]', el => el.textContent)).toContain('Loading');
+        expect(await page.$('.admin-table')).toBeNull();
+        await (await initialLog).continue();
+        await page.waitForSelector('.admin-table tbody tr');
+        expect(await page.$$eval('.admin-table tbody tr', rows => rows.length)).toBe(200);
+        expect(await page.$eval('.admin-table', el => el.textContent)).not.toContain(foreignSite);
+        await runMaintenance('Sweep abandoned uploads');
+        const [{ id: sweepId }] = await rbacQuery("SELECT id FROM admin_log WHERE actor_user_id=$1 AND action='maintenance.sweep_uploads' ORDER BY created_at DESC LIMIT 1", [administrator.user.id]);
+        expect((await (await api('/api/admin/log?limit=200', administrator.cookie)).json()).entries[0].id).toBe(sweepId);
+        expect(await page.$eval('.admin-table tbody tr:first-child', el => el.textContent)).not.toContain('Audit browser');
+        await runMaintenance('Index search text of existing sites');
+        expect(await page.$eval('.admin-table tbody tr:first-child', el => el.textContent)).toContain('Backfilled search text');
+        await page.type('.admin-known-site label:first-of-type input', String(foreignSite));
+        await page.type('.admin-known-site label:nth-of-type(2) input', 'Investigate reported activity');
+        await page.click('.admin-known-site button');
+        await page.waitForFunction(id => document.querySelector('.admin-table')?.textContent?.includes(id), {}, String(foreignSite));
+        expect(await page.$$eval('.admin-table tbody tr', rows => rows.length)).toBe(1);
+        expect(await page.$eval('.admin-table', el => el.textContent)).toContain('Reported target audit');
+        // Maintenance must not replay a reason-bearing site read, including backfill.
+        await page.type('.admin-known-site label:first-of-type input', '-draft');
+        const readsBeforeMaintenance = logRequests.length;
+        await runMaintenance('Sweep abandoned uploads', false);
+        await runMaintenance('Index search text of existing sites', false);
+        expect(logRequests).toHaveLength(readsBeforeMaintenance);
+        expect(logRequests.at(-1)).toEqual({ target: foreignSite, reason: encodeURIComponent('Investigate reported activity') });
+        expect(await page.$$eval('.admin-table tbody tr', rows => rows.length)).toBe(1);
+        const reads = await rbacQuery("SELECT reason FROM rbac_audit WHERE target_id=$1 AND actor_id=$2 AND action='site.audit.read'", [String(foreignSite), administrator.user.id]);
+        expect(reads).toEqual([{ reason: 'Investigate reported activity' }]);
+        await page.screenshot({ path: 'test-results/admin-exact-audit.png', fullPage: true });
+      } finally { await context.close(); }
+    });
+
+    it.each(["user", "system"] as const)("filters %s audit history without a site management reason", async kind => {
+      const administrator = await actor("sharing-admin@example.test");
+      const { insertAdminLog } = await import("@/lib/db");
+      const target = kind === "user" ? administrator.user.id : "expire-anonymous";
+      await insertAdminLog({ id: createId("adm"), actorKind: "token", actorUserId: null, action: kind === "user" ? "user.enable" : "maintenance.expire_anonymous", targetKind: kind, targetId: target, reason: "Reported event", ip: null, createdAt: Date.now() });
+      const context = await browser.createBrowserContext();
+      const [name, value] = administrator.cookie.split("=");
+      await context.setCookie({ name, value, domain: new URL(base!).hostname, path: "/" });
+      const page = await context.newPage();
+      await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
+      try {
+        await page.goto(`${base}/admin/system`, { waitUntil: "networkidle0" });
+        await page.type('.admin-known-site label:first-of-type input', target);
+        expect(await page.$eval('.admin-known-site label:nth-of-type(2) input', el => (el as HTMLInputElement).required)).toBe(false);
+        const loaded = page.waitForResponse(response => new URL(response.url()).searchParams.get('target') === target);
+        await page.click('.admin-known-site button');
+        const response = await loaded;
+        expect(response.status()).toBe(200);
+        expect(response.request().headers()['x-management-reason']).toBeUndefined();
+        await page.waitForFunction(() => document.querySelector('.admin-table')?.textContent?.includes('Reported event'));
+        expect(await page.$$eval('.admin-table tbody tr', rows => rows.length)).toBe(1);
+        expect(await rbacQuery("SELECT id FROM rbac_audit WHERE target_id=$1 AND action='site.audit.read'", [target])).toEqual([]);
+      } finally { await context.close(); }
+    });
+
+    it("keeps dropdown authorization selected while editing an independent exact lookup", async () => {
+      const administrator = await actor("sharing-admin@example.test");
+      const created = await (await api("/api/sites", administrator.cookie, "POST", { mode: "paste", html: "<title>Dropdown authorization</title><body>Owned site</body>" })).json();
+      const [{ id }] = await rbacQuery("SELECT id FROM sites WHERE slug=$1", [created.slug]);
+      const context = await browser.createBrowserContext();
+      const [name, value] = administrator.cookie.split("=");
+      await context.setCookie({ name, value, domain: new URL(base!).hostname, path: "/" });
+      const page = await context.newPage();
+      await page.setExtraHTTPHeaders({ "accept-language": "en-US" });
+      try {
+        await page.goto(`${base}/admin/authorization`, { waitUntil: "networkidle0" });
+        await page.select('.authorization-filters label:last-of-type select', String(id));
+        await page.type('.authorization-reason input', 'Review owned site access');
+        await page.click('.authorization-reason button');
+        await page.waitForSelector('.authorization-panel');
+        await page.type('.admin-known-site label:first-of-type input', `/s/${created.slug}`);
+        expect(await page.$('.authorization-panel')).not.toBeNull();
+        await page.type('.admin-known-site label:nth-of-type(2) input', 'Independent exact lookup');
+        expect(await page.$('.authorization-panel')).not.toBeNull();
+        expect(await page.$eval('.authorization-filters label:last-of-type select', el => (el as HTMLSelectElement).value)).toBe(id);
+        await page.click('.admin-known-site button');
+        await page.waitForSelector('.admin-known-site [role="status"]');
+        await page.waitForSelector('.authorization-panel');
+        await page.type('.admin-known-site label:nth-of-type(2) input', ' amended');
+        expect(await page.$('.authorization-panel')).toBeNull();
+        expect(await page.$eval('.authorization-filters label:last-of-type select', el => (el as HTMLSelectElement).value)).toBe('');
+      } finally { await context.close(); }
+    });
+
     it("manages global and individual grants in the authorization console", async () => {
-      const owner=await actor(), member=await actor();
+      const owner=await actor(), member=await actor(), administrator=await actor("sharing-admin@example.test");
       const created=await (await api("/api/sites",owner.cookie,"POST",{mode:"paste",html:"<html><title>Grant console acceptance</title><body>Private</body></html>"})).json();
-      const [site]=await rbacQuery("SELECT id FROM sites WHERE slug=$1",[created.slug]);
       await api(`/api/sites/${created.slug}/sharing`,owner.cookie,"PUT",{visibility:"private"});
       const context=await browser.createBrowserContext();
       const page=await context.newPage();
-      await page.setExtraHTTPHeaders({"accept-language":"en-US",authorization:`Bearer ${process.env.RBAC_E2E_ADMIN_TOKEN}`});
+      const [adminCookieName, adminCookieValue] = administrator.cookie.split("=");
+      await context.setCookie({ name: adminCookieName, value: adminCookieValue, domain: new URL(base!).hostname, path: "/" });
+      await page.setExtraHTTPHeaders({"accept-language":"en-US"});
       await page.setViewport({width:1440,height:1000});
       await page.goto(`${base}/admin/authorization`,{waitUntil:"networkidle0"});
-      await page.type('input[placeholder="Search by name"]','Grant console acceptance');
-      await page.waitForFunction(id=>Array.from(document.querySelectorAll('.authorization-filters select:last-child option')).some(o=>(o as HTMLOptionElement).value===id),{},site.id);
-      await page.select('.authorization-filters label:last-child select',site.id as string);
-      await page.type('input[placeholder="Why are you changing access?"]','Acceptance: exercise role grants');
-      await page.click('.authorization-reason button');
+      await page.type('.admin-known-site label:first-of-type input', `${base}/s/${created.slug}`);
+      await page.type('.admin-known-site label:nth-of-type(2) input', 'Acceptance: exercise role grants');
+      await page.click('.admin-known-site button');
       await page.waitForSelector('.authorization-panel .authorization-heading button');
       await page.click('.authorization-panel .authorization-heading button');
       await page.waitForSelector('dialog[open]');

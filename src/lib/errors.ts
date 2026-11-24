@@ -15,6 +15,15 @@ export class BadRequestError extends Error {
   }
 }
 
+/** A deliberately unavailable resource; keep existence-sensitive callers' messages uniform. */
+export class NotFoundError extends Error {
+  readonly statusCode = 404;
+  constructor(message = "Resource not found") {
+    super(message);
+    this.name = "NotFoundError";
+  }
+}
+
 /**
  * A per-owner cap was hit (sites or bytes). 403 with a machine-readable `code` and the numbers:
  * an agent can tell "delete something" from "you are not allowed", and a person sees how far over.

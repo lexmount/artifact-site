@@ -1,5 +1,6 @@
 import "server-only";
 import { managementReason } from "@/lib/management-reason";
+import { knownSite } from "@/lib/known-site";
 import { checkRateLimit, clientKey } from "@/lib/ratelimit";
 import { z } from "zod";
 import {
@@ -18,14 +19,14 @@ import {
   requireTenantManager,
   recordRbacAudit,
 } from "@/lib/rbac-access";
-import { BadRequestError } from "@/lib/errors";
+import { BadRequestError, NotFoundError } from "@/lib/errors";
 import {
   AuthError,
   EditForbiddenError,
   assertPresentedBearerAlive,
 } from "@/lib/auth";
 import { isTokenSession } from "@/lib/publish-token";
-import type { Session } from "@/lib/types";
+import type { Session, Site } from "@/lib/types";
 const id = z.string().min(1).max(200);
 export const resourceSchema = z
   .object({ type: z.enum(["site", "tenant"]), id })
@@ -63,7 +64,7 @@ function conflict(message: string): never {
   throw Object.assign(new Error(message), { statusCode: 409 });
 }
 function missing(): never {
-  throw Object.assign(new Error("Resource not found"), { statusCode: 404 });
+  throw new NotFoundError();
 }
 export function bindingResource(row: Row): Resource {
   return {
@@ -113,14 +114,14 @@ export async function authorizeResource(
   );
   if (!row) missing();
   const site = toSite(row);
-  await requirePermission(
+  const authority = await requirePermission(
     request,
     site,
     adminRole ? "site.admins.manage" : "site.members.manage",
     session,
     audit,
   );
-  return { tenantId: site.tenantId, site };
+  return { tenantId: site.tenantId, site, authority };
 }
 export async function listBindings(request: Request, resource: Resource) {
   const session = await resolveSession(request);
@@ -365,18 +366,38 @@ export async function authorizationResources(request: Request) {
   if (!session && !platform) throw new AuthError("Please sign in first");
   const p = new URL(request.url).searchParams,
     type = p.get("type") === "tenant" ? "tenant" : "site";
+  if (p.has("exact")) {
+    checkRateLimit(request);
+    if (type !== "site" || p.has("q") || p.has("cursor")) throw new BadRequestError("Exact site lookup cannot be combined with search or pagination");
+    if (!managementReason(request)) throw new BadRequestError("A management reason is required");
+    let site: Site;
+    let elevated = false;
+    try {
+      site = await knownSite(request, p.get("exact")!);
+      const authorized = await authorizeResource(request, { type: "site", id: site.id }, session, false, false);
+      elevated = authorized.authority?.source === "management" || authorized.authority?.source === "operator";
+    } catch (error) {
+      // A supplied identifier must not reveal existence, deletion or management eligibility.
+      if (error && typeof error === "object" && "statusCode" in error && [400, 403, 404].includes(Number(error.statusCode))) missing();
+      throw error;
+    }
+    await recordRbacAudit(rbacQuery, site.tenantId, session?.userId ?? null, elevated ? "site.management" : "site.lookup", site.id, managementReason(request)!);
+    return { resources: [{ id: site.id, name: site.title, slug: site.slug, tenant_id: site.tenantId }], nextCursor: null };
+  }
   const offset = pageOffset(request);
   const term =
     searchPattern(p.get("q") ?? "");
   const uid = session?.userId ?? "";
   const management = !session || !isTokenSession(session);
-  const filter = platform
+  // Management authority can act on a known resource; it must not discover unrelated sites.
+  // Site choices require ownership or a direct user site-administrator grant, not group grants.
+  const filter = type === "tenant" && platform
     ? "1=1"
     : type === "tenant" && !management
       ? "1=0"
       : type === "tenant"
         ? "EXISTS(SELECT 1 FROM authorization_tenant_members m WHERE m.tenant_id=r.id AND m.user_id=$2 AND m.role='admin')"
-        : `((r.owner_id=$2 AND EXISTS(SELECT 1 FROM tenant_members m WHERE m.tenant_id=r.tenant_id AND m.user_id=$2)) OR EXISTS(SELECT 1 FROM authorization_site_members m WHERE m.site_id=r.id AND m.user_id=$2 AND m.role='admin') ${management ? "OR EXISTS(SELECT 1 FROM authorization_tenant_members m WHERE m.tenant_id=r.tenant_id AND m.user_id=$2 AND m.role='admin')" : ""})`;
+        : "((r.owner_id=$2 AND EXISTS(SELECT 1 FROM tenant_members m WHERE m.tenant_id=r.tenant_id AND m.user_id=$2)) OR EXISTS(SELECT 1 FROM authorization_site_members m WHERE m.site_id=r.id AND m.user_id=$2 AND m.subject_type='user' AND m.role='admin'))";
   // Always bind user ID, including the platform path, to keep placeholder numbering portable.
   const rows = await rbacQuery(
     `SELECT r.id,${type === "tenant" ? "r.name" : "r.title AS name,r.slug,r.tenant_id"} FROM ${type === "tenant" ? "tenants" : "sites"} r WHERE ${type === "tenant" ? "r.disabled_at IS NULL AND r.id<>'anonymous'" : "r.deleted_at IS NULL AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=r.tenant_id AND t.disabled_at IS NULL)"} AND LOWER(${type === "tenant" ? "r.name" : "r.title"}) LIKE LOWER($1) ESCAPE '!' AND (CAST($2 AS TEXT) IS NOT NULL) AND (${filter}) ORDER BY r.id LIMIT 51 OFFSET $3`,

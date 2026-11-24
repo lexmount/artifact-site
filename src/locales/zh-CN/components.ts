@@ -199,7 +199,6 @@ export const components: Messages = {
   "Currently viewing": "当前查看",
   "Version": "版本",
   "Current version": "当前版本",
-  "Administrative downloads are recorded in the audit log.": "管理员下载会记录在审计日志中。",
   "Downloads the saved version selected here.": "下载此处选中的已保存版本。",
   "Choose a historical version": "选择历史版本",
   "Failed to download": "下载失败",

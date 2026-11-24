@@ -1,6 +1,6 @@
 "use client";
 
-// The console's four views. Same tab strip as "My sites" (hm-tabs), driven by the route rather
+// The console's views. Same tab strip as "My sites" (hm-tabs), driven by the route rather
 // than by state so every view has an address an operator can bookmark or send.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -10,7 +10,7 @@ const TABS = [
   { href: "/admin", label: "Overview" },
   { href: "/admin/users", label: "Users" },
   { href: "/admin/tenants", label: "Tenant management" },
-  { href: "/admin/sites", label: "Sites" },
+  { href: "/admin/site-actions", label: "Site actions" },
   { href: "/admin/authorization", label: "Authorization" },
   { href: "/admin/settings", label: "Settings" },
   { href: "/admin/system", label: "System" },

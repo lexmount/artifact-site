@@ -118,32 +118,30 @@ describe.skipIf(!base)("agent connection guide", () => {
     await page.close();
   });
 
-  it.skipIf(!process.env.MCP_E2E_TOKEN)("assigns an unowned site from the admin menu", async () => {
+  it.skipIf(!process.env.MCP_E2E_TOKEN)("removes global site browsing from the administration console", async () => {
     const page = await browser.newPage();
     await page.setViewport({ width: 390, height: 844 });
     await page.setExtraHTTPHeaders({ "accept-language": "en-US", authorization: `Bearer ${process.env.MCP_E2E_TOKEN}` });
-    await page.setRequestInterception(true);
-    let assigned = false;
-    let submitted = "";
-    page.on("request", (request) => {
-      if (request.url().endsWith("/api/admin/sites/fixture/owner")) {
-        submitted = JSON.parse(request.postData()!).email; assigned = true;
-        return void request.respond({ contentType: "application/json", body: JSON.stringify({ ok: true, ownerId: "recipient" }) });
-      }
-      if (request.url().includes("/api/admin/sites?")) return void request.respond({ contentType: "application/json", body: JSON.stringify({ total: 1, sites: [{ id: "fixture", slug: "fixture", title: "Recovered report", kind: "single", visibility: "private", anonymous: !assigned, ownerId: assigned ? "recipient" : null, ownerEmail: assigned ? "recipient@example.net" : null, createdAt: Date.now(), updatedAt: Date.now(), byteTotal: 100, versionCount: 1 }] }) });
-      void request.continue();
+    const requests: string[] = [];
+    page.on("request", request => requests.push(new URL(request.url()).pathname));
+    await page.goto(`${base}/admin`, { waitUntil: "networkidle0" });
+    await page.waitForSelector(".admin-tiles");
+    expect(await page.$$eval('.admin-tile', nodes => nodes.length)).toBe(4);
+    expect(await page.$('a[href*="/admin/sites"]')).toBeNull();
+    expect(await page.evaluate(() => document.body.innerText)).toContain("Recent administrative actions");
+    const logResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/admin/log");
+    await page.goto(`${base}/admin/system`, { waitUntil: "networkidle0" });
+    expect(await page.evaluate(() => document.body.innerText)).toContain("Maintenance");
+    expect(await page.$('.admin-known-site input')).not.toBeNull();
+    expect(((await (await logResponse).json()).entries as { targetKind: string }[]).every(entry => entry.targetKind !== "site")).toBe(true);
+    expect(requests).not.toContain("/api/admin/sites");
+    expect(requests).toContain("/api/admin/log");
+    expect((await page.goto(`${base}/admin/sites`))?.status()).toBe(404);
+    const retired = await fetch(`${base}/api/admin/sites?state=deleted`, {
+      headers: { authorization: `Bearer ${process.env.MCP_E2E_TOKEN}` },
     });
-    await page.goto(`${base}/admin/sites`, { waitUntil: "networkidle0" });
-    await page.click('button[aria-label="Actions"]');
-    const action = await page.waitForSelector('::-p-text(Assign owner)'); await action!.click();
-    await page.waitForSelector('dialog[open] input[type="email"]');
-    await page.type('dialog[open] input[type="email"]', "recipient@example.net");
-    expect(await page.$eval('dialog[open]', (el) => el.getBoundingClientRect().width)).toBeLessThanOrEqual(390);
-    await page.screenshot({ path: "test-results/assign-owner-mobile.png" });
-    await page.click('dialog[open] button[type="submit"]');
-    await page.waitForSelector('dialog:not([open])');
-    expect(submitted).toBe("recipient@example.net");
-    await page.waitForFunction(() => document.body.innerText.includes("recipient@example.net"));
+    expect(retired.status).toBe(410);
+    expect(await retired.json()).toEqual({ error: "Administrative site listing is no longer available" });
     await page.close();
   });
 

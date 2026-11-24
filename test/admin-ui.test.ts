@@ -3,7 +3,7 @@
 // surfaces exist on the site page, the share page and the site cards — and every string the
 // console shows has a Chinese entry, so the UI never falls back to English mid-screen.
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zhCN } from "@/locales/zh-CN";
@@ -31,10 +31,17 @@ describe("/admin gate and entry", () => {
     expect(read("src/lib/auth-store.ts")).toContain("isAdmin: Boolean(body.isAdmin)");
   });
   it("every console view is a client page under the gated layout", () => {
-    for (const page of ["page", "users/page", "sites/page", "settings/page", "system/page"]) {
+    for (const page of ["page", "users/page", "settings/page", "system/page"]) {
       expect(read(`src/app/admin/${page}.tsx`).startsWith('"use client"')).toBe(true);
     }
   });
+});
+
+it("removes the global site page and all console links to it", () => {
+  expect(existsSync(abs("src/app/admin/sites/page.tsx"))).toBe(false);
+  for (const file of [...walk(abs("src/app/admin")), ...walk(abs("src/components/admin"))]) {
+    expect(readFileSync(file, "utf8")).not.toMatch(/href=["']\/admin\/sites/);
+  }
 });
 
 describe("take-down surfaces outside the console", () => {
@@ -89,7 +96,7 @@ describe("every console string has a Chinese translation", () => {
   it("the action-log labels and the nav / state labels resolve too (they go through t(variable))", () => {
     const labels = ["An administrator opened this site", "Taken down by an administrator", "Restored by an administrator", "Deleted by an administrator", "Deleted site restored by an administrator",
       "Disabled account", "Re-enabled account", "Took site down", "Restored site", "Deleted site", "Restored deleted site",
-      "Purged deleted sites", "Swept upload sessions", "Reconciled storage", "Expired anonymous sites", "Changed settings", "Overview", "Users", "Sites", "Settings", "System", "Live", "Taken down", "Deleted", "Public", "Private", "Unlisted"];
+      "Purged deleted sites", "Swept upload sessions", "Reconciled storage", "Expired anonymous sites", "Changed settings", "Overview", "Users", "Sites", "Settings", "System", "Taken down", "Deleted", "Public", "Private", "Unlisted"];
     expect(labels.filter((l) => !(l in zhCN))).toEqual([]);
   });
 });

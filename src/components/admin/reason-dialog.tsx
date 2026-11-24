@@ -8,33 +8,33 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useT } from "@/components/locale-provider";
 
-export default function ReasonDialog({ open, title, body, reasonRequired = false, reasonHint, inputLabel, inputType, confirmLabel, danger = false, onConfirm, onClose }: {
+export default function ReasonDialog({ open, title, body, reasonRequired = false, reasonHint, emailRequired = false, confirmLabel, danger = false, onConfirm, onClose }: {
   open: boolean;
   title: string;
   body: string;
   reasonRequired?: boolean;
   reasonHint?: string;
-  inputLabel?: string;
-  inputType?: "email";
+  emailRequired?: boolean;
   confirmLabel: string;
   danger?: boolean;
-  onConfirm: (reason: string) => Promise<void>;
+  onConfirm: (reason: string, email?: string) => Promise<void>;
   onClose: () => void;
 }) {
   const t = useT();
   const ref = useRef<HTMLDialogElement>(null);
   const [reason, setReason] = useState("");
+  const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (open && !el.open) { setReason(""); setError(null); el.showModal(); }
+    if (open && !el.open) { setReason(""); setEmail(""); setError(null); el.showModal(); }
     else if (!open && el.open) el.close();
   }, [open]);
 
-  const canConfirm = !busy && (!reasonRequired || reason.trim().length > 0);
+  const canConfirm = !busy && (!reasonRequired || reason.trim().length > 0) && (!emailRequired || email.trim().length > 0);
 
   return (
     <dialog ref={ref} className="admin-dialog" onClose={onClose} onCancel={(e) => { if (busy) e.preventDefault(); }}>
@@ -44,16 +44,17 @@ export default function ReasonDialog({ open, title, body, reasonRequired = false
           e.preventDefault();
           if (!canConfirm) return;
           setBusy(true); setError(null);
-          try { await onConfirm(reason.trim()); onClose(); }
+          try { await onConfirm(reason.trim(), emailRequired ? email.trim() : undefined); onClose(); }
           catch (err) { setError(err instanceof Error ? err.message : String(err)); }
           finally { setBusy(false); }
         }}
       >
         <h2>{title}</h2>
         <p>{body}</p>
+        {emailRequired && <label><span>{t("Recipient email")}</span><input type="email" required value={email} onChange={e => setEmail(e.target.value)} maxLength={254} autoFocus /></label>}
         <label>
-          <span>{inputLabel ?? (reasonRequired ? t("Reason (required)") : t("Reason (optional)"))}</span>
-          {inputType ? <input type={inputType} required value={reason} onChange={(e) => setReason(e.target.value)} maxLength={254} autoFocus /> : <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={500} placeholder={reasonHint} autoFocus />}
+          <span>{reasonRequired ? t("Reason (required)") : t("Reason (optional)")}</span>
+          <textarea required={reasonRequired} value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={500} placeholder={reasonHint} autoFocus={!emailRequired} />
         </label>
         {error && <p className="drawer-error" role="alert">{error}</p>}
         <div className="admin-dialog-actions">

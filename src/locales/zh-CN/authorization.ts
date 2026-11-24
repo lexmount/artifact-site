@@ -31,7 +31,7 @@ export const authorization: Messages = {
   "Manage content, sharing and ordinary grants. Cannot transfer ownership or appoint administrators.": "可管理内容、分享和普通授权，不可转移所有权或任命管理员。",
   "Manage workspace members and administer its sites with a recorded reason.": "可管理租户成员，并在填写原因后管理租户内作品。",
   "This includes people outside your workspace. Commenting and editing require sign-in. Anonymous visitors can only read.": "此范围包含租户外用户。评论和编辑需要登录，匿名访客仅可查看。",
-  "Choose a site or workspace, then assign roles to its members or a wider audience.": "选择作品或租户，为指定成员或更大范围的主体授予角色。",
+  "Choose a site you own or have been directly granted administrator access to, or a workspace, then assign roles.": "选择你拥有或直接授予你个人管理权限的作品，或选择租户，然后分配角色。",
   "Resource type": "客体类型",
   "Find resource": "查找客体",
   "Search by name": "按名称搜索",

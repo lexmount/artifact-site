@@ -24,22 +24,21 @@ export default function AdminOverviewPage() {
   if (error) return <p className="drawer-error" role="alert">{error}</p>;
   if (!data) return <p className="drawer-note"><Loader2 size={14} className="spin" /> {t("Loading…")}</p>;
   const o = data.payload.overview;
-  const tiles: { label: string; value: string; href: string; note?: string }[] = [
+  const tiles: { label: string; value: string; href?: string; note?: string }[] = [
     { label: t("Users"), value: String(o.users), href: "/admin/users", note: o.disabledUsers ? t("{n} disabled", { n: String(o.disabledUsers) }) : undefined },
-    { label: t("Sites"), value: String(o.sites), href: "/admin/sites", note: o.takenDownSites ? t("{n} taken down", { n: String(o.takenDownSites) }) : undefined },
-    { label: t("Storage"), value: formatBytes(o.byteTotal), href: "/admin/sites", note: o.deletedSites ? t("{n} deleted, restorable", { n: String(o.deletedSites) }) : undefined },
-    { label: t("Anonymous sites"), value: String(o.anonymousSites), href: "/admin/sites?anonymous=1" },
+    { label: t("Sites"), value: String(o.sites), note: o.takenDownSites ? t("{n} taken down", { n: String(o.takenDownSites) }) : undefined },
+    { label: t("Storage"), value: formatBytes(o.byteTotal), note: o.deletedSites ? t("{n} deleted", { n: String(o.deletedSites) }) : undefined },
+    { label: t("Anonymous sites"), value: String(o.anonymousSites) },
   ];
   return (
     <>
       <div className="admin-tiles">
-        {tiles.map((tile) => (
-          <Link key={tile.label} href={tile.href} className="admin-tile">
-            <small>{tile.label}</small>
-            <strong>{tile.value}</strong>
-            {tile.note && <span>{tile.note}</span>}
-          </Link>
-        ))}
+        {tiles.map((tile) => {
+          const content = <><small>{tile.label}</small><strong>{tile.value}</strong>{tile.note && <span>{tile.note}</span>}</>;
+          return tile.href
+            ? <Link key={tile.label} href={tile.href} className="admin-tile">{content}</Link>
+            : <div key={tile.label} className="admin-tile">{content}</div>;
+        })}
       </div>
       {data.payload.runtime.warnings.length > 0 && (
         <div className="admin-warnings" role="status">
@@ -47,6 +46,7 @@ export default function AdminOverviewPage() {
         </div>
       )}
       <h2 className="admin-h2">{t("Recent administrative actions")}</h2>
+      <p className="drawer-note">{t("Site actions shown here are your own. Other site audit records require an exact target ID.")}</p>
       <ActionLog entries={data.payload.recent} emptyText={t("Nothing yet.")} />
       <p className="drawer-note">{t("Last updated {when}", { when: formatWhen(data.loadedAt, locale) })}</p>
     </>
