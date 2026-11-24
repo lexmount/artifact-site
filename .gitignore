@@ -29,3 +29,7 @@ tsconfig.tsbuildinfo
 
 
 /dist-archive/
+
+# Generated skill release assets and npm package copy.
+dist-skill/
+cli/skill/

@@ -1,0 +1,52 @@
+[
+  {
+    "id": "overview",
+    "title": "Intent and workflow",
+    "when": "Identify the work and requested audience."
+  },
+  {
+    "id": "auth",
+    "title": "Authentication",
+    "when": "Connect, recover expired authorization, or transfer anonymous ownership."
+  },
+  {
+    "id": "publish",
+    "title": "Publishing and updates",
+    "when": "Publish a new work, replace content, or upload a large package."
+  },
+  {
+    "id": "runtime",
+    "title": "Hosted runtime",
+    "when": "Build or modify HTML, choose asset paths, and check limits."
+  },
+  {
+    "id": "sharing",
+    "title": "Sharing and delivery",
+    "when": "Change access, return links, or manage official versions."
+  },
+  {
+    "id": "recovery",
+    "title": "Recovery and freshness",
+    "when": "Check documentation versions or recover an uncertain operation."
+  },
+  {
+    "id": "library",
+    "title": "Finding and organizing",
+    "when": "Find, read, organize, or download existing work."
+  },
+  {
+    "id": "comments",
+    "title": "Comment-driven revisions",
+    "when": "Read feedback and revise the same work."
+  },
+  {
+    "id": "data",
+    "title": "Named data and snapshots",
+    "when": "Update chart values, download originals, or export saved data."
+  },
+  {
+    "id": "records",
+    "title": "Forms and record collections",
+    "when": "Build forms or manage accumulated records."
+  }
+]

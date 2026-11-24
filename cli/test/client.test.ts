@@ -19,6 +19,21 @@ beforeAll(async () => {
 afterAll(() => server.close());
 
 describe("ArtifactSiteClient", () => {
+  it("authenticates download grants without forwarding platform credentials to storage", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const transport = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      if (calls.length === 1) return Response.json({ url: "https://files.example.com/report?signature=short", filename: "report.html" }, { headers: { "x-artifact-version": "ver_1" } });
+      return new Response("original file");
+    }) as typeof fetch;
+    const direct = new ArtifactSiteClient({ baseUrl: "https://app.example.com", token: "secret", shareToken: "share-secret", fetch: transport });
+    const result = await direct.download("test", "ver_1", "report.html");
+    expect(result).toMatchObject({ filename: "report.html", versionId: "ver_1" });
+    expect(new TextDecoder().decode(result.bytes)).toBe("original file");
+    expect(new Headers(calls[0].init?.headers).get("authorization")).toBe("Bearer secret");
+    expect(calls[0].url).toContain("file=report.html");
+    expect(calls[1].init).toEqual({ credentials: "omit", referrerPolicy: "no-referrer" });
+  });
   it("normalises the base URL and builds absolute links from API-relative ones", () => {
     expect(client.baseUrl).toBe(server.url);
     expect(client.absolute("/s/abc")).toBe(`${server.url}/s/abc`);
@@ -220,4 +235,21 @@ it("retains a subpath once in API-returned links and API requests", async () => 
   expect(client.absolute("https://other.example/v/share")).toBe("https://other.example/v/share");
   await client.me();
   expect(requested).toBe(`${base}/api/auth/me`);
+});
+
+it("preserves an accepted moderation request without inventing a share URL", async () => {
+  const moderation = { pending: true, reviewId: "rev-test", requestId: "exp-test", status: "queued" };
+  const pendingClient = new ArtifactSiteClient({ baseUrl: "http://moderation.test", token: "test", fetch: async () => new Response(JSON.stringify({moderation,passcode:"ABC234"}),{status:202,headers:{"content-type":"application/json"}}) });
+  const result = await pendingClient.createShare("example",{policy:"passcode"});
+  expect(result.moderation).toEqual(moderation);
+  expect(result.url).toBeUndefined();
+  expect(result.passcode).toBe("ABC234");
+});
+it("sends a bounded CLI reporting hint only when requested by the CLI entrypoint", async () => {
+  const headers: Headers[] = [];
+  const fakeFetch: typeof fetch = async (_url, init) => { headers.push(new Headers(init?.headers)); return Response.json({ user: null, oidcEnabled: false }); };
+  await new ArtifactSiteClient({ baseUrl: "https://client.test", token: "test-token", fetch: fakeFetch }).me();
+  await new ArtifactSiteClient({ baseUrl: "https://client.test", token: "test-token", channel: "cli", fetch: fakeFetch }).me();
+  expect(headers.map(h => h.get("x-artifact-client"))).toEqual([null, "cli"]);
+  expect(headers.map(h => h.get("authorization"))).toEqual(["Bearer test-token", "Bearer test-token"]);
 });

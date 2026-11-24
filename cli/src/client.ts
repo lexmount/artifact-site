@@ -7,18 +7,22 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat, open } from "node:fs/promises";
 import { Readable } from "node:stream";
+import { saveDownload } from "./download-file.js";
+import { setTimeout as delay } from "node:timers/promises";
 
 export interface PackageJob {
   versionId: string; status: "queued" | "processing" | "failed" | "completed";
   stage: string; processedFiles: number; totalFiles: number | null; retryable: boolean;
   error?: string; result?: VersionResult;
 }
+export interface DataPublication { dataCollections?: Record<string, Record<string, unknown>>; dataContract?: Record<string, Record<string, unknown>>; dataChanges?: { name: string; expectedRevision: number; value: unknown }[] }
 export type SiteKind = "single" | "folder" | "document";
 export type SharePolicy = "public" | "login" | "people" | "email" | "passcode";
 
 export type Visibility = "private" | "unlisted" | "public";
 export interface CreatedSite {
   visibility?: Visibility;
+  moderation?: PendingModeration;
   officialVersionId?: string | null; officialRevision?: number; versionId?: string;
   slug: string;
   url: string;
@@ -30,6 +34,7 @@ export interface CreatedSite {
 
 export interface VersionResult {
   visibility?: Visibility;
+  moderation?: PendingModeration;
   officialVersionId?: string | null; officialRevision?: number;
   slug: string;
   url: string;
@@ -55,12 +60,11 @@ export interface VersionRow { id: string; createdAt: number; source?: string; fi
 
 export interface SiteRow { slug: string; title: string; kind: SiteKind; visibility?: string; updatedAt?: number; createdAt?: number }
 
-export interface ShareResult {
+export type PendingModeration = { pending: true; requestId: string; reviewId: string; status: string };
+export type ShareResult = {
   share: { id: string; policy: SharePolicy; label?: string | null; expiresAt?: number | null };
-  token: string;
-  url: string;
-  passcode?: string;
-}
+  token: string; url: string; passcode?: string; moderation?: never;
+} | { moderation: PendingModeration; share?: never; token?: never; url?: never; passcode?: string };
 
 export interface DeviceStart {
   device_code: string;
@@ -78,7 +82,7 @@ export type DevicePoll =
   | { status: "approved"; token: string; user: { email?: string; id?: string } };
 
 export interface Folder { id: string; name: string; createdAt: number }
-export interface Me { operator?: boolean; uploadLimits?: UploadLimits; user: { id: string; email?: string; displayName?: string } | null; oidcEnabled: boolean }
+export interface Me { operator?: boolean; uploadLimits?: UploadLimits; user: { id: string; email?: string; displayName?: string } | null; oidcEnabled: boolean; authEnabled?: boolean }
 
 /** An HTTP-level failure. `status` is the code, `message` the server's `{error}` text when it sent one. */
 export class ApiError extends Error {
@@ -99,6 +103,8 @@ export class ApiError extends Error {
 }
 
 export interface ClientOptions {
+  /** Optional transport hint for analytics; never an authentication credential. */
+  channel?: "cli";
   tenantId?: string;
   shareToken?: string;
   baseUrl: string;
@@ -137,30 +143,32 @@ export class ArtifactSiteClient {
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
-  async commitPackage(versionId: string, title?: string, expectedVersion?: string, official?: boolean, say?: (line: string) => void): Promise<VersionResult> {
-    const job = await this.json<PackageJob>("POST", `/api/uploads/${enc(versionId)}/commit`, { body: { title, official }, query: { async: "1", expected_version: expectedVersion } });
+  async commitPackage(versionId: string, title?: string, expectedVersion?: string, official?: boolean, say?: (line: string) => void, data: DataPublication = {}): Promise<VersionResult> {
+    const job = await this.json<PackageJob>("POST", `/api/uploads/${enc(versionId)}/commit`, { body: { title, official, ...dataFields(data) }, query: { async: "1", expected_version: expectedVersion } });
     say?.(`Package accepted for processing. Upload ID: ${versionId}; closing the CLI does not cancel it.`);
     if (job.status === "completed" && job.result) return job.result;
     return this.waitForPackage(versionId, say);
   }
   uploadStatus(versionId: string): Promise<{ files: { relpath: string; bytes: number; sha256?: string }[]; expiresAt: number }> { return this.json("GET", `/api/uploads/${enc(versionId)}`); }
 
+  private readonly channel?: "cli";
   private readonly token: string | null;
   private tenantId?: string;
   private shareToken?: string;
   private anonCookie: string | undefined;
   private readonly fetchImpl: typeof fetch;
   private readonly retries: number;
-  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 
   constructor(opts: ClientOptions) {
+    this.channel = opts.channel;
     this.tenantId = opts.tenantId;
     this.shareToken = opts.shareToken;
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.token = opts.token ?? null;
     this.fetchImpl = opts.fetch ?? fetch;
     this.retries = opts.retries ?? 3;
-    this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.sleep = opts.sleep ?? ((ms, signal) => delay(ms, undefined, { signal }));
   }
 
   setContext(context: {tenantId?:string;shareToken?:string}): this {
@@ -206,18 +214,18 @@ export class ArtifactSiteClient {
 
   // ---- sites ---------------------------------------------------------------------------------
 
-  createPaste(html: string, title?: string, official?: boolean): Promise<CreatedSite> {
-    return this.json("POST", "/api/sites", { body: { mode: "paste", html, title, official } });
+  createPaste(html: string, title?: string, official?: boolean, data: DataPublication = {}): Promise<CreatedSite> {
+    return this.json("POST", "/api/sites", { body: { mode: "paste", html, title, official, ...dataFields(data) } });
   }
   /** One-shot upload of a single file (HTML or a document) — byte-clean via multipart. */
-  createFile(filename: string, bytes: Uint8Array, title?: string, official?: boolean): Promise<CreatedSite> {
-    return this.json("POST", "/api/sites", { form: withOfficial(withTitle(multipart("file", filename, bytes), title), official) });
+  createFile(filename: string, bytes: Uint8Array, title?: string, official?: boolean, data: DataPublication = {}): Promise<CreatedSite> {
+    return this.json("POST", "/api/sites", { form: withOfficial(withTitle(multipart("file", filename, bytes), title), official, data) });
   }
-  createZip(bytes: Uint8Array, title?: string, official?: boolean): Promise<CreatedSite> {
-    return this.json("POST", "/api/sites", { form: withOfficial(withTitle(multipart("zip", "site.zip", bytes), title), official) });
+  createZip(bytes: Uint8Array, title?: string, official?: boolean, data: DataPublication = {}): Promise<CreatedSite> {
+    return this.json("POST", "/api/sites", { form: withOfficial(withTitle(multipart("zip", "site.zip", bytes), title), official, data) });
   }
   getOfficial(slug: string): Promise<{ officialVersionId: string | null; officialRevision?: number }> { return this.json("GET", `/api/sites/${enc(slug)}/official`); }
-  setOfficial(slug: string, versionId: string | null, expectedRevision?: number): Promise<{ officialVersionId: string | null; previousOfficialVersionId: string | null }> { return this.json(versionId ? "PUT" : "DELETE", `/api/sites/${enc(slug)}/official`, { body: { versionId: versionId ?? undefined, expectedRevision } }); }
+  setOfficial(slug: string, versionId: string | null, expectedRevision?: number): Promise<{ moderation?: PendingModeration; officialVersionId: string | null; previousOfficialVersionId: string | null }> { return this.json(versionId ? "PUT" : "DELETE", `/api/sites/${enc(slug)}/official`, { body: { versionId: versionId ?? undefined, expectedRevision } }); }
   getSite(slug: string): Promise<SiteInfo> { return this.json("GET", `/api/sites/${enc(slug)}`); }
   listVersions(slug: string): Promise<{ versions: VersionRow[]; currentVersionId: string }> {
     return this.json("GET", `/api/sites/${enc(slug)}/versions`);
@@ -228,32 +236,109 @@ export class ArtifactSiteClient {
     return this.json("PUT", "/api/me/folders/assignments", { body: { slug, folderId } });
   }
   mySites(): Promise<{ owned: SiteRow[]; collaborating: SiteRow[] }> { return this.json("GET", "/api/me/sites"); }
-  rename(slug: string, title: string): Promise<{ slug: string; title: string }> {
+  rename(slug: string, title: string): Promise<{ moderation?: PendingModeration; slug: string; title: string }> {
     return this.json("PATCH", `/api/sites/${enc(slug)}`, { body: { title } });
   }
   delete(slug: string): Promise<{ deleted: true; slug: string }> { return this.json("DELETE", `/api/sites/${enc(slug)}`); }
-  rollback(slug: string, versionId: string): Promise<VersionResult> {
-    return this.json("POST", `/api/sites/${enc(slug)}/rollback`, { body: { versionId } });
+  rollback(slug: string, versionId: string, expectedVersion?: string, dataChanges?: DataPublication["dataChanges"]): Promise<VersionResult> {
+    return this.json("POST", `/api/sites/${enc(slug)}/rollback`, { body: { versionId, dataChanges }, query: { expected_version: expectedVersion } });
   }
   fork(slug: string): Promise<CreatedSite> { return this.json("POST", `/api/sites/${enc(slug)}/fork`); }
 
   // ---- changing content ---------------------------------------------------------------------
 
   /** kind=single: `content` replaces the page; kind=folder: `path` + `content` replaces one file. */
-  edit(slug: string, change: { content: string; path?: string }, expectedVersion?: string): Promise<VersionResult> {
+  edit(slug: string, change: { content: string; path?: string } & DataPublication, expectedVersion?: string): Promise<VersionResult> {
     return this.json("POST", `/api/sites/${enc(slug)}/edit`, { body: change, query: { expected_version: expectedVersion } });
   }
   /** Whole-tree replacement for a folder site (zip) — or the new file of a document site. */
-  replaceWithZip(slug: string, bytes: Uint8Array, expectedVersion?: string, official?: boolean): Promise<VersionResult> {
-    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("zip", "site.zip", bytes), official), query: { expected_version: expectedVersion } });
+  replaceWithZip(slug: string, bytes: Uint8Array, expectedVersion?: string, official?: boolean, data: DataPublication = {}): Promise<VersionResult> {
+    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("zip", "site.zip", bytes), official, data), query: { expected_version: expectedVersion } });
   }
-  replaceWithFile(slug: string, filename: string, bytes: Uint8Array, expectedVersion?: string, official?: boolean): Promise<VersionResult> {
-    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("file", filename, bytes), official), query: { expected_version: expectedVersion } });
+  replaceWithFile(slug: string, filename: string, bytes: Uint8Array, expectedVersion?: string, official?: boolean, data: DataPublication = {}): Promise<VersionResult> {
+    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("file", filename, bytes), official, data), query: { expected_version: expectedVersion } });
   }
-  /** The current version as a zip, plus the version id to pass back as `expected_version`. */
+  /** Legacy method name: `zip` contains original bytes, not a newly assembled archive.
+   * Prefer download(), which also returns the original filename. */
   async export(slug: string, versionId?: string): Promise<{ zip: Uint8Array; versionId: string | null }> {
     const res = await this.request("GET", `/api/sites/${enc(slug)}/export`, {query:{version_id:versionId}});
-    return { zip: new Uint8Array(await res.arrayBuffer()), versionId: res.headers.get("x-artifact-version") };
+    const result = await this.originalDownload(res, slug);
+    return { zip: result.bytes, versionId: result.versionId };
+  }
+
+  collections(slug: string): Promise<Record<string, unknown>> { return this.json("GET", `/api/sites/${enc(slug)}/collections`); }
+  collectionAccess(slug: string, name: string, expectedVersion: string, body: unknown): Promise<Record<string, unknown>> { return this.json("PATCH", `/api/sites/${enc(slug)}/collections/${enc(name)}/access`, { query: { expected_version: expectedVersion }, body }); }
+  collectionDelete(slug: string, name: string, expectedVersion: string, expectedRevision: number): Promise<Record<string, unknown>> { return this.json("DELETE", `/api/sites/${enc(slug)}/collections/${enc(name)}`, { query: { expected_version: expectedVersion }, body: { expectedRevision, deleteRecords: true } }); }
+  records(slug: string, name: string, cursor?: string, limit = 50, search: { q?: string; filter?: string } = {}): Promise<Record<string, unknown>> { return this.json("GET", `/api/sites/${enc(slug)}/collections/${enc(name)}/records`, { query: { cursor, limit: String(limit), ...search } }); }
+  recordImport(slug: string, name: string, expectedVersion: string, body: unknown): Promise<Record<string, unknown>> { return this.json("POST", `/api/sites/${enc(slug)}/collections/${enc(name)}/import`, { query: { expected_version: expectedVersion }, body }); }
+  async recordsExport(slug: string, name: string, out: string, search: { q?: string; filter?: string } = {}) {
+    const response = await this.request("GET", `/api/sites/${enc(slug)}/collections/${enc(name)}/export`, { query: search });
+    const length = response.headers.get("content-length");
+    const size = length !== null && !response.headers.has("content-encoding") ? Number(length) : undefined;
+    return { file: out, bytes: await saveDownload(response, out, size) };
+  }
+  recordGet(slug: string, name: string, id: string): Promise<Record<string, unknown>> { return this.json("GET", `/api/sites/${enc(slug)}/collections/${enc(name)}/records/${enc(id)}`); }
+  recordWrite(method: "POST" | "PATCH" | "DELETE", slug: string, name: string, expectedVersion: string, body: unknown, id?: string): Promise<Record<string, unknown>> { return this.json(method, `/api/sites/${enc(slug)}/collections/${enc(name)}/records${id ? `/${enc(id)}` : ""}`, { query: { expected_version: expectedVersion }, body }); }
+  async snapshotToFile(slug: string, collections: string[], out: string) {
+    const response = await this.request("POST", `/api/sites/${enc(slug)}/snapshot`, { body: { collections } });
+    const length = response.headers.get("content-length");
+    const size = length !== null && !response.headers.has("content-encoding") ? Number(length) : undefined;
+    const bytes = await saveDownload(response, out, size);
+    return { file: out, bytes, versionId: response.headers.get("x-artifact-version"), capturedAt: Number(response.headers.get("x-artifact-captured-at")) };
+  }
+  dataList(slug: string, versionId?: string): Promise<Record<string, unknown>> { return this.json("GET", `/api/sites/${enc(slug)}/data`, { query: { version_id: versionId } }); }
+  dataGet(slug: string, name: string, versionId?: string): Promise<Record<string, unknown>> { return this.json("GET", `/api/sites/${enc(slug)}/data/${enc(name)}`, { query: { version_id: versionId } }); }
+  dataSet(slug: string, name: string, expectedVersion: string, expectedRevision: number, value: unknown): Promise<Record<string, unknown>> { return this.json("PUT", `/api/sites/${enc(slug)}/data/${enc(name)}`, { query: { expected_version: expectedVersion }, body: { expectedRevision, value } }); }
+  async download(slug: string, versionId?: string, file?: string): Promise<{ bytes: Uint8Array; versionId: string | null; filename: string }> {
+    const res = await this.request("GET", `/api/sites/${enc(slug)}/download`, { query: { version: versionId, snapshot: versionId ? "1" : undefined, file } });
+    return this.originalDownload(res, slug);
+  }
+  private async originalDownload(res: Response, slug: string): Promise<{ bytes: Uint8Array; versionId: string | null; filename: string }> {
+    const { response, versionId, filename } = await this.downloadResponse(res, slug);
+    if (!response.ok) { await response.body?.cancel(); throw new Error(`Object download failed (${response.status})`); }
+    return { bytes: new Uint8Array(await response.arrayBuffer()), versionId, filename };
+  }
+  /** Stream CLI transfers to disk; the existing byte-returning SDK methods remain compatible. */
+  async downloadToFile(slug: string, options: { out?: string; versionId?: string; file?: string; signal?: AbortSignal } = {}): Promise<{ file: string; filename: string; versionId: string | null; bytes: number }> {
+    const { signal } = options;
+    let pinned = options.versionId;
+    for (let attempt = 0; ; attempt++) {
+      signal?.throwIfAborted();
+      const res = await this.request("GET", `/api/sites/${enc(slug)}/download`, { query: { version: pinned, snapshot: pinned ? "1" : undefined, file: options.file }, signal });
+      const result = await this.downloadResponse(res, slug, signal);
+      if (pinned && result.versionId && result.versionId !== pinned) {
+        await result.response.body?.cancel(); throw new Error("Download version changed");
+      }
+      pinned ??= result.versionId ?? undefined;
+      if (!result.response.ok) {
+        await result.response.body?.cancel();
+        signal?.throwIfAborted();
+        // Only renew an object URL, once, through the authorization API for the same version.
+        if (attempt === 0 && pinned && [401, 403].includes(result.response.status)) continue;
+        throw new Error(`Object download failed (${result.response.status})`);
+      }
+      const file = options.out ?? result.filename;
+      const bytes = await saveDownload(result.response, file, result.size, signal);
+      return { file, filename: result.filename, versionId: result.versionId ?? pinned ?? null, bytes };
+    }
+  }
+  private async downloadResponse(res: Response, slug: string, signal?: AbortSignal): Promise<{ response: Response; versionId: string | null; filename: string; size?: number }> {
+    const versionId = res.headers.get("x-artifact-version");
+    if (!res.headers.has("content-disposition") && res.headers.get("content-type")?.includes("application/json")) {
+      const result = await res.json() as { url?: string; filename?: string; versionId?: string; size?: number; files?: { path: string }[] };
+      if (result.files) throw new Error(`This version has no stored archive. Use download --file <path> for: ${result.files.map(f => f.path).join(", ")}`);
+      const url = new URL(result.url!);
+      if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) throw new Error("Invalid download URL");
+      // This request deliberately omits the platform Bearer token and share headers.
+      signal?.throwIfAborted();
+      const object = await this.fetchImpl(url.href, { credentials: "omit", referrerPolicy: "no-referrer", ...(signal ? { signal } : {}) });
+      return { response: object, versionId: result.versionId ?? versionId, filename: downloadFilename(result.filename, `${slug}.bin`), size: result.size };
+    }
+    const raw = /filename\*=UTF-8''([^;]+)/i.exec(res.headers.get("content-disposition") ?? "")?.[1];
+    const filename = downloadFilename(raw ? decodeURIComponent(raw) : undefined, `${slug}.zip`);
+    const length = res.headers.get("content-length");
+    const size = length !== null && !res.headers.has("content-encoding") ? Number(length) : undefined;
+    return { response: res, versionId, filename, size };
   }
 
   // ---- chunked upload (large trees, large PDFs) ----------------------------------------------
@@ -310,8 +395,8 @@ export class ArtifactSiteClient {
   uploadBytes(versionId: string, relpath: string, bytes: Uint8Array): Promise<{ relpath: string; bytes: number }> {
     return this.json("PUT", `/api/uploads/${enc(versionId)}/files/${relpath.split("/").map(encodeURIComponent).join("/")}`, { raw: bytes });
   }
-  commitUpload(versionId: string, title?: string, expectedVersion?: string, official?: boolean): Promise<VersionResult & { editToken?: string }> {
-    return this.json("POST", `/api/uploads/${enc(versionId)}/commit`, { body: { ...(title ? { title } : {}), ...(official === undefined ? {} : { official }) }, query: { expected_version: expectedVersion } });
+  commitUpload(versionId: string, title?: string, expectedVersion?: string, official?: boolean, data: DataPublication = {}): Promise<VersionResult & { editToken?: string }> {
+    return this.json("POST", `/api/uploads/${enc(versionId)}/commit`, { body: { ...(title ? { title } : {}), ...(official === undefined ? {} : { official }), ...dataFields(data) }, query: { expected_version: expectedVersion } });
   }
 
   // ---- sharing -------------------------------------------------------------------------------
@@ -319,14 +404,14 @@ export class ArtifactSiteClient {
   getVisibility(slug: string): Promise<{ visibility: Visibility; url: string }> {
     return this.json("GET", `/api/sites/${encodeURIComponent(slug)}/sharing`);
   }
-  setVisibility(slug: string, visibility: Visibility): Promise<{ visibility: Visibility; url: string }> {
+  setVisibility(slug: string, visibility: Visibility): Promise<{ moderation?: PendingModeration; visibility: Visibility; url: string }> {
     return this.json("PUT", `/api/sites/${encodeURIComponent(slug)}/sharing`, { body: { visibility } });
   }
   revokeShare(slug: string, shareId: string): Promise<{ ok: boolean }> { return this.json("DELETE", `/api/sites/${enc(slug)}/shares/${enc(shareId)}`); }
-  createShare(slug: string, opts: { source?: "publish" | "manual"; mode?: "view" | "comment" | "edit"; versionId?: string; policy: SharePolicy; label?: string; expiresInDays?: number; passcode?: string; allowAi?: boolean }): Promise<ShareResult> {
+  createShare(slug: string, opts: { source?: "publish" | "manual"; mode?: "view" | "comment" | "edit"; policy: SharePolicy; label?: string; expiresInDays?: number; passcode?: string; allowAi?: boolean }): Promise<ShareResult> {
     return this.json("POST", `/api/sites/${enc(slug)}/shares`, { body: opts });
   }
-  listShares(slug: string): Promise<{ shares: ShareResult["share"][] }> { return this.json("GET", `/api/sites/${enc(slug)}/shares`); }
+  listShares(slug: string): Promise<{ shares: NonNullable<ShareResult["share"]>[] }> { return this.json("GET", `/api/sites/${enc(slug)}/shares`); }
 
   // ---- finding and reading ----------------------------------------------------------------------
 
@@ -367,10 +452,10 @@ export class ArtifactSiteClient {
     // `Origin` is what the server's CSRF gate compares against ARTIFACT_PUBLIC_URL for callers it
     // treats as ambient (cookies, the admin token). Sending it always costs nothing and means every
     // credential form passes the gate the same way a browser tab would.
-    return { ...(this.tenantId ? {"x-artifact-tenant":this.tenantId} : {}), ...(this.shareToken ? {"x-artifact-share":this.shareToken} : {}), origin: new URL(this.baseUrl).origin, ...(this.anonCookie ? { cookie: this.anonCookie } : {}), ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) };
+    return { ...(this.channel ? { "x-artifact-client": this.channel } : {}), ...(this.tenantId ? {"x-artifact-tenant":this.tenantId} : {}), ...(this.shareToken ? {"x-artifact-share":this.shareToken} : {}), origin: new URL(this.baseUrl).origin, ...(this.anonCookie ? { cookie: this.anonCookie } : {}), ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) };
   }
 
-  private async request(method: string, path: string, opts: { body?: unknown; form?: FormData; raw?: Uint8Array; query?: Query } = {}): Promise<Response> {
+  private async request(method: string, path: string, opts: { body?: unknown; form?: FormData; raw?: Uint8Array; query?: Query; signal?: AbortSignal } = {}): Promise<Response> {
     const headers: Record<string, string> = { ...this.authHeaders() };
     const key = this.operation.getStore();
     if (key && method === "POST") headers["idempotency-key"] = key;
@@ -378,7 +463,7 @@ export class ArtifactSiteClient {
     if (opts.form) body = opts.form;
     else if (opts.raw) { headers["content-type"] = "application/octet-stream"; body = new Blob([opts.raw as BlobPart]); }
     else if (opts.body !== undefined) { headers["content-type"] = "application/json"; body = JSON.stringify(opts.body); }
-    const res = await this.withRetry(() => this.fetchImpl(this.url(path, opts.query), { method, headers, body }), method === "GET" || method === "PUT");
+    const res = await this.withRetry(() => this.fetchImpl(this.url(path, opts.query), { method, headers, body, ...(opts.signal ? { signal: opts.signal } : {}) }), method === "GET" || method === "PUT", opts.signal);
     if (!res.ok) throw await this.toError(res);
     return res;
   }
@@ -404,13 +489,15 @@ export class ArtifactSiteClient {
   }
 
   /** Only replay safe methods on 5xx; rebuilding a stream is the caller's responsibility. */
-  private async withRetry(run: () => Promise<Response>, safe = false): Promise<Response> {
+  private async withRetry(run: () => Promise<Response>, safe = false, signal?: AbortSignal): Promise<Response> {
     let attempt = 0;
     for (;;) {
+      signal?.throwIfAborted();
       let res: Response;
       try { res = await run(); } catch (error) {
+        signal?.throwIfAborted();
         if (!safe || attempt >= this.retries) throw error;
-        attempt++; await this.sleep(Math.min(8000, 500 * 2 ** attempt)); continue;
+        attempt++; await this.sleep(Math.min(8000, 500 * 2 ** attempt), signal); continue;
       }
       // Operator-token and anonymous uploads are bound to the server-issued browser identity.
       // Keep only that cookie, in memory, for subsequent requests to this deployment.
@@ -424,12 +511,17 @@ export class ArtifactSiteClient {
       attempt += 1;
       const retryAfter = res.headers.get("retry-after");
       const delay = retryAfter ? Number(retryAfter) * 1000 || Date.parse(retryAfter) - Date.now() : 0;
-      await this.sleep(Math.min(60_000, Math.max(delay || 0, Math.min(8000, 500 * 2 ** attempt))));
+      await this.sleep(Math.min(60_000, Math.max(delay || 0, Math.min(8000, 500 * 2 ** attempt))), signal);
     }
   }
 }
 
 function enc(s: string): string { return encodeURIComponent(s); }
+
+function downloadFilename(value: string | undefined, fallback: string): string {
+  const filename = value?.split(/[\/\\]/).pop();
+  return filename && filename !== "." && filename !== ".." && !/[\x00-\x1f\x7f]/.test(filename) ? filename : fallback;
+}
 
 function multipart(mode: string, filename: string, bytes: Uint8Array): FormData {
   const form = new FormData();
@@ -443,4 +535,6 @@ function withTitle(form: FormData, title?: string): FormData {
   return form;
 }
 
-function withOfficial(form: FormData, official?: boolean): FormData { if (official !== undefined) form.set("official", String(official)); return form; }
+function withOfficial(form: FormData, official?: boolean, data: DataPublication = {}): FormData { for (const key of ["dataContract", "dataChanges", "dataCollections"] as const) if (data[key] !== undefined) form.set(key, JSON.stringify(data[key])); if (official !== undefined) form.set("official", String(official)); return form; }
+
+function dataFields(data: DataPublication): DataPublication { return { dataContract: data.dataContract, dataChanges: data.dataChanges, dataCollections: data.dataCollections }; }

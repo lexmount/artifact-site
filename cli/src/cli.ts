@@ -1,9 +1,12 @@
+import { installSkill, skillDirectory } from "./skill-package.js";
+import { readSkillDocs } from "./skill-docs.js";
+import { registerRecordCommands } from "./record-commands.js";
 // `artifact-site` command line. Thin: argument parsing, output formatting, exit codes. All real
 // work is in client.ts / publish.ts / login.ts shared by all CLI commands.
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { Command, InvalidArgumentError } from "commander";
-import { ApiError, ArtifactSiteClient, type Me, type SharePolicy } from "./client.js";
+import { ApiError, ArtifactSiteClient, type Me, type SharePolicy, type DataPublication } from "./client.js";
 import { clearToken, readToken, resolveBaseUrl, writeStoredConfig } from "./config.js";
 import { loginStart, loginWait } from "./login.js";
 import { mb, publishHtml, publishPath, updateFromPath } from "./publish.js";
@@ -59,7 +62,7 @@ function packageVersion(): string {
   }
 }
 
-export function buildProgram(io: Io = defaultIo, makeClient: (base: string, token: string | null) => ArtifactSiteClient = (baseUrl, token) => new ArtifactSiteClient({ baseUrl, token })): Command {
+export function buildProgram(io: Io = defaultIo, makeClient: (base: string, token: string | null) => ArtifactSiteClient = (baseUrl, token) => new ArtifactSiteClient({ baseUrl, token, channel: "cli" })): Command {
   const program = new Command("artifact-site")
     .version(packageVersion(), "-v, --version", "print the CLI version")
     .description("Manage your remote Artifact Site library of pages, reports, charts and documents: find previous work, read it, publish updates and share links.")
@@ -142,24 +145,39 @@ For MCP, connect to https://your-server/mcp directly, or run "artifact-site mcp"
     });
   });
 
+  const publicationData = async (opts: { dataContract?: string; dataCollections?: string; dataChanges?: string }): Promise<DataPublication> => {
+    const result: DataPublication = {};
+    try {
+      if (opts.dataCollections) result.dataCollections = JSON.parse(await readFile(opts.dataCollections, "utf8"));
+      if (opts.dataContract) result.dataContract = JSON.parse(await readFile(opts.dataContract, "utf8"));
+      if (opts.dataChanges) result.dataChanges = JSON.parse(await readFile(opts.dataChanges, "utf8"));
+    } catch { throw new CliError("Data contract and data changes must be readable JSON files", 2); }
+    return result;
+  };
+
   program.command("publish")
+    .option("--data-collections <file>", "JSON collection definitions; omit to inherit, empty object disables without deleting records")
+    .option("--data-contract <file>", "JSON file mapping dataset names to schemas; omission preserves the current contract")
+    .option("--data-changes <file>", "JSON array of name, expectedRevision, value changes committed with the code")
     .option("--operation-key <key>", "publication identity; reuse to recover, change to publish another copy")
     .option("--official", "designate the uploaded version as the only official version")
-    .description("Publish a file (.html / pdf / pptx / docx / .zip), a directory, or HTML from stdin (`-`) as a new site")
+    .description("Publish a file, a directory, an archive, or HTML from stdin (`-`) as a new work")
     .argument("<path>", "file, directory, or - for stdin")
     .option("-t, --title <title>", "site title")
     .option("-s, --share <policy>", "deprecated advanced share: public, login, email, passcode, or none (default); creates an independent discussion", parsePolicy, false)
-    .action(async (target: string, opts: { operationKey?: string; official?: boolean; title?: string; share: SharePolicy | false }) => {
+    .action(async (target: string, opts: { dataContract?: string; dataCollections?: string; dataChanges?: string; operationKey?: string; official?: boolean; title?: string; share: SharePolicy | false }) => {
       const c = client();
       const progress = json() ? undefined : (l: string) => io.err(l);
       const out = target === "-"
-        ? await publishHtml(c, await io.stdin(), { operationKey: opts.operationKey, official: opts.official, title: opts.title, share: opts.share })
-        : await publishPath(c, target, { operationKey: opts.operationKey, official: opts.official, title: opts.title, share: opts.share, onProgress: progress });
-      emit({ officialVersionId: out.site.officialVersionId, officialRevision: out.site.officialRevision, visibility: "visibility" in out.site ? out.site.visibility : undefined, slug: out.site.slug, kind: out.site.kind, title: out.site.title, siteUrl: out.siteUrl, readerUrl: out.readerUrl, share: out.share ?? null, shareError: out.shareError, route: out.route }, () => {
-        io.out(`Published ${out.site.title} (${out.site.kind}, slug ${out.site.slug})`);
+        ? await publishHtml(c, await io.stdin(), { ...await publicationData(opts), operationKey: opts.operationKey, official: opts.official, title: opts.title, share: opts.share })
+        : await publishPath(c, target, { ...await publicationData(opts), operationKey: opts.operationKey, official: opts.official, title: opts.title, share: opts.share, onProgress: progress });
+      emit({ moderation: out.site.moderation, officialVersionId: out.site.officialVersionId, officialRevision: out.site.officialRevision, visibility: out.site.visibility, slug: out.site.slug, kind: out.site.kind, title: out.site.title, siteUrl: out.siteUrl, readerUrl: out.readerUrl, share: out.share ?? null, shareError: out.shareError, route: out.route }, () => {
+        io.out(`${(out.share?.moderation || out.site.moderation) ? "Saved for review" : "Published"} ${out.site.title} (${out.site.kind}, slug ${out.site.slug})`);
         io.out(`  site:  ${out.siteUrl}`);
-        io.out(`  access: ${"visibility" in out.site ? out.site.visibility ?? "unknown" : "unknown"} (copying does not change access)`);
-        if (out.share) io.out(`  share: ${out.share.url}${out.share.passcode ? `  (passcode ${out.share.passcode})` : ""}  ← give this one to readers`);
+        io.out(`  access: ${out.site.visibility ?? "unknown"} (copying does not change access)`);
+        if (out.share?.moderation || out.site.moderation) io.out(`  review: ${(out.share?.moderation ?? out.site.moderation)!.requestId} — pending; this version is not yet shared`);
+        if (out.share?.moderation && out.share.passcode) io.out(`  passcode: ${out.share.passcode} — save now; shown only once`);
+        if (out.share?.url) io.out(`  share: ${out.share.url}${out.share.passcode ? `  (passcode ${out.share.passcode})` : ""}  ← give this one to readers`);
         if ("notice" in out.site && out.site.notice) io.err(`note: ${out.site.notice}`);
       });
       if (out.shareError) throw new CliError(`The site was created but the share link was not: ${out.shareError}. Create one with: artifact-site share ${out.site.slug}`, 5);
@@ -171,34 +189,37 @@ For MCP, connect to https://your-server/mcp directly, or run "artifact-site mcp"
       if (state && !["private", "unlisted", "public"].includes(state)) throw new CliError("state must be private, unlisted or public", 2);
       const c = client();
       const result = state ? await c.setVisibility(slug, state as "private" | "unlisted" | "public") : await c.getVisibility(slug);
-      emit(result, () => { io.out(`${result.visibility}: ${c.absolute(result.url)}`); if (state === "private") io.out("Independent share links are not revoked."); });
+      emit(result, () => { const pending = (result as {moderation?: {pending?:boolean;requestId?:string}}).moderation; if (pending?.pending) io.out(`Opening request pending: ${pending.requestId}`); io.out(`${result.visibility}: ${c.absolute(result.url)}`); if (state === "private") io.out("Independent share links are not revoked."); });
     });
 
   program.command("update")
+    .option("--data-collections <file>", "JSON collection definitions; omit to inherit, empty object disables without deleting records")
+    .option("--data-contract <file>", "JSON file mapping dataset names to schemas; omission preserves the current contract")
+    .option("--data-changes <file>", "JSON array of name, expectedRevision, value changes committed with the code")
     .option("--operation-key <key>", "update identity; reuse to recover, change for a new operation")
     .option("--official", "designate the uploaded version as the only official version")
     .description("Replace a remote artifact's full contents, or rename it with --title and no path")
     .argument("<slug>", "remote artifact identifier").argument("[path]", "replacement local file or directory; omit for title-only changes")
     .option("-t, --title <title>", "rename only; cannot be combined with a path")
     .option("--expected-version <id>", "required with a path; reject concurrent changes; get this ID from info or export")
-    .action(async (slug: string, target: string | undefined, opts: { operationKey?: string; official?: boolean; title?: string; expectedVersion?: string }) => {
+    .action(async (slug: string, target: string | undefined, opts: { dataContract?: string; dataCollections?: string; dataChanges?: string; operationKey?: string; official?: boolean; title?: string; expectedVersion?: string }) => {
       if (!target) {
-        if (!opts.title?.trim() || opts.expectedVersion || opts.official) throw new CliError("Without a path, supply --title and omit --expected-version and --official", 2);
+        if (!opts.title?.trim() || opts.expectedVersion || opts.official || opts.dataContract || opts.dataChanges || opts.dataCollections) throw new CliError("Without a path, supply --title and omit --expected-version and --official", 2);
         const r = await client().rename(slug, opts.title);
-        emit(r, () => io.out(`Renamed ${slug} to ${r.title}`)); return;
+        emit(r, () => io.out(r.moderation ? `Rename saved for review: ${r.moderation.requestId}` : `Renamed ${slug} to ${r.title}`)); return;
       }
       if (opts.title !== undefined) throw new CliError("Use update with either a path or --title, not both", 2);
       if (!opts.expectedVersion) throw new CliError("Content updates require --expected-version from the version you read; use info or export first", 2);
       const c = client();
-      const r = await updateFromPath(c, slug, target, { operationKey: opts.operationKey, official: opts.official, expectedVersion: opts.expectedVersion, onProgress: json() ? undefined : (l) => io.err(l) });
-      emit({ slug: r.slug, kind: r.kind, versionId: r.versionId, officialVersionId: r.officialVersionId, officialRevision: r.officialRevision, siteUrl: c.absolute(r.url) }, () => io.out(`Updated ${r.slug}: new version ${r.versionId}`));
+      const r = await updateFromPath(c, slug, target, { ...await publicationData(opts), operationKey: opts.operationKey, official: opts.official, expectedVersion: opts.expectedVersion, onProgress: json() ? undefined : (l) => io.err(l) });
+      emit({ moderation:r.moderation, slug: r.slug, kind: r.kind, versionId: r.versionId, officialVersionId: r.officialVersionId, officialRevision: r.officialRevision, siteUrl: c.absolute(r.url) }, () => io.out(`${r.moderation ? "Saved for review" : "Updated"} ${r.slug}: new version ${r.versionId}`));
     });
 
   const official = program.command("official").description("Manage the single official designation without changing latest contents");
   official.command("set").argument("<slug>").argument("<versionId>").action(async (slug: string, versionId: string) => {
     const c = client(); const before = await c.getOfficial(slug);
     const result = await c.setOfficial(slug, versionId, before.officialRevision);
-    emit(result, () => io.out(`Official version: ${result.officialVersionId}; previous designation: ${result.previousOfficialVersionId ?? "none"}. Latest unchanged.`));
+    emit(result, () => io.out(result.moderation ? `Official designation saved for review: ${result.moderation.requestId}` : `Official version: ${result.officialVersionId}; previous designation: ${result.previousOfficialVersionId ?? "none"}. Latest unchanged.`));
   });
   official.command("clear").argument("<slug>").action(async (slug: string) => {
     const c = client(); const before = await c.getOfficial(slug);
@@ -207,15 +228,18 @@ For MCP, connect to https://your-server/mcp directly, or run "artifact-site mcp"
   });
 
   program.command("edit")
+    .option("--data-collections <file>", "JSON collection definitions; omit to inherit, empty object disables without deleting records")
+    .option("--data-contract <file>", "JSON file mapping dataset names to schemas; omission preserves the current contract")
+    .option("--data-changes <file>", "JSON array of name, expectedRevision, value changes committed with the code")
     .description("Replace one remote text file, preserving other files; read it first and supply its version")
     .argument("<slug>").argument("<path>", "local UTF-8 file, or - for stdin")
     .requiredOption("--file <relpath>", "remote relative filename from info, such as index.html")
     .requiredOption("--expected-version <id>", "version read before editing; conflicts exit 4")
-    .action(async (slug: string, target: string, opts: { file: string; expectedVersion: string }) => {
+    .action(async (slug: string, target: string, opts: { file: string; expectedVersion: string; dataContract?: string; dataCollections?: string; dataChanges?: string }) => {
       const content = target === "-" ? await io.stdin() : await readFile(target, "utf8");
       const c = client(); const site = await c.getSite(slug);
       if (site.kind === "single" && !site.files.includes(opts.file)) throw new CliError("--file must name the single page shown by info", 2);
-      const result = await c.edit(slug, { ...(site.kind === "single" ? {} : { path: opts.file }), content }, opts.expectedVersion);
+      const result = await c.edit(slug, { ...(site.kind === "single" ? {} : { path: opts.file }), content, ...await publicationData(opts) }, opts.expectedVersion);
       emit(result, () => io.out(`Edited ${slug}/${opts.file}: new version ${result.versionId}`));
     });
 
@@ -323,7 +347,7 @@ For MCP, connect to https://your-server/mcp directly, or run "artifact-site mcp"
 
   const comments = program.command("comments").description("Read feedback and exact context before updating the same artifact; never marks comments read");
   const pageLimit = (value: string) => { const n = Number(value); if (!Number.isInteger(n) || n < 1 || n > 100) throw new InvalidArgumentError("limit must be 1-100"); return n; };
-  comments.command("list").argument("<slug>").description("Defaults to current version/current entrance; explicit aggregate requires management access")
+  comments.command("list").argument("<slug>").description("Current-version feedback, inheritance provenance and synchronization state; aggregate requires management access")
     .option("--version-id <id>", "exact comment version").option("--share-id <id>", "filter one discussion in aggregate mode")
     .option("--aggregate", "include authorized discussions through the main entrance").option("--all-versions", "include all versions; requires --aggregate")
     .option("--status <status>", "open | resolved", v => { if (!["open", "resolved"].includes(v)) throw new InvalidArgumentError("status must be open or resolved"); return v; })
@@ -339,7 +363,7 @@ For MCP, connect to https://your-server/mcp directly, or run "artifact-site mcp"
       if (opts.limit && !opts.cursor) throw new CliError("--limit requires --cursor", 2);
       io.out(JSON.stringify({ ...await client(false).readComment(slug, threadId, opts.cursor, opts.limit), dataTrust: "untrusted" }, null, json() ? undefined : 2));
     });
-  comments.command("context").argument("<slug>").argument("<thread-id>").description("Exact original version, anchor, quoted context and independent source/edit capabilities")
+  comments.command("context").argument("<slug>").argument("<thread-id>").description("Version-local anchor/context, inheritance provenance, sync state and independent source/edit capabilities")
     .action(async (slug: string, threadId: string) => io.out(JSON.stringify(await client(false).commentContext(slug, threadId), null, json() ? undefined : 2)));
 
   program.command("revoke-share").description("Revoke an independent link; main-link access is unchanged").argument("<slug>").argument("<share-id>")
@@ -350,29 +374,50 @@ For MCP, connect to https://your-server/mcp directly, or run "artifact-site mcp"
     .argument("<slug>")
     .option("-p, --policy <policy>", "public | login | email | passcode", (v) => { const p = parsePolicy(v); if (!p) throw new InvalidArgumentError("policy is required"); return p; }, "public")
     .option("--mode <mode>", "view | comment | edit", (v) => { if (!["view","comment","edit"].includes(v)) throw new InvalidArgumentError("invalid share mode"); return v; }, "view")
-    .option("--version-id <id>", "pin a view/comment link to this version")
     .option("-l, --label <label>", "a label to tell links apart")
     .option("--expires <days>", "7, 30 or 90", (v) => { const n = Number(v); if (![7, 30, 90].includes(n)) throw new InvalidArgumentError("expires must be 7, 30 or 90"); return n; })
     .option("--passcode <code>", "choose the passcode (policy passcode); omitted = generated")
-    .action(async (slug: string, opts: { mode?: "view" | "comment" | "edit"; versionId?: string; policy: SharePolicy; label?: string; expires?: number; passcode?: string }) => {
-      const r = await client().createShare(slug, { mode: opts.mode, versionId: opts.versionId, policy: opts.policy, label: opts.label, expiresInDays: opts.expires, passcode: opts.passcode });
-      emit(r, () => io.out(`${r.url}${r.passcode ? `  (passcode ${r.passcode})` : ""}`));
+    .action(async (slug: string, opts: { mode?: "view" | "comment" | "edit"; policy: SharePolicy; label?: string; expires?: number; passcode?: string }) => {
+      const r = await client().createShare(slug, { mode: opts.mode, policy: opts.policy, label: opts.label, expiresInDays: opts.expires, passcode: opts.passcode });
+      emit(r, () => io.out(r.moderation ? `Review pending: ${r.moderation.requestId}; no reader link is active yet${r.passcode ? `; passcode ${r.passcode} (save now; shown only once)` : ""}` : `${r.url}${r.passcode ? `  (passcode ${r.passcode})` : ""}`));
     });
 
-  program.command("export").description("Download the current version as a zip; prints the version id for --expected-version")
-    .argument("<slug>").option("--version-id <id>", "export this exact authorized version").option("-o, --out <file>", "output file (default <slug>.zip)")
+  registerRecordCommands(program, () => client(), io);
+  const dataCommands = program.command("data").description("Read or replace shared artifact JSON data; browser pages refresh manually");
+  dataCommands.command("list").argument("<slug>").option("--version-id <id>", "historical snapshot (requires history access)")
+    .action(async (slug: string, opts: { versionId?: string }) => io.out(JSON.stringify(await client(false).dataList(slug, opts.versionId), null, 2)));
+  dataCommands.command("get").argument("<slug>").argument("<name>").option("--version-id <id>", "historical snapshot")
+    .action(async (slug: string, name: string, opts: { versionId?: string }) => io.out(JSON.stringify(await client(false).dataGet(slug, name, opts.versionId), null, 2)));
+  dataCommands.command("set").argument("<slug>").argument("<name>").argument("<file>", "JSON value file, or - for stdin")
+    .requiredOption("--expected-version <id>", "version returned by data get")
+    .requiredOption("--expected-revision <number>", "dataset revision returned by data get", (raw) => { const n = Number(raw); if (!Number.isSafeInteger(n) || n < 0) throw new InvalidArgumentError("revision must be a nonnegative integer"); return n; })
+    .action(async (slug: string, name: string, file: string, opts: { expectedVersion: string; expectedRevision: number }) => {
+      let value: unknown;
+      try { value = JSON.parse(file === "-" ? await io.stdin() : await readFile(file, "utf8")); } catch { throw new CliError("Provide a readable JSON value", 2); }
+      const result = await client().dataSet(slug, name, opts.expectedVersion, opts.expectedRevision, value);
+      emit(result, () => io.out(`Saved ${name}. Refresh the page to load the data.`));
+    });
+  program.command("download").description("Download original files or an existing archive; live data is not assembled")
+    .argument("<slug>").option("--version-id <id>", "authorized historical version").option("--file <path>", "individual file from the version manifest").option("-o, --out <file>", "output filename")
+    .action(async (slug: string, opts: { out?: string; versionId?: string; file?: string }) => {
+      const { file, versionId, bytes } = await cancellableDownload(signal => client().downloadToFile(slug, { ...opts, signal }));
+      emit({ file, versionId, bytes }, () => io.out(`${file} (${mb(bytes)})`));
+    });
+
+  program.command("export").description("Download original files or a stored archive; prints the version id for --expected-version")
+    .argument("<slug>").option("--version-id <id>", "export this exact authorized version").option("-o, --out <file>", "output file (default original filename)")
     .action(async (slug: string, opts: { out?: string; versionId?: string }) => {
-      const { zip, versionId } = await client().export(slug, opts.versionId);
-      const file = opts.out ?? `${slug}.zip`;
-      await writeFile(file, zip);
-      emit({ slug, versionId, file, bytes: zip.byteLength }, () => io.out(`${file} (${mb(zip.byteLength)}), version ${versionId}`));
+      const { file, versionId, bytes } = await cancellableDownload(signal => client().downloadToFile(slug, { ...opts, signal }));
+      emit({ slug, versionId, file, bytes }, () => io.out(`${file} (${mb(bytes)}), version ${versionId}`));
     });
 
-  program.command("rollback").description("Restore an earlier version as the current one").argument("<slug>").argument("<versionId>")
-    .action(async (slug: string, versionId: string) => { const r = await client().rollback(slug, versionId); emit(r, () => io.out(`Rolled back ${slug}: new version ${r.versionId}`)); });
+  program.command("rollback").description("Restore historical code and schema while preserving current data").argument("<slug>").argument("<versionId>")
+    .option("--expected-version <id>", "current version read before rollback; required for data-enabled artifacts")
+    .option("--data-changes <file>", "JSON transformations of current data if required by the target schema")
+    .action(async (slug: string, versionId: string, opts: { expectedVersion?: string; dataChanges?: string }) => { const r = await client().rollback(slug, versionId, opts.expectedVersion, (await publicationData(opts)).dataChanges); emit(r, () => io.out(`Rolled back ${slug}: new version ${r.versionId}`)); });
 
   program.command("rename", { hidden: true }).description("Change a site's title").argument("<slug>").argument("<title>")
-    .action(async (slug: string, title: string) => { const r = await client().rename(slug, title); emit(r, () => io.out(`Renamed ${slug} to ${r.title}`)); });
+    .action(async (slug: string, title: string) => { const r = await client().rename(slug, title); emit(r, () => io.out(r.moderation ? `Rename saved for review: ${r.moderation.requestId}` : `Renamed ${slug} to ${r.title}`)); });
 
   program.command("delete").description("Delete a site you own").argument("<slug>")
     .action(async (slug: string) => { const r = await client().delete(slug); emit(r, () => io.out(`Deleted ${slug}`)); });
@@ -394,10 +439,42 @@ For MCP, connect to https://your-server/mcp directly, or run "artifact-site mcp"
       await serveMcp({ baseUrl, token, baseError, version: packageVersion(), log: io.err }, new StdioServerTransport(), closed);
     });
 
-  program.command("skill").description("Print the platform's publishing guide for agents (/for-agents.md)")
+  const skill = program.command("skill").description("Install/update the complete agent skill or read deployment references")
     .action(async () => io.out(await client(false).skill()));
+  for (const action of ["install", "update", "check"] as const) {
+    skill.command(action).description(action + " the complete skill from the official release source")
+      .option("--agent <name>", "override the detected agent: codex, claude-code, cursor or opencode")
+      .option("--dir <directory>", "explicit skill directory for another host")
+      .option("--bundled", "use the exact skill bundled in this npm package, without network access")
+      .action(async (opts: { agent?: string; dir?: string; bundled?: boolean }) => {
+        const result = await installSkill({ action, directory: skillDirectory(opts.agent, opts.dir), bundled: opts.bundled });
+        emit(result, () => {
+          io.out(result.status + ": " + result.directory + " (" + result.version + ")");
+          if (result.backupDirectory) io.out("Previous skill retained at " + result.backupDirectory);
+        });
+      });
+  }
+  skill.command("docs").description("Check deployment versions and read only requested topics")
+    .requiredOption("--topic <names>", "comma-separated reference topics, e.g. publish,runtime")
+    .option("--dir <directory>", "installed skill directory to reuse matching local references")
+    .action(async (opts: { topic: string; dir?: string }) => {
+      const result = await readSkillDocs({ base: base(), topics: opts.topic.split(",").map(t => t.trim()), installedDirectory: opts.dir });
+      emit(result, () => { io.out("Documentation version: " + (result.version ?? "legacy/unversioned")); for (const doc of result.documents) io.out(doc.text); });
+    });
 
   return program;
+}
+
+/** Let interrupted disk transfers clean up before the process exits. */
+async function cancellableDownload<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  let exitCode = 130;
+  const interrupt = () => controller.abort();
+  const terminate = () => { exitCode = 143; controller.abort(); };
+  process.once("SIGINT", interrupt); process.once("SIGTERM", terminate);
+  try { return await work(controller.signal); }
+  catch (error) { if (controller.signal.aborted) throw new CliError("Download cancelled", exitCode); throw error; }
+  finally { process.off("SIGINT", interrupt); process.off("SIGTERM", terminate); }
 }
 
 /** Run with argv; returns the exit code instead of exiting, so tests can drive it. */

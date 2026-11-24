@@ -68,6 +68,7 @@ export async function zipFiles(files: WalkedFile[]): Promise<Uint8Array> {
 
 export type LocalShape =
   | { type: "html"; file: string; size: number }
+  | { type: "file"; file: string; size: number }
   | { type: "document"; file: string; size: number }
   | { type: "zip" | "archive"; file: string; size: number }
   | { type: "dir"; root: string; files: WalkedFile[]; size: number; directories?: string[] };
@@ -85,7 +86,7 @@ export async function inspect(target: string, packagePaths = false): Promise<Loc
   if (/\.(rar|7z|tar|tar\.gz|tgz)$/i.test(abs)) return { type: "archive", file: abs, size: s.size };
   const kind = ext ? uploadFileKind(abs) : undefined;
   if (kind) return { type: kind, file: abs, size: s.size };
-  throw new Error(`Unsupported file type ${ext || "(none)"}: publish HTML, ZIP/RAR/7z/TAR/TAR.GZ/TGZ, a directory, or a pdf/pptx/ppt/docx/doc document`);
+  return { type: "file", file: abs, size: s.size };
 }
 
 /** Match the server's path contract before creating local staging files. */
@@ -100,8 +101,8 @@ export function preflightTree(files: WalkedFile[], limits: UploadLimits = DEFAUL
   if (files.length > limits.maxFiles || totalSize(files) > limits.maxBytes || files.some(f => f.size > limits.maxFileBytes)) throw new Error(`Project exceeds upload limits: ${limits.maxBytes} bytes total, ${limits.maxFileBytes} bytes per file, ${limits.maxFiles} files`);
   for (const f of files) safeRelativePath(f.relpath);
   if (files.length === 1 && /\.pdf$/i.test(files[0].relpath)) return;
-  const html = files.filter(f => f.relpath.toLowerCase().endsWith(".html"));
-  if (!html.some(f => f.relpath === "index.html" || f.relpath.toLowerCase().endsWith("/index.html")) && html.length !== 1) throw new Error("The project needs an unambiguous HTML entry (prefer index.html). Image-only folders cannot be published independently.");
+  const html = files.filter(f => /\.html?$/i.test(f.relpath));
+  if (!html.some(f => /^(?:.*\/)?index\.html?$/i.test(f.relpath)) && html.length !== 1) throw new Error("The project needs an unambiguous HTML entry (prefer index.html). Image-only folders cannot be published independently.");
 }
 
 /** Inflate incrementally into a private directory, enforcing limits on ACTUAL output bytes. */
