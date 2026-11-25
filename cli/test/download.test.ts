@@ -19,10 +19,10 @@ it.each(["https://cdn.example/file?sign=short", "https://bucket.example/file?X-A
   const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(grant(url)).mockResolvedValueOnce(new Response("original"));
   const buffer = vi.spyOn(Response.prototype, "arrayBuffer").mockRejectedValue(new Error("No whole-file buffering"));
   const client = new ArtifactSiteClient({ baseUrl: "https://app.example", token: "secret", shareToken: "share-secret", fetch: fetcher });
-  expect(await client.downloadToFile("slug", { out, file: "report.html" })).toMatchObject({ file: out, bytes: 8, versionId: "ver_1" });
+  expect(await client.downloadToFile("slug", { out })).toMatchObject({ file: out, bytes: 8, versionId: "ver_1" });
   expect(await readFile(out, "utf8")).toBe("original");
   expect(new Headers(fetcher.mock.calls[0][1]?.headers).get("authorization")).toBe("Bearer secret");
-  expect(String(fetcher.mock.calls[0][0])).toContain("file=report.html");
+  expect(new URL(String(fetcher.mock.calls[0][0])).pathname).toBe("/api/sites/slug/download");
   expect(fetcher.mock.calls[1][1]).toMatchObject({ credentials: "omit", referrerPolicy: "no-referrer" });
   expect(new Headers(fetcher.mock.calls[1][1]?.headers).has("authorization")).toBe(false);
   expect(new Headers(fetcher.mock.calls[1][1]?.headers).has("x-artifact-share")).toBe(false);
@@ -45,7 +45,7 @@ it("renews an expired object URL once, pins its version and reauthorizes", async
   const client = new ArtifactSiteClient({ baseUrl: "https://app.example", token: "secret", fetch: fetcher });
   await client.downloadToFile("slug", { out });
   const renewed = new URL(String(fetcher.mock.calls[2][0]));
-  expect(renewed.searchParams.get("version")).toBe("ver_1"); expect(renewed.searchParams.get("snapshot")).toBe("1");
+  expect(renewed.searchParams.get("version")).toBe("ver_1"); expect(renewed.searchParams.has("snapshot")).toBe(false);
   expect(new Headers(fetcher.mock.calls[2][1]?.headers).get("authorization")).toBe("Bearer secret");
   expect(await readFile(out, "utf8")).toBe("original"); expect(fetcher).toHaveBeenCalledTimes(4);
 });
@@ -79,7 +79,7 @@ it("cancels a live transfer and removes its partial file without retrying", asyn
 
 it("rejects a file manifest without leaving an output file", async () => {
   const out = await destination(); const client = new ArtifactSiteClient({ baseUrl: "https://app.example", fetch: vi.fn<typeof fetch>().mockResolvedValue(Response.json({ files: [{ path: "a.html" }] })) });
-  await expect(client.downloadToFile("slug", { out })).rejects.toThrow("--file");
+  await expect(client.downloadToFile("slug", { out })).rejects.toThrow("unsupported download response");
   expect(await readdir(dirs.at(-1)!)).toEqual([]);
 });
 

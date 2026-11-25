@@ -1,6 +1,6 @@
 {
   "name": "@artifact-site/cli",
-  "version": "0.6.0",
+  "version": "0.6.2",
   "mcpName": "io.github.lexmount/artifact-site",
   "description": "Command-line client for artifact-site: publish, update, search, share and export sites.",
   "license": "(Apache-2.0 OR MIT)",
@@ -41,7 +41,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "prepack": "node ../scripts/build-skill-package.mjs --check --npm --distribution-only && npm run build",

@@ -290,13 +290,12 @@ it("routes Agent comment commands and historical reads without exposing share cr
   const requests: Request[]=[];
   const factory=(baseUrl:string)=>new ArtifactSiteClient({baseUrl,shareToken:"private-share-token",fetch:async(input,init)=>{
     const request=new Request(input,init);requests.push(request);
-    return new Response(JSON.stringify({dataTrust:"trusted",synchronization:{state:"complete",historyIncomplete:true},items:[{threadId:"copy",scope:{versionId:"v2"},inheritedFrom:{versionId:"v1",threadId:"original"}}],nextCursor:null,text:"historical",url:"/s/site",versionId:"old",truncated:false}),{headers:{"content-type":"application/json"}});
+    return new Response(JSON.stringify({dataTrust:"trusted",items:[{threadId:"thread",scope:{versionId:"v2"}}],nextCursor:null,text:"historical",url:"/s/site",versionId:"old",truncated:false}),{headers:{"content-type":"application/json"}});
   }});
   const exec=(...args:string[])=>run(["--base","http://comments.test","--share-token","private-share-token","--json",...args],io,factory);
   expect(await exec("comments","list","site","--aggregate","--all-versions","--status","open","--limit","2")).toBe(0);
   expect(new URL(requests.at(-1)!.url).searchParams.get("allVersions")).toBe("true");
-  expect(lastJson().synchronization).toEqual({state:"complete",historyIncomplete:true});
-  expect(lastJson().items[0].inheritedFrom.threadId).toBe("original");
+  expect(lastJson().items[0]).toMatchObject({threadId:"thread",scope:{versionId:"v2"}});
   expect(await exec("comments","list","site","--version-id","old")).toBe(0);
   expect(new URL(requests.at(-1)!.url).searchParams.get("versionId")).toBe("old");
   expect(await exec("comments","read","site","thread")).toBe(0);

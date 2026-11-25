@@ -1,11 +1,11 @@
 ---
 name: artifact-site
-description: Publish, find, update and share HTML pages, static sites, PDFs and Office documents on Yours (artifact-site). Use for work in the user's remote library and revisions at the same link.
+description: Publish, find, update and share HTML pages, static sites, PDFs and Office documents on Artifact Site. Use for work in the user's remote library and revisions at the same link.
 metadata:
   version: "1.0.0"
 ---
 
-# Work with Yours
+# Work with Artifact Site
 
 This directory contains the complete reference. Read only topics relevant to the current request.
 Installation provides instructions; authentication separately connects an account.
@@ -42,7 +42,7 @@ update with `artifact-site skill update`. These require the upgraded CLI.
 Without Node/npm, use the official `install.sh check` / `update`. Both installers detect the
 current client. If detection is ambiguous or this skill uses a custom directory, use `--dir`
 with this skill's actual installed directory. Do not select a different client's copy.
-The deployment's short `/for-agents.md` gives installation details. Preserve
+The deployment's `/for-agents.md` supplies its API reference. Preserve
 local modifications and use the same installer for subsequent updates. For `npx skills add`
 installations, use `npx skills check` and targeted `npx skills update artifact-site`, preserving
 local edits before updating. Do not update unrelated skills.
@@ -61,6 +61,14 @@ Compare API `X-Artifact-Site-Skill-Version` (the manifest's `skill_version`) or 
 `documentationVersion` metadata. A change during a task triggers another reference check before
 the next operation. Refreshing never repeats an already successful write. Documentation cache
 updates do not replace the installed package.
+
+## Open-source compatibility
+
+This package targets the public `lexmount/artifact-site` server. It provides static artifacts,
+versioned files and collaboration. It does not provide hosted JSON datasets, record collections,
+form persistence or offline data snapshots. Embed data in the uploaded files and update the
+artifact with an expected version, or use an explicitly configured external backend.
+Public server 0.6.1 has no `/agent-docs/manifest.json`; `skill docs` reads `/for-agents.md` instead.
 
 ## Core constraints
 
@@ -95,5 +103,3 @@ Fetch signed original-file URLs without platform credentials.
 | Refresh docs or recover uncertain writes | [Recovery](references/recovery.md) |
 | Find, read, organize and transfer work | [Library](references/library.md) |
 | Revise from comments | [Comments](references/comments.md) |
-| Update chart data or export snapshots | [Data](references/data.md) |
-| Forms and accumulated records | [Records](references/records.md) |

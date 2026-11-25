@@ -68,30 +68,20 @@ PY
 
 ### Navigation
 
-- External HTTP(S) anchors in the main, shared, presentation and direct-preview viewers open
-  ordinary new tabs on a user click, without a confirmation dialog. The platform keeps the
-  artifact sandboxed and opens the external tab without an opener or referrer. Use native
-  anchors; scripted `window.open()`, downloads and links handled with `preventDefault()`
-  retain their own behavior. Platform links still use their existing confirmation.
-- Top-level browser visits to HTML `/api/preview/` and direct-delivery resources enter a trusted
-  preview shell, retaining the resource query, version/access grant and fragment. Iframe
-  loads, fetches and explicit downloads keep the resource endpoint behavior. Continue to
-  share `/s/<slug>` or `/v/<token>` URLs rather than internal resource capabilities.
-
 - Links to a PDF in the uploaded tree open the platform's PDF.js reader; use relative file
   paths. Byte fetches and Range requests still return the PDF, and the reader offers a download.
 - Ordinary links to the platform's `/`, `/me`, `/explore`, `/c/<token>`, `/s/<slug>`, or
   `/v/<token>` routes ask the reader to continue through the host so browser sign-in works.
   Use the deployment's base path when present. Main, shared and presentation viewers support
   same-tab links, `target="_blank"`, middle-click and Ctrl/Cmd/Shift-click. Collection search and
-  folder filters, work version/collection context, presentation mode, and comment deep links
+  folder filters, artifact version/collection context, presentation mode, and comment deep links
   (`thread`, `message`, `comments=1` or `comments=all`, and `#comment=<thread-id>`) are preserved after validation.
   Links that stop event propagation still use the host; links that cancel activation with
   `preventDefault()` keep their own behavior.
   Prefer ordinary anchors: direct `window.open()` calls and the browser's context-menu commands
   bypass this click bridge and can create tabs that inherit the sandbox, even after reload.
   An already affected tab must be reopened from outside the preview. Do not embed the platform
-  UI in the work or weaken sandbox permissions to share its login.
+  UI in the artifact or weaken sandbox permissions to share its login.
 
 ### Usable but not persistent
 

@@ -918,7 +918,10 @@ it("keeps CLI, MCP and HTTP personal folders and public lookup consistent", asyn
   const ca = await connect(a.token), cb = await connect(b.token);
   const folder = (await (await createFolder(new Request(`${origin}/api/me/folders`, { method: "POST", headers: a.headers, body: JSON.stringify({ name: "Reports" }) }))).json()).folder;
   const site = (await call(ca, "publish", { html: "<h1>Library report</h1>", share: false })).data;
-  const { getSiteBySlug } = await import("@/lib/db");
+  const { getSiteBySlug, rbacQuery } = await import("@/lib/db");
+  // Generated slugs can begin with a dash; keep the CLI argument boundary deterministic.
+  await rbacQuery("UPDATE sites SET slug=$1 WHERE slug=$2", ["-cli-library", site.slug]);
+  site.slug = "-cli-library";
   await updateSiteVisibility((await getSiteBySlug(site.slug))!.id, "public");
   expect((await call(cb, "find")).data).toMatchObject({ scope: "mine", owned: [], collaborating: [] });
   expect((await call(cb, "find", { scope: "public" })).data).toMatchObject({ scope: "public", sites: [expect.objectContaining({ slug: site.slug })] });
@@ -935,11 +938,11 @@ it("keeps CLI, MCP and HTTP personal folders and public lookup consistent", asyn
   try {
     expect(await exec("folders", "list")).toBe(0);
     expect(JSON.parse(output.at(-1)!)).toEqual((await call(ca, "folders")).data);
-    expect(await exec("move", site.slug, "--folder", folder.id)).toBe(0);
+    expect(await exec("move", "--folder", folder.id, "--", site.slug)).toBe(0);
     const state = await (await listFolders(new Request(`${origin}/api/me/folders`, { headers: a.headers }))).json();
     expect(state.assign[site.slug]).toBe(folder.id);
-    expect(await exec("move", site.slug, "--folder", "missing")).toBe(1);
-    expect(await exec("move", site.slug, "--unfiled")).toBe(0);
+    expect(await exec("move", "--folder", "missing", "--", site.slug)).toBe(1);
+    expect(await exec("move", "--unfiled", "--", site.slug)).toBe(0);
     expect(JSON.parse(output.at(-1)!).folderId).toBeNull();
     expect(await exec("find", "--public")).toBe(0); expect(JSON.parse(output.at(-1)!).scope).toBe("public");
     process.env.PUBLISH_API_TOKEN = "library-operator"; vi.stubEnv("ARTIFACT_SITE_TOKEN", "library-operator");

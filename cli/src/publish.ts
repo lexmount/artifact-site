@@ -6,10 +6,10 @@ import { recovery } from "./recovery.js";
 // local shape and (for updates) the site's kind, so callers never have to know about modes.
 import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
-import { ApiError, ArtifactSiteClient, type DataPublication, type CreatedSite, type SharePolicy, type ShareResult, type SiteKind, type VersionResult } from "./client.js";
+import { ApiError, ArtifactSiteClient, type CreatedSite, type SharePolicy, type ShareResult, type SiteKind, type VersionResult } from "./client.js";
 import { inspect, oneShotLimit, skippedLastWalk, zipFiles, preflightTree, extractZip, type WalkedFile, type LocalShape } from "./archive.js";
 
-export interface PublishOptions extends DataPublication {
+export interface PublishOptions {
   operationKey?: string;
   official?: boolean;
   title?: string;
@@ -43,7 +43,7 @@ export async function publishHtml(client: ArtifactSiteClient, html: string, opts
   try {
     await writeFile(file, html, { mode: 0o600 });
     const files = [{ relpath: "index.html", absPath: file, size: Buffer.byteLength(html) }];
-    const result = await uploadWithRecovery(client, files, opts, files[0].size > oneShotLimit() ? undefined : () => client.createPaste(html, opts.title, opts.official, opts), "paste");
+    const result = await uploadWithRecovery(client, files, opts, files[0].size > oneShotLimit() ? undefined : () => client.createPaste(html, opts.title, opts.official), "paste");
     return finish(client, result.result, result.route, opts);
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
@@ -61,7 +61,7 @@ async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, op
         return { result: await chunkedCreate(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], opts), route: "chunked" };
       }
       say(`uploading ${path.basename(shape.file)} (${mb(shape.size)})`);
-      return uploadWithRecovery(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], opts, async () => client.createFile(path.basename(shape.file), new Uint8Array(await readFile(shape.file)), opts.title, opts.official, opts), "file");
+      return uploadWithRecovery(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], opts, async () => client.createFile(path.basename(shape.file), new Uint8Array(await readFile(shape.file)), opts.title, opts.official), "file");
     }
     case "archive": throw new Error("This server does not support package uploads; upgrade the server first");
     case "zip": {
@@ -74,7 +74,7 @@ async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, op
       say(`uploading ${path.basename(shape.file)} (${mb(shape.size)})`);
       const extracted = await extractZip(shape.file, await client.uploadLimits());
       if (extracted.skipped.length) say(`skipped ${extracted.skipped.length} hidden or excluded ZIP path(s): ${extracted.skipped.slice(0, 5).join(", ")}`);
-      try { return await uploadWithRecovery(client, extracted.files, opts, extracted.files.reduce((n, f) => n + f.size, 0) > oneShotLimit() ? undefined : async () => client.createZip(await zipFiles(extracted.files), opts.title, opts.official, opts), "zip"); }
+      try { return await uploadWithRecovery(client, extracted.files, opts, extracted.files.reduce((n, f) => n + f.size, 0) > oneShotLimit() ? undefined : async () => client.createZip(await zipFiles(extracted.files), opts.title, opts.official), "zip"); }
       finally { await extracted.cleanup(); }
     }
     case "dir": {
@@ -85,7 +85,7 @@ async function createFromShape(client: ArtifactSiteClient, shape: LocalShape, op
         return { result: await chunkedCreate(client, shape.files, opts), route: "chunked" };
       }
       say(`zipping ${shape.files.length} files (${mb(shape.size)})`);
-      return uploadWithRecovery(client, shape.files, opts, async () => client.createZip(await zipFiles(shape.files), opts.title, opts.official, opts), "zip");
+      return uploadWithRecovery(client, shape.files, opts, async () => client.createZip(await zipFiles(shape.files), opts.title, opts.official), "zip");
     }
   }
 }
@@ -104,7 +104,7 @@ async function chunkedCreate(client: ArtifactSiteClient, files: WalkedFile[], op
 async function uploadWithRecovery(client: ArtifactSiteClient, files: WalkedFile[], opts: UploadOptions, inline?: () => Promise<CreatedSite | VersionResult>, inlineRoute: PublishOutcome["route"] = "zip"): Promise<{ result: CreatedSite | VersionResult; route: PublishOutcome["route"] }> {
   const say = opts.onProgress ?? (() => {});
   // Anonymous credentials are browser cookies: do not write them into a local journal.
-  const state = client.authenticated ? await recovery(client, files, { operationKey: opts.operationKey, title: opts.title, slug: opts.slug, expectedVersion: opts.expectedVersion, official: opts.official, dataContract: opts.dataContract, dataChanges: opts.dataChanges, dataCollections: opts.dataCollections, package: opts.package }) : null;
+  const state = client.authenticated ? await recovery(client, files, { operationKey: opts.operationKey, title: opts.title, slug: opts.slug, expectedVersion: opts.expectedVersion, official: opts.official, package: opts.package }) : null;
   const j = state?.journal;
   const keyed = <T>(suffix: string, run: () => Promise<T>) => j ? client.withOperation(`${j.id}:${suffix}`, run) : run();
   let route: PublishOutcome["route"] = inline ? inlineRoute : "chunked";
@@ -178,8 +178,8 @@ async function uploadWithRecovery(client: ArtifactSiteClient, files: WalkedFile[
     }
     if (j) { j.commitAttempted = true; await state!.save(); }
     const result = opts.package && (await client.uploadLimits()).asyncPackages === 1
-      ? await keyed(`commit:${j?.generation ?? 0}`, () => client.commitPackage(versionId!, opts.title, opts.expectedVersion, opts.official, say, opts))
-      : await keyed(`commit:${j?.generation ?? 0}`, () => client.commitUpload(versionId!, opts.title, opts.expectedVersion, opts.official, opts));
+      ? await keyed(`commit:${j?.generation ?? 0}`, () => client.commitPackage(versionId!, opts.title, opts.expectedVersion, opts.official, say))
+      : await keyed(`commit:${j?.generation ?? 0}`, () => client.commitUpload(versionId!, opts.title, opts.expectedVersion, opts.official));
     if (j) { j.result = result; await state!.save(); }
     return { result, route };
   } catch (error) { await state?.failed(error); throw error; }
@@ -200,7 +200,7 @@ async function finish(client: ArtifactSiteClient, site: CreatedSite | VersionRes
   }
 }
 
-export interface UpdateOptions extends DataPublication {
+export interface UpdateOptions {
   operationKey?: string;
   official?: boolean;
   /** Version id the change is based on (from `export`); a 409 means somebody else committed first. */
@@ -225,8 +225,8 @@ export async function updateFromPath(client: ArtifactSiteClient, slug: string, t
       const content = await readFile(file, "utf8");
       const { result: r } = await uploadWithRecovery(client, [{ relpath: "index.html", absPath: file, size: Buffer.byteLength(content) }], { ...opts, slug },
         Buffer.byteLength(content) > oneShotLimit() ? undefined : () => opts.official
-          ? client.replaceWithFile(slug, path.basename(file), new TextEncoder().encode(content), opts.expectedVersion, true, opts)
-          : client.edit(slug, { content, dataContract: opts.dataContract, dataChanges: opts.dataChanges, dataCollections: opts.dataCollections }, opts.expectedVersion), "file");
+          ? client.replaceWithFile(slug, path.basename(file), new TextEncoder().encode(content), opts.expectedVersion, true)
+          : client.edit(slug, { content }, opts.expectedVersion), "file");
       return { ...r, kind: "single" } as VersionResult & { kind: SiteKind };
     }
     case "folder": {
@@ -236,7 +236,7 @@ export async function updateFromPath(client: ArtifactSiteClient, slug: string, t
         const extracted = await extractZip(shape.file, await client.uploadLimits());
         if (extracted.skipped.length) say(`skipped ${extracted.skipped.length} hidden or excluded ZIP path(s): ${extracted.skipped.slice(0, 5).join(", ")}`);
         try {
-          const r = await uploadWithRecovery(client, extracted.files, { ...opts, slug }, extracted.files.reduce((n, f) => n + f.size, 0) > oneShotLimit() ? undefined : async () => client.replaceWithZip(slug, await zipFiles(extracted.files), opts.expectedVersion, opts.official, opts));
+          const r = await uploadWithRecovery(client, extracted.files, { ...opts, slug }, extracted.files.reduce((n, f) => n + f.size, 0) > oneShotLimit() ? undefined : async () => client.replaceWithZip(slug, await zipFiles(extracted.files), opts.expectedVersion, opts.official));
           return { ...r.result, kind: "folder" } as VersionResult & { kind: SiteKind };
         } finally { await extracted.cleanup(); }
       }
@@ -247,7 +247,7 @@ export async function updateFromPath(client: ArtifactSiteClient, slug: string, t
         return { ...(await chunkedCreate(client, shape.files, { ...opts, slug })), kind: "folder" };
       }
       say(`zipping ${shape.files.length} files (${mb(shape.size)})`);
-      return { ...(await uploadWithRecovery(client, shape.files, { ...opts, slug }, async () => client.replaceWithZip(slug, await zipFiles(shape.files), opts.expectedVersion, opts.official, opts))).result, kind: "folder" } as VersionResult & { kind: SiteKind };
+      return { ...(await uploadWithRecovery(client, shape.files, { ...opts, slug }, async () => client.replaceWithZip(slug, await zipFiles(shape.files), opts.expectedVersion, opts.official))).result, kind: "folder" } as VersionResult & { kind: SiteKind };
     }
     case "document": {
       if (shape.type !== "document") throw new Error(`${slug} is a document site: give it a pdf/pptx/ppt/docx/doc file`);
@@ -256,7 +256,7 @@ export async function updateFromPath(client: ArtifactSiteClient, slug: string, t
         return { ...(await chunkedCreate(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], { ...opts, slug })), kind: "document" };
       }
       say(`uploading ${path.basename(shape.file)}`);
-      const r = await uploadWithRecovery(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], { ...opts, slug }, async () => client.replaceWithFile(slug, path.basename(shape.file), new Uint8Array(await readFile(shape.file)), opts.expectedVersion, opts.official, opts), "file");
+      const r = await uploadWithRecovery(client, [{ relpath: path.basename(shape.file), absPath: shape.file, size: shape.size }], { ...opts, slug }, async () => client.replaceWithFile(slug, path.basename(shape.file), new Uint8Array(await readFile(shape.file)), opts.expectedVersion, opts.official), "file");
       return { ...r.result, kind: "document" } as VersionResult & { kind: SiteKind };
     }
   }

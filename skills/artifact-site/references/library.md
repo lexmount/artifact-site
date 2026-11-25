@@ -79,3 +79,16 @@ curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/api/sites/<slug>/text?file=src
 - With the CLI: `artifact-site find <words…>` and `artifact-site read <slug> [--file <relpath>] [--max-chars <n>]`; over MCP: `artifact_site_find` and `artifact_site_read`.
 
 The unkeyed preview entry URL (`/api/preview/<slug>`) accepts legacy `?v=` for an authorized version ID; invalid or foreign IDs return 404. Use `?r=` to cache-bust that entry URL. Resource URLs may use `?v=` as their own cache tag; platform version selection on entry or file URLs uses `__artifact_version`. Historical editing uses the selected snapshot for both entry HTML and its resource tree; saving creates a new latest version.
+
+## Downloads and ZIP exports
+
+`artifact-site download SLUG --out archive` uses `GET /api/sites/<slug>/download`:
+it returns the retained original package archive, or a generated ZIP for other uploads.
+`artifact-site export SLUG --out site.zip` uses `/export` and always returns a ZIP, even
+when the original package was RAR, 7z or TAR. Both require source-export permission and
+accept `--version-id VERSION` (`?version=VERSION` over HTTP). Files are streamed to disk;
+a failed or cancelled transfer preserves an existing output. There is no `download --file`
+option in the open-source CLI. Unpack an export to retrieve individual binary files.
+
+For text files use `read SLUG --file PATH`. For remote MCP use `artifact_site_export` for a manifest and bounded Base64 chunks,
+pinning all chunks to the manifest version and following `nextOffset` until `done`.

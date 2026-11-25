@@ -15,7 +15,6 @@ export interface PackageJob {
   stage: string; processedFiles: number; totalFiles: number | null; retryable: boolean;
   error?: string; result?: VersionResult;
 }
-export interface DataPublication { dataCollections?: Record<string, Record<string, unknown>>; dataContract?: Record<string, Record<string, unknown>>; dataChanges?: { name: string; expectedRevision: number; value: unknown }[] }
 export type SiteKind = "single" | "folder" | "document";
 export type SharePolicy = "public" | "login" | "people" | "email" | "passcode";
 
@@ -143,8 +142,8 @@ export class ArtifactSiteClient {
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
-  async commitPackage(versionId: string, title?: string, expectedVersion?: string, official?: boolean, say?: (line: string) => void, data: DataPublication = {}): Promise<VersionResult> {
-    const job = await this.json<PackageJob>("POST", `/api/uploads/${enc(versionId)}/commit`, { body: { title, official, ...dataFields(data) }, query: { async: "1", expected_version: expectedVersion } });
+  async commitPackage(versionId: string, title?: string, expectedVersion?: string, official?: boolean, say?: (line: string) => void): Promise<VersionResult> {
+    const job = await this.json<PackageJob>("POST", `/api/uploads/${enc(versionId)}/commit`, { body: { title, official }, query: { async: "1", expected_version: expectedVersion } });
     say?.(`Package accepted for processing. Upload ID: ${versionId}; closing the CLI does not cancel it.`);
     if (job.status === "completed" && job.result) return job.result;
     return this.waitForPackage(versionId, say);
@@ -214,15 +213,15 @@ export class ArtifactSiteClient {
 
   // ---- sites ---------------------------------------------------------------------------------
 
-  createPaste(html: string, title?: string, official?: boolean, data: DataPublication = {}): Promise<CreatedSite> {
-    return this.json("POST", "/api/sites", { body: { mode: "paste", html, title, official, ...dataFields(data) } });
+  createPaste(html: string, title?: string, official?: boolean): Promise<CreatedSite> {
+    return this.json("POST", "/api/sites", { body: { mode: "paste", html, title, official } });
   }
   /** One-shot upload of a single file (HTML or a document) — byte-clean via multipart. */
-  createFile(filename: string, bytes: Uint8Array, title?: string, official?: boolean, data: DataPublication = {}): Promise<CreatedSite> {
-    return this.json("POST", "/api/sites", { form: withOfficial(withTitle(multipart("file", filename, bytes), title), official, data) });
+  createFile(filename: string, bytes: Uint8Array, title?: string, official?: boolean): Promise<CreatedSite> {
+    return this.json("POST", "/api/sites", { form: withOfficial(withTitle(multipart("file", filename, bytes), title), official) });
   }
-  createZip(bytes: Uint8Array, title?: string, official?: boolean, data: DataPublication = {}): Promise<CreatedSite> {
-    return this.json("POST", "/api/sites", { form: withOfficial(withTitle(multipart("zip", "site.zip", bytes), title), official, data) });
+  createZip(bytes: Uint8Array, title?: string, official?: boolean): Promise<CreatedSite> {
+    return this.json("POST", "/api/sites", { form: withOfficial(withTitle(multipart("zip", "site.zip", bytes), title), official) });
   }
   getOfficial(slug: string): Promise<{ officialVersionId: string | null; officialRevision?: number }> { return this.json("GET", `/api/sites/${enc(slug)}/official`); }
   setOfficial(slug: string, versionId: string | null, expectedRevision?: number): Promise<{ moderation?: PendingModeration; officialVersionId: string | null; previousOfficialVersionId: string | null }> { return this.json(versionId ? "PUT" : "DELETE", `/api/sites/${enc(slug)}/official`, { body: { versionId: versionId ?? undefined, expectedRevision } }); }
@@ -240,57 +239,33 @@ export class ArtifactSiteClient {
     return this.json("PATCH", `/api/sites/${enc(slug)}`, { body: { title } });
   }
   delete(slug: string): Promise<{ deleted: true; slug: string }> { return this.json("DELETE", `/api/sites/${enc(slug)}`); }
-  rollback(slug: string, versionId: string, expectedVersion?: string, dataChanges?: DataPublication["dataChanges"]): Promise<VersionResult> {
-    return this.json("POST", `/api/sites/${enc(slug)}/rollback`, { body: { versionId, dataChanges }, query: { expected_version: expectedVersion } });
+  rollback(slug: string, versionId: string): Promise<VersionResult> {
+    return this.json("POST", `/api/sites/${enc(slug)}/rollback`, { body: { versionId } });
   }
   fork(slug: string): Promise<CreatedSite> { return this.json("POST", `/api/sites/${enc(slug)}/fork`); }
 
   // ---- changing content ---------------------------------------------------------------------
 
   /** kind=single: `content` replaces the page; kind=folder: `path` + `content` replaces one file. */
-  edit(slug: string, change: { content: string; path?: string } & DataPublication, expectedVersion?: string): Promise<VersionResult> {
+  edit(slug: string, change: { content: string; path?: string }, expectedVersion?: string): Promise<VersionResult> {
     return this.json("POST", `/api/sites/${enc(slug)}/edit`, { body: change, query: { expected_version: expectedVersion } });
   }
   /** Whole-tree replacement for a folder site (zip) — or the new file of a document site. */
-  replaceWithZip(slug: string, bytes: Uint8Array, expectedVersion?: string, official?: boolean, data: DataPublication = {}): Promise<VersionResult> {
-    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("zip", "site.zip", bytes), official, data), query: { expected_version: expectedVersion } });
+  replaceWithZip(slug: string, bytes: Uint8Array, expectedVersion?: string, official?: boolean): Promise<VersionResult> {
+    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("zip", "site.zip", bytes), official), query: { expected_version: expectedVersion } });
   }
-  replaceWithFile(slug: string, filename: string, bytes: Uint8Array, expectedVersion?: string, official?: boolean, data: DataPublication = {}): Promise<VersionResult> {
-    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("file", filename, bytes), official, data), query: { expected_version: expectedVersion } });
+  replaceWithFile(slug: string, filename: string, bytes: Uint8Array, expectedVersion?: string, official?: boolean): Promise<VersionResult> {
+    return this.json("POST", `/api/sites/${enc(slug)}/versions`, { form: withOfficial(multipart("file", filename, bytes), official), query: { expected_version: expectedVersion } });
   }
-  /** Legacy method name: `zip` contains original bytes, not a newly assembled archive.
-   * Prefer download(), which also returns the original filename. */
+  /** Export the selected version as a ZIP, including when its original archive used another format. */
   async export(slug: string, versionId?: string): Promise<{ zip: Uint8Array; versionId: string | null }> {
     const res = await this.request("GET", `/api/sites/${enc(slug)}/export`, {query:{version_id:versionId}});
     const result = await this.originalDownload(res, slug);
     return { zip: result.bytes, versionId: result.versionId };
   }
 
-  collections(slug: string): Promise<Record<string, unknown>> { return this.json("GET", `/api/sites/${enc(slug)}/collections`); }
-  collectionAccess(slug: string, name: string, expectedVersion: string, body: unknown): Promise<Record<string, unknown>> { return this.json("PATCH", `/api/sites/${enc(slug)}/collections/${enc(name)}/access`, { query: { expected_version: expectedVersion }, body }); }
-  collectionDelete(slug: string, name: string, expectedVersion: string, expectedRevision: number): Promise<Record<string, unknown>> { return this.json("DELETE", `/api/sites/${enc(slug)}/collections/${enc(name)}`, { query: { expected_version: expectedVersion }, body: { expectedRevision, deleteRecords: true } }); }
-  records(slug: string, name: string, cursor?: string, limit = 50, search: { q?: string; filter?: string } = {}): Promise<Record<string, unknown>> { return this.json("GET", `/api/sites/${enc(slug)}/collections/${enc(name)}/records`, { query: { cursor, limit: String(limit), ...search } }); }
-  recordImport(slug: string, name: string, expectedVersion: string, body: unknown): Promise<Record<string, unknown>> { return this.json("POST", `/api/sites/${enc(slug)}/collections/${enc(name)}/import`, { query: { expected_version: expectedVersion }, body }); }
-  async recordsExport(slug: string, name: string, out: string, search: { q?: string; filter?: string } = {}) {
-    const response = await this.request("GET", `/api/sites/${enc(slug)}/collections/${enc(name)}/export`, { query: search });
-    const length = response.headers.get("content-length");
-    const size = length !== null && !response.headers.has("content-encoding") ? Number(length) : undefined;
-    return { file: out, bytes: await saveDownload(response, out, size) };
-  }
-  recordGet(slug: string, name: string, id: string): Promise<Record<string, unknown>> { return this.json("GET", `/api/sites/${enc(slug)}/collections/${enc(name)}/records/${enc(id)}`); }
-  recordWrite(method: "POST" | "PATCH" | "DELETE", slug: string, name: string, expectedVersion: string, body: unknown, id?: string): Promise<Record<string, unknown>> { return this.json(method, `/api/sites/${enc(slug)}/collections/${enc(name)}/records${id ? `/${enc(id)}` : ""}`, { query: { expected_version: expectedVersion }, body }); }
-  async snapshotToFile(slug: string, collections: string[], out: string) {
-    const response = await this.request("POST", `/api/sites/${enc(slug)}/snapshot`, { body: { collections } });
-    const length = response.headers.get("content-length");
-    const size = length !== null && !response.headers.has("content-encoding") ? Number(length) : undefined;
-    const bytes = await saveDownload(response, out, size);
-    return { file: out, bytes, versionId: response.headers.get("x-artifact-version"), capturedAt: Number(response.headers.get("x-artifact-captured-at")) };
-  }
-  dataList(slug: string, versionId?: string): Promise<Record<string, unknown>> { return this.json("GET", `/api/sites/${enc(slug)}/data`, { query: { version_id: versionId } }); }
-  dataGet(slug: string, name: string, versionId?: string): Promise<Record<string, unknown>> { return this.json("GET", `/api/sites/${enc(slug)}/data/${enc(name)}`, { query: { version_id: versionId } }); }
-  dataSet(slug: string, name: string, expectedVersion: string, expectedRevision: number, value: unknown): Promise<Record<string, unknown>> { return this.json("PUT", `/api/sites/${enc(slug)}/data/${enc(name)}`, { query: { expected_version: expectedVersion }, body: { expectedRevision, value } }); }
-  async download(slug: string, versionId?: string, file?: string): Promise<{ bytes: Uint8Array; versionId: string | null; filename: string }> {
-    const res = await this.request("GET", `/api/sites/${enc(slug)}/download`, { query: { version: versionId, snapshot: versionId ? "1" : undefined, file } });
+  async download(slug: string, versionId?: string): Promise<{ bytes: Uint8Array; versionId: string | null; filename: string }> {
+    const res = await this.request("GET", `/api/sites/${enc(slug)}/download`, { query: { version: versionId } });
     return this.originalDownload(res, slug);
   }
   private async originalDownload(res: Response, slug: string): Promise<{ bytes: Uint8Array; versionId: string | null; filename: string }> {
@@ -299,12 +274,18 @@ export class ArtifactSiteClient {
     return { bytes: new Uint8Array(await response.arrayBuffer()), versionId, filename };
   }
   /** Stream CLI transfers to disk; the existing byte-returning SDK methods remain compatible. */
-  async downloadToFile(slug: string, options: { out?: string; versionId?: string; file?: string; signal?: AbortSignal } = {}): Promise<{ file: string; filename: string; versionId: string | null; bytes: number }> {
+  async downloadToFile(slug: string, options: { out?: string; versionId?: string; signal?: AbortSignal } = {}): Promise<{ file: string; filename: string; versionId: string | null; bytes: number }> {
+    return this.transferToFile(slug, "download", options);
+  }
+  async exportToFile(slug: string, options: { out?: string; versionId?: string; signal?: AbortSignal } = {}) {
+    return this.transferToFile(slug, "export", options);
+  }
+  private async transferToFile(slug: string, endpoint: "download" | "export", options: { out?: string; versionId?: string; signal?: AbortSignal }) {
     const { signal } = options;
     let pinned = options.versionId;
     for (let attempt = 0; ; attempt++) {
       signal?.throwIfAborted();
-      const res = await this.request("GET", `/api/sites/${enc(slug)}/download`, { query: { version: pinned, snapshot: pinned ? "1" : undefined, file: options.file }, signal });
+      const res = await this.request("GET", `/api/sites/${enc(slug)}/${endpoint}`, { query: { version: pinned }, signal });
       const result = await this.downloadResponse(res, slug, signal);
       if (pinned && result.versionId && result.versionId !== pinned) {
         await result.response.body?.cancel(); throw new Error("Download version changed");
@@ -326,7 +307,7 @@ export class ArtifactSiteClient {
     const versionId = res.headers.get("x-artifact-version");
     if (!res.headers.has("content-disposition") && res.headers.get("content-type")?.includes("application/json")) {
       const result = await res.json() as { url?: string; filename?: string; versionId?: string; size?: number; files?: { path: string }[] };
-      if (result.files) throw new Error(`This version has no stored archive. Use download --file <path> for: ${result.files.map(f => f.path).join(", ")}`);
+      if (result.files || !result.url) throw new Error("Server returned an unsupported download response; expected an attachment or download URL");
       const url = new URL(result.url!);
       if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) throw new Error("Invalid download URL");
       // This request deliberately omits the platform Bearer token and share headers.
@@ -395,8 +376,8 @@ export class ArtifactSiteClient {
   uploadBytes(versionId: string, relpath: string, bytes: Uint8Array): Promise<{ relpath: string; bytes: number }> {
     return this.json("PUT", `/api/uploads/${enc(versionId)}/files/${relpath.split("/").map(encodeURIComponent).join("/")}`, { raw: bytes });
   }
-  commitUpload(versionId: string, title?: string, expectedVersion?: string, official?: boolean, data: DataPublication = {}): Promise<VersionResult & { editToken?: string }> {
-    return this.json("POST", `/api/uploads/${enc(versionId)}/commit`, { body: { ...(title ? { title } : {}), ...(official === undefined ? {} : { official }), ...dataFields(data) }, query: { expected_version: expectedVersion } });
+  commitUpload(versionId: string, title?: string, expectedVersion?: string, official?: boolean): Promise<VersionResult & { editToken?: string }> {
+    return this.json("POST", `/api/uploads/${enc(versionId)}/commit`, { body: { ...(title ? { title } : {}), ...(official === undefined ? {} : { official }) }, query: { expected_version: expectedVersion } });
   }
 
   // ---- sharing -------------------------------------------------------------------------------
@@ -408,7 +389,7 @@ export class ArtifactSiteClient {
     return this.json("PUT", `/api/sites/${encodeURIComponent(slug)}/sharing`, { body: { visibility } });
   }
   revokeShare(slug: string, shareId: string): Promise<{ ok: boolean }> { return this.json("DELETE", `/api/sites/${enc(slug)}/shares/${enc(shareId)}`); }
-  createShare(slug: string, opts: { source?: "publish" | "manual"; mode?: "view" | "comment" | "edit"; policy: SharePolicy; label?: string; expiresInDays?: number; passcode?: string; allowAi?: boolean }): Promise<ShareResult> {
+  createShare(slug: string, opts: { source?: "publish" | "manual"; mode?: "view" | "comment" | "edit"; versionId?: string; policy: SharePolicy; label?: string; expiresInDays?: number; passcode?: string; allowAi?: boolean }): Promise<ShareResult> {
     return this.json("POST", `/api/sites/${enc(slug)}/shares`, { body: opts });
   }
   listShares(slug: string): Promise<{ shares: NonNullable<ShareResult["share"]>[] }> { return this.json("GET", `/api/sites/${enc(slug)}/shares`); }
@@ -535,6 +516,7 @@ function withTitle(form: FormData, title?: string): FormData {
   return form;
 }
 
-function withOfficial(form: FormData, official?: boolean, data: DataPublication = {}): FormData { for (const key of ["dataContract", "dataChanges", "dataCollections"] as const) if (data[key] !== undefined) form.set(key, JSON.stringify(data[key])); if (official !== undefined) form.set("official", String(official)); return form; }
-
-function dataFields(data: DataPublication): DataPublication { return { dataContract: data.dataContract, dataChanges: data.dataChanges, dataCollections: data.dataCollections }; }
+function withOfficial(form: FormData, official?: boolean): FormData {
+  if (official !== undefined) form.set("official", String(official));
+  return form;
+}

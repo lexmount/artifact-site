@@ -27,11 +27,11 @@ describe("ArtifactSiteClient", () => {
       return new Response("original file");
     }) as typeof fetch;
     const direct = new ArtifactSiteClient({ baseUrl: "https://app.example.com", token: "secret", shareToken: "share-secret", fetch: transport });
-    const result = await direct.download("test", "ver_1", "report.html");
+    const result = await direct.download("test", "ver_1");
     expect(result).toMatchObject({ filename: "report.html", versionId: "ver_1" });
     expect(new TextDecoder().decode(result.bytes)).toBe("original file");
     expect(new Headers(calls[0].init?.headers).get("authorization")).toBe("Bearer secret");
-    expect(calls[0].url).toContain("file=report.html");
+    expect(calls[0].url).toBe("https://app.example.com/api/sites/test/download?version=ver_1");
     expect(calls[1].init).toEqual({ credentials: "omit", referrerPolicy: "no-referrer" });
   });
   it("normalises the base URL and builds absolute links from API-relative ones", () => {
